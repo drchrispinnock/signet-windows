@@ -1,4 +1,5 @@
 using Signet.Models;
+using Signet.Services;
 
 namespace Signet.Tests;
 
@@ -37,8 +38,20 @@ public class TezBalanceTests
     /// Captain Stake is a baker, so staked tez dominates. Both fetch paths must agree with the
     /// node's own full_balance and with each other.
     /// </summary>
-    [Fact(Skip = Pending.ChainService), Trait(Category.Name, Category.Network)]
-    public void CaptainStakeFullBalanceIncludesStake() { }
+    [Fact, Trait(Category.Name, Category.Network)]
+    public async Task CaptainStakeFullBalanceIncludesStake()
+    {
+        var address = new Address("tz1dCaMnnMJk76UodjewCK67ABiXWjcKj73N");
+        var service = new TaquitoChainService(Network.Mainnet);
+
+        var viaTaquito = await service.TezBalanceFor(address);
+        var viaRPC = await service.DirectTezBalanceFor(address);
+
+        Assert.True(viaTaquito.Staked > viaTaquito.Spendable);
+        Assert.True(viaTaquito.Total > viaTaquito.Spendable);
+        // Both paths read head; allow for a block landing between calls.
+        Assert.True(Math.Abs(viaTaquito.Total - viaRPC.Total) < 100);
+    }
 }
 
 public class AccountNotOnChainTests
@@ -47,6 +60,14 @@ public class AccountNotOnChainTests
     public void FlagsTheAccountInsteadOfFailing() { }
 
     /// <summary>A brand-new key has certainly never been funded, so both paths must report it as absent.</summary>
-    [Fact(Skip = Pending.ChainService), Trait(Category.Name, Category.Network)]
-    public void FreshAddressIsReportedAsNotOnChain() { }
+    [Fact, Trait(Category.Name, Category.Network)]
+    public async Task FreshAddressIsReportedAsNotOnChain()
+    {
+        var fresh = new Address((await new KeyGenerator().Generate(AddressScheme.Tz1)).Address);
+        var service = new TaquitoChainService(Network.Mainnet);
+        var viaTaquito = await Assert.ThrowsAsync<ChainError.AccountNotOnChain>(() => service.TezBalanceFor(fresh));
+        Assert.Equal(new ChainError.AccountNotOnChain(fresh), viaTaquito);
+        var viaRPC = await Assert.ThrowsAsync<ChainError.AccountNotOnChain>(() => service.DirectTezBalanceFor(fresh));
+        Assert.Equal(new ChainError.AccountNotOnChain(fresh), viaRPC);
+    }
 }

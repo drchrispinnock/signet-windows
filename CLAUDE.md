@@ -52,6 +52,16 @@ freshly installed SDK may need the shell's PATH refreshed before `dotnet` is fou
   compare lists by reference, so a type whose identity includes a list (`LedgerKey`) overrides
   equality. `@MainActor @Observable` view models become `ObservableObject` (CommunityToolkit.Mvvm)
   and are only touched on the UI thread. `async throws` becomes `async Task<T>` that throws.
+- Swift `x(for: address)` becomes `XFor(address)` (`TezBalanceFor`, `DelegateInfoFor`, …), because
+  C# can't have a member share its name with the type it returns. Other Swift argument labels
+  are dropped (`estimateTransfer(from:to:amount:)` becomes `EstimateTransfer(wallet, destination,
+  amount)`). A nested type that would clash with a property gets an `Info` suffix
+  (`TokenInfo.MetadataInfo`), and a record parameter that would clash gets a more specific name
+  (`NodeStatus.Healthy.BlockLevel`).
+- `URLSession` becomes an injectable `HttpClient`, defaulting to `Http.Shared`. Requests go
+  through `Http.Get`/`Http.PostJSON`, which apply a per-request timeout like `timeoutInterval`.
+  `URLComponents` becomes `Uri.AppendingPathComponent(…).WithQuery(…)`. Upstream's bare `catch`
+  around indexer lookups becomes a filter for network, timeout and parse exceptions.
 - `URL` becomes `Uri`. Use `AbsoluteString()` (`Models/UriExtensions.cs`) wherever Swift uses
   `absoluteString`: `Uri.AbsoluteUri` adds a trailing `/` to a bare host. `Decimal` becomes
   `decimal`. Parse and format numbers on the wire with `CultureInfo.InvariantCulture`; use the
@@ -114,20 +124,26 @@ Ported as of upstream `3b33fe1`:
   Foundation's `.atomic` writes.
 - `KeyGenerator`, `TezosClientStore`/`WalletStore`, `AppStateStore`, `WalletDirectorySettings`,
   `WalletBackup`/`BackupSettings`.
+- The chain layer: `ChainService` (`IChainService`, `ChainError`), `MockChainService`,
+  `TaquitoChainService`, `TzKTService`, `TezosDomainsService`, `Profiles`, `IPFS`,
+  `FaucetService` and `NodeMonitor`.
 - The tests for all of the above.
 
 `LedgerHID` is a placeholder that reports no devices. The app shows `Views/BridgeCheckView`, a
 temporary Windows-only page (node head, balance breakdown, read-only wallet listing, throwaway key
-generation, live bridge log) that goes away when `WalletHomeView` is ported. Next, in order: the
-chain and indexer services (`ChainService`, `MockChainService`, `TaquitoChainService`,
-`TzKTService`, `TezosDomainsService`, …), `KeyImporter`, `WalletViewModel`, then the views screen
-by screen. Run `dotnet test` and read the skipped tests for the detailed backlog. The bridge log is
+generation, live bridge log) that goes away when `WalletHomeView` is ported. Next, in order:
+`KeyImporter`, `LedgerService`, `DAppConnectionManager`, `OctezConnect`, `MtPelerin`/`BuyProvider`,
+`WalletViewModel`/`SendViewModel`, then the views screen by screen. `ImageLoader` and `QRCode`
+belong with the views (WinUI imaging). Run `dotnet test` and read the skipped tests for the detailed backlog. The bridge log is
 at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
 
 Windows-specific porting notes:
 - `UserDefaults` is a C# class of that name backed by `%LOCALAPPDATA%\Signet\preferences.json`.
   Tests use `UserDefaults.Temporary()` where upstream uses a fresh suite.
 - Paths are `string`s, compared with `PathUtility.SamePath` (case-insensitive).
+- Source files are UTF-8 without a BOM and contain characters such as `…` and `“”`. Windows
+  PowerShell 5.1's `Get-Content` reads them as ANSI, so a scripted rewrite garbles them (`â€¦`).
+  Edit them with the editor tools, or with explicit UTF-8 encodings.
 - `WalletStore.add(_:secretKey:)` is `AddWithSecretKey`, because both Swift overloads take a string.
 - `wallet_lock` is an exclusive open with a 30-second wait instead of `lockf`.
 - The Mac's chmod 600 assertions are dropped (see `TestSupport.cs`).

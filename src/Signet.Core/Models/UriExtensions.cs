@@ -11,4 +11,15 @@ public static class UriExtensions
         url.AbsolutePath == "/" && url.Query.Length == 0 && url.Fragment.Length == 0 && !url.OriginalString.EndsWith('/')
             ? url.GetLeftPart(UriPartial.Authority)
             : url.AbsoluteUri;
+
+    /// <summary>
+    /// Foundation's <c>appendingPathComponent</c>: <c>https://api.tzkt.io</c> + <c>v1/tokens</c> →
+    /// <c>https://api.tzkt.io/v1/tokens</c>, with exactly one <c>/</c> between, keeping any base path.
+    /// </summary>
+    public static Uri AppendingPathComponent(this Uri url, string path) =>
+        new($"{url.GetLeftPart(UriPartial.Path).TrimEnd('/')}/{path.TrimStart('/')}");
+
+    /// <summary>Appends a query built like <c>URLComponents.queryItems</c>: names and values percent-encoded, order kept.</summary>
+    public static Uri WithQuery(this Uri url, params (string Name, string Value)[] items) =>
+        new($"{url.AbsoluteString()}?{string.Join("&", items.Select(i => $"{Uri.EscapeDataString(i.Name)}={Uri.EscapeDataString(i.Value)}"))}");
 }

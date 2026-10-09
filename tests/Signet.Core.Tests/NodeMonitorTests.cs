@@ -1,16 +1,93 @@
+using System.Globalization;
+using System.Text;
 using Signet.Models;
+using Signet.Services;
 
 namespace Signet.Tests;
 
 public class NodeMonitorTests
 {
-    private const string Reason = "Pending port: NodeMonitor";
+    private static byte[] Header(int level, double ageSeconds, DateTimeOffset now)
+    {
+        var stamp = now.AddSeconds(-ageSeconds).UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        return Encoding.UTF8.GetBytes($"{{\"level\": {level}, \"timestamp\": \"{stamp}\", \"hash\": \"BL1\"}}");
+    }
 
-    [Fact(Skip = Reason)] public void FreshHeadIsGreen() { }
-    [Fact(Skip = Reason)] public void StaleHeadSlowReplyAndBadPayloadAreYellow() { }
-    [Fact(Skip = Reason)] public void ConnectionFailureIsRed() { }
-    [Fact(Skip = Reason)] public void MonitorPublishesProbeResultsAndFollowsNetworkChanges() { }
-    [Fact(Skip = Reason), Trait(Category.Name, Category.Network)] public void MainnetIsReachable() { }
+    private static NodeStatus Evaluate(byte[] data, int status, double latency, DateTimeOffset now) =>
+        NodeMonitor.Evaluate(new NodeMonitor.ProbeReply(data, status, latency), null, now);
+
+    [Fact]
+    public void FreshHeadIsGreen()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var status = Evaluate(Header(100, 12, now), 200, 0.3, now);
+        var healthy = Assert.IsType<NodeStatus.Healthy>(status);
+        Assert.Equal(100, healthy.BlockLevel);
+        Assert.True(Math.Abs(healthy.HeadAge - 12) < 1);
+        Assert.Equal(0.3, healthy.Latency);
+        Assert.Equal(NodeStatus.LightColor.Green, status.Light);
+    }
+
+    [Fact]
+    public void StaleHeadSlowReplyAndBadPayloadAreYellow()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var stale = Evaluate(Header(5, 600, now), 200, 0.2, now);
+        Assert.Equal(NodeStatus.LightColor.Yellow, stale.Light);
+        Assert.Equal(5, stale.Level);
+        Assert.Contains("behind", stale.Summary);
+
+        var slow = Evaluate(Header(7, 5, now), 200, 6.0, now);
+        Assert.Equal(NodeStatus.LightColor.Yellow, slow.Light);
+        Assert.Contains("slow", slow.Summary);
+
+        var http = Evaluate([], 503, 0.1, now);
+        Assert.Equal(NodeStatus.LightColor.Yellow, http.Light);
+        Assert.Contains("503", http.Summary);
+
+        var junk = Evaluate(Encoding.UTF8.GetBytes("<html>"), 200, 0.1, now);
+        Assert.Equal(NodeStatus.LightColor.Yellow, junk.Light);
+    }
+
+    [Fact]
+    public void ConnectionFailureIsRed()
+    {
+        var status = NodeMonitor.Evaluate(null, new HttpRequestException("No such host is known."), DateTimeOffset.UtcNow);
+        Assert.Equal(NodeStatus.LightColor.Red, status.Light);
+        Assert.Equal("Node down", status.Summary);
+        Assert.StartsWith("Cannot reach node", status.Detail);
+    }
+
+    [Fact]
+    public async Task MonitorPublishesProbeResultsAndFollowsNetworkChanges()
+    {
+        var monitor = new NodeMonitor(Network.Mainnet, url =>
+        {
+            if (url.Host == Network.Mainnet.RpcURL.Host)
+            {
+                var stamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
+                return Task.FromResult(new NodeMonitor.ProbeReply(Encoding.UTF8.GetBytes($"{{\"level\": 1, \"timestamp\": \"{stamp}\"}}"), 200, 0.1));
+            }
+            throw new TimeoutException("The request timed out.");
+        });
+        await monitor.CheckNow();
+        Assert.Equal(NodeStatus.LightColor.Green, monitor.Status.Light);
+
+        monitor.Network = Network.Shadownet;
+        Assert.Equal(new NodeStatus.Unknown(), monitor.Status);
+        await monitor.CheckNow();
+        Assert.Equal(NodeStatus.LightColor.Red, monitor.Status.Light);
+        monitor.Stop();
+    }
+
+    [Fact, Trait(Category.Name, Category.Network)]
+    public async Task MainnetIsReachable()
+    {
+        var reply = await NodeMonitor.HttpProbe(Network.Mainnet.RpcURL.AppendingPathComponent("chains/main/blocks/head/header"));
+        var status = NodeMonitor.Evaluate(reply, null, DateTimeOffset.UtcNow);
+        Assert.NotEqual(NodeStatus.LightColor.Red, status.Light);
+        Assert.True((status.Level ?? 0) > 0);
+    }
 }
 
 public class FaucetTests

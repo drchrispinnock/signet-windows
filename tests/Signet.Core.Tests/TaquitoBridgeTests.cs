@@ -40,8 +40,15 @@ public class TaquitoBridgeTests
         Assert.StartsWith("B", head["hash"]?.StringValue);
     }
 
-    [Fact(Skip = Pending.ChainService), Trait(Category.Name, Category.Network)]
-    public void FetchesBalanceThroughChainService() { }
+    [Fact, Trait(Category.Name, Category.Network)]
+    public async Task FetchesBalanceThroughChainService()
+    {
+        var service = new TaquitoChainService(Network.Shadownet);
+        // Any valid address works since the RPC returns 0 for unknown accounts; this only checks the round trip.
+        var balance = await service.TezBalanceFor(new Address("tz1a4GT7THHaGDiTxgXoatDWcZfJ5j29z5RC"));
+        Assert.True(balance.Total >= 0);
+        Assert.True(balance.Total >= balance.Spendable);
+    }
 
     // Not upstream: failures must come back as exceptions, not hang the caller.
     [Fact]
