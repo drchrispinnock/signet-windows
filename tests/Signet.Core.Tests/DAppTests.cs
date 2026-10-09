@@ -212,8 +212,43 @@ public class DAppSignPayloadTests
     }
 
     /// <summary>The bridge enforces the rule itself, so a C# bug cannot get an operation signed.</summary>
-    [Fact(Skip = "Pending port: KeyGenerator")]
-    public void BridgeRefusesOperationBytesAndSignsMicheline() { }
+    [Fact]
+    public async Task BridgeRefusesOperationBytesAndSignsMicheline()
+    {
+        var material = await new KeyGenerator().Generate(AddressScheme.Tz1);
+        var spec = new SigningKey.Secret(material.SecretKey, null).BridgeSpec;
+        foreach (var type in new[] { "micheline", "operation", "raw" })
+            await Assert.ThrowsAnyAsync<Exception>(() => TaquitoBridge.Shared.Call("octezConnectSign", spec, Forged, type));
+        await Assert.ThrowsAnyAsync<Exception>(() => TaquitoBridge.Shared.Call("octezConnectSign", spec, "0501000000076865792074657a"));
+        foreach (var payload in MichelineDepthTests.RejectedPayloads)
+            await Assert.ThrowsAnyAsync<Exception>(() => TaquitoBridge.Shared.Call("octezConnectSign", spec, payload, "micheline"));
+        foreach (var payload in MichelineDepthTests.AcceptedPayloads)
+        {
+            var result = await TaquitoBridge.Shared.Call("octezConnectSign", spec, payload, "micheline");
+            Assert.StartsWith("edsig", result["signature"]?.StringValue);
+        }
+        // The bridge's own Micheline reader must agree with MichelineBinary on every vector above.
+        foreach (var malformed in new[] { "05", "050100000007686579", "0501000000026865792074657a", "0501000000076865792074657a00", "0500", "050080",
+                                          "0502000000040100000001", "0507070701000000016100", "050a00000003abcd", "0509030000000000", "050b" })
+        {
+            var error = await Record.ExceptionAsync(() => TaquitoBridge.Shared.Call("octezConnectSign", spec, malformed, "micheline"));
+            Assert.True(error is not null, malformed);
+        }
+        foreach (var good in new[] { "050021", "050080ff7f", "050a00000002abcd", "05030b", "050707010000000161010000000162",
+                                     "0508070707010000000161000102" + "0000000c" + "0100000001620a0000000100" + "000000022561" })
+        {
+            var r = await TaquitoBridge.Shared.Call("octezConnectSign", spec, good, "micheline");
+            Assert.True(r["signature"]?.StringValue?.StartsWith("edsig") == true, good);
+        }
+
+        var signed = await TaquitoBridge.Shared.Call("octezConnectSign", spec, "0501000000076865792074657a", "micheline");
+        var signature = signed["signature"]?.StringValue;
+        Assert.NotNull(signature);
+        Assert.StartsWith("edsig", signature);
+        // Same bytes through the plain signing path give the same signature: nothing else changed.
+        var plain = await TaquitoBridge.Shared.Call("signPayload", spec, "0501000000076865792074657a");
+        Assert.Equal(signature, plain["signature"]?.StringValue);
+    }
 }
 
 public class MichelineDepthTests

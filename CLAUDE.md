@@ -108,11 +108,29 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 ## Status
 
-Ported as of upstream `3b33fe1`: all of `Signet/Models`, the `TaquitoBridge` host (with
-`JSONValue`, `OctezConnectStorage`, and `AtomicFile` for Foundation's `.atomic` writes), and their
-tests. `LedgerHID` is a placeholder that reports no devices, and `TezosClientStore` has only its
-directory paths so far. The app shows `Views/BridgeCheckView`, a temporary Windows-only page
-(node head, balance breakdown, live bridge log) that goes away when `WalletHomeView` is ported.
-Next, in order: `KeyGenerator`, `TezosClientStore`/`WalletStore`, the chain and indexer services,
-`WalletViewModel`, then the views screen by screen. Run `dotnet test` and read the skipped tests
-for the detailed backlog. The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
+Ported as of upstream `3b33fe1`:
+- All of `Signet/Models`.
+- The `TaquitoBridge` host, with `JSONValue`, `OctezConnectStorage`, and `AtomicFile` for
+  Foundation's `.atomic` writes.
+- `KeyGenerator`, `TezosClientStore`/`WalletStore`, `AppStateStore`, `WalletDirectorySettings`,
+  `WalletBackup`/`BackupSettings`.
+- The tests for all of the above.
+
+`LedgerHID` is a placeholder that reports no devices. The app shows `Views/BridgeCheckView`, a
+temporary Windows-only page (node head, balance breakdown, read-only wallet listing, throwaway key
+generation, live bridge log) that goes away when `WalletHomeView` is ported. Next, in order: the
+chain and indexer services (`ChainService`, `MockChainService`, `TaquitoChainService`,
+`TzKTService`, `TezosDomainsService`, …), `KeyImporter`, `WalletViewModel`, then the views screen
+by screen. Run `dotnet test` and read the skipped tests for the detailed backlog. The bridge log is
+at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
+
+Windows-specific porting notes:
+- `UserDefaults` is a C# class of that name backed by `%LOCALAPPDATA%\Signet\preferences.json`.
+  Tests use `UserDefaults.Temporary()` where upstream uses a fresh suite.
+- Paths are `string`s, compared with `PathUtility.SamePath` (case-insensitive).
+- `WalletStore.add(_:secretKey:)` is `AddWithSecretKey`, because both Swift overloads take a string.
+- `wallet_lock` is an exclusive open with a 30-second wait instead of `lockf`.
+- The Mac's chmod 600 assertions are dropped (see `TestSupport.cs`).
+
+This PC has Smart App Control enforced. It can block a freshly built, unsigned `Signet.exe` with
+"An Application Control policy has blocked this file" (Code Integrity event 3077).

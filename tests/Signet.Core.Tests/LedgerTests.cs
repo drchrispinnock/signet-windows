@@ -61,8 +61,27 @@ public class LedgerKeyTests
         Assert.False(secret.IsLedger);
     }
 
-    [Fact(DisplayName = "ledger aliases load with their key and can sign", Skip = Pending.Store)]
-    public void LoadsLedgerAliases() { }
+    [Fact(DisplayName = "ledger aliases load with their key and can sign")]
+    public void LoadsLedgerAliases()
+    {
+        var dir = TestSupport.MakeDir("ledger");
+        TestSupport.WriteText(dir, "public_key_hashs", """
+        [{"name":"nano","value":"tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"}]
+        """);
+        TestSupport.WriteText(dir, "public_keys", """
+        [{"name":"nano","value":{"locator":"ledger://tz1root/ed25519/0h/0h","key":"edpkuBknW28nW72KG6RoHtYW7p12T6GKc7nAbwYX5m8Wd9sDVC9yav"}}]
+        """);
+        TestSupport.WriteText(dir, "secret_keys", """
+        [{"name":"nano","value":"ledger://tz1root/ed25519/0h/0h"}]
+        """);
+
+        var store = new TezosClientStore(dir);
+        var wallet = store.Load()[0];
+        Assert.Equal(KeyKind.Ledger, wallet.KeyKind);
+        Assert.True(wallet.KeyKind.CanSign());
+        Assert.Equal("44'/1729'/0'/0'", wallet.LedgerKey?.FullPath);
+        Assert.Null(store.SecretKey(wallet));
+    }
 
     [Fact(DisplayName = "connecting a Ledger writes an octez ledger:// alias and selects it", Skip = Pending.ViewModel)]
     public void ConnectWritesLocator() { }

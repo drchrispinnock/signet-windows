@@ -9,6 +9,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -59,8 +60,31 @@
             </Border>
         </Grid>
 
-        <!-- Bridge log -->
+        <!-- Wallet files and key generation (read-only: nothing is written) -->
         <Border Grid.Row="2" Style="{StaticResource CardStyle}">
+            <Grid ColumnSpacing="24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Wallet" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <TextBlock x:Name="WalletDirText" IsTextSelectionEnabled="True"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <StackPanel x:Name="AccountList" Spacing="2" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="8">
+                    <TextBlock Text="Key generation" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Text="One key of each type, made in memory and thrown away. Nothing is saved." />
+                    <StackPanel x:Name="KeyList" Spacing="2" />
+                    <Button x:Name="GenerateButton" Content="Generate test keys" Click="GenerateClicked" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Bridge log -->
+        <Border Grid.Row="3" Style="{StaticResource CardStyle}">
             <Grid RowSpacing="8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />

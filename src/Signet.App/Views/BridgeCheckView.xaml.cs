@@ -24,6 +24,7 @@ public sealed partial class BridgeCheckView : UserControl
         Loaded += async (_, _) =>
         {
             AddressChanged(AddressBox, null!);
+            ShowWallet();
             try
             {
                 var version = await bridge.Call("version");
@@ -125,6 +126,83 @@ public sealed partial class BridgeCheckView : UserControl
         {
             TotalText.Text = ex.Message;
         }
+    }
+
+    private static Brush Secondary => (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+
+    private static Grid Row(string left, string right, double leftWidth = 140)
+    {
+        var row = new Grid { ColumnSpacing = 12 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(leftWidth) });
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.Children.Add(new TextBlock { Text = left, Foreground = Secondary, TextTrimming = TextTrimming.CharacterEllipsis });
+        var value = new TextBlock { Text = right, FontFamily = new FontFamily("Consolas"), IsTextSelectionEnabled = true };
+        Grid.SetColumn(value, 1);
+        row.Children.Add(value);
+        return row;
+    }
+
+    /// <summary>Lists the accounts in the wallet directory (read-only).</summary>
+    private void ShowWallet()
+    {
+        var directory = new WalletDirectorySettings().Current;
+        WalletDirText.Text = directory;
+        AccountList.Children.Clear();
+        try
+        {
+            var wallets = new TezosClientStore(directory).Load();
+            if (wallets.Count == 0)
+            {
+                var octez = new TezosClientStore(TezosClientStore.OctezClientDirectory);
+                AccountList.Children.Add(new TextBlock
+                {
+                    Text = octez.HasWallets
+                        ? $"No accounts yet. {octez.Load().Count} found in {TezosClientStore.OctezClientDirectory} to import."
+                        : "No accounts yet.",
+                    TextWrapping = TextWrapping.Wrap,
+                });
+            }
+            foreach (var wallet in wallets)
+            {
+                var kind = wallet.KeyKind switch
+                {
+                    KeyKind.Unencrypted => "key on disk",
+                    KeyKind.Encrypted => "encrypted key",
+                    KeyKind.Ledger => "Ledger",
+                    KeyKind.Remote => "remote signer",
+                    KeyKind.None => "watch only",
+                    _ => "unknown",
+                };
+                AccountList.Children.Add(Row(wallet.Alias, $"{wallet.Address.Shortened()}  ({kind})"));
+            }
+        }
+        catch (TezosClientStore.StoreError e)
+        {
+            AccountList.Children.Add(new TextBlock { Text = e.Message, TextWrapping = TextWrapping.Wrap });
+        }
+    }
+
+    private async void GenerateClicked(object sender, RoutedEventArgs e)
+    {
+        GenerateButton.IsEnabled = false;
+        KeyList.Children.Clear();
+        var generator = new KeyGenerator();
+        foreach (var scheme in AddressSchemeExtensions.AllCases.Where(s => s.IsSupported()))
+        {
+            try
+            {
+                var clock = Stopwatch.StartNew();
+                var material = await generator.Generate(scheme);
+                // Only public data is shown; the secret goes out of scope here.
+                KeyList.Children.Add(Row($"{scheme.RawValue()} {scheme.DisplayName()}",
+                                         $"{new Address(material.Address).Shortened()}  {clock.ElapsedMilliseconds} ms", 210));
+            }
+            catch (Exception ex) when (ex is KeyGenerator.KeyError or TaquitoBridge.BridgeError)
+            {
+                KeyList.Children.Add(Row(scheme.RawValue(), ex.Message, 210));
+            }
+        }
+        GenerateButton.IsEnabled = true;
     }
 
     private void RefreshLog()
