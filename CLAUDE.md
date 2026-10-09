@@ -133,4 +133,6 @@ Windows-specific porting notes:
 - The Mac's chmod 600 assertions are dropped (see `TestSupport.cs`).
 
 This PC has Smart App Control enforced. It can block a freshly built, unsigned `Signet.exe` with
-"An Application Control policy has blocked this file" (Code Integrity event 3077).
+"An Application Control policy has blocked this file" (Code Integrity event 3077). Starting it as
+`dotnet Signet.dll` doesn't help: WinUI resolves its XAML resources relative to `dotnet.exe` and
+crashes with 0xC000027B. The tests are unaffected.
