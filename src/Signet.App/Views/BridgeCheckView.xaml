@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Windows-only, temporary: proves the shared Taquito bridge works on Windows until the
+     dashboard (WalletHomeView) is ported. Not part of upstream; delete it then. -->
+<UserControl
+    x:Class="Signet.App.Views.BridgeCheckView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Padding="24,16,24,16" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal" Spacing="14">
+            <Image Source="ms-appx:///Assets/Signet.png" Width="56" Height="56" />
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="Signet for Windows" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock x:Name="SubtitleText" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           Text="Port in progress: the Taquito bridge, running in V8" />
+            </StackPanel>
+        </StackPanel>
+
+        <Grid Grid.Row="1" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Node -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Node" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <ComboBox x:Name="NetworkPicker" Header="Network" HorizontalAlignment="Stretch"
+                              DisplayMemberPath="Name" SelectionChanged="NetworkChanged" />
+                    <TextBlock x:Name="NodeText" IsTextSelectionEnabled="True"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Ellipse x:Name="StatusDot" Width="12" Height="12" Fill="Gray" VerticalAlignment="Center" />
+                        <TextBlock x:Name="StatusText" Text="Not checked yet" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock x:Name="HeadText" IsTextSelectionEnabled="True" TextWrapping="Wrap"
+                               FontFamily="Consolas" FontSize="12" />
+                    <Button Content="Check node" Click="CheckNodeClicked" />
+                </StackPanel>
+            </Border>
+
+            <!-- Balance -->
+            <Border Grid.Column="1" Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Account" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <TextBox x:Name="AddressBox" Header="Address" FontFamily="Consolas"
+                             Text="tz1dCaMnnMJk76UodjewCK67ABiXWjcKj73N" TextChanged="AddressChanged" />
+                    <TextBlock x:Name="AddressInfo" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock x:Name="TotalText" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <StackPanel x:Name="BreakdownList" Spacing="2" />
+                    <Button Content="Get balance" Click="BalanceClicked" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Bridge log -->
+        <Border Grid.Row="2" Style="{StaticResource CardStyle}">
+            <Grid RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <TextBlock Text="Bridge log" Style="{StaticResource SubtitleTextBlockStyle}" />
+                <ScrollViewer x:Name="LogScroller" Grid.Row="1">
+                    <TextBlock x:Name="LogText" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap"
+                               IsTextSelectionEnabled="True" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </ScrollViewer>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

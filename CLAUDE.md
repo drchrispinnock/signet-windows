@@ -108,7 +108,11 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 ## Status
 
-Ported as of upstream `3b33fe1`: all of `Signet/Models` and the model-level tests. The app is
-still an empty window. Next, in order: the `TaquitoBridge` host, `TezosClientStore`/`WalletStore`,
-the chain and indexer services, `WalletViewModel`, then the views screen by screen. Run
-`dotnet test` and read the skipped tests for the detailed backlog.
+Ported as of upstream `3b33fe1`: all of `Signet/Models`, the `TaquitoBridge` host (with
+`JSONValue`, `OctezConnectStorage`, and `AtomicFile` for Foundation's `.atomic` writes), and their
+tests. `LedgerHID` is a placeholder that reports no devices, and `TezosClientStore` has only its
+directory paths so far. The app shows `Views/BridgeCheckView`, a temporary Windows-only page
+(node head, balance breakdown, live bridge log) that goes away when `WalletHomeView` is ported.
+Next, in order: `KeyGenerator`, `TezosClientStore`/`WalletStore`, the chain and indexer services,
+`WalletViewModel`, then the views screen by screen. Run `dotnet test` and read the skipped tests
+for the detailed backlog. The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.

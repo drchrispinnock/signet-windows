@@ -1,5 +1,6 @@
 using System.Text;
 using Signet.Models;
+using Signet.Services;
 
 namespace Signet.Tests;
 
@@ -67,11 +68,32 @@ public class OctezConnectBridgeTests
     /// Round-trips through the SDK's serializer offline: the bridge must at least load the SDK
     /// and understand a pairing code.
     /// </summary>
-    [Fact(Skip = Pending.Bridge)]
-    public void BridgeLoadsTheSDKAndDescribesOperations() { }
+    [Fact]
+    public async Task BridgeLoadsTheSDKAndDescribesOperations()
+    {
+        var described = await TaquitoBridge.Shared.Call("octezConnectDescribe",
+            """[{"kind":"transaction","destination":"KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton","amount":"1500000","parameters":{"entrypoint":"collect","value":{"int":"1"}}},{"kind":"delegation","delegate":"tz1dCaMnnMJk76UodjewCK67ABiXWjcKj73N"}]""");
+        var list = described.ArrayValue;
+        Assert.NotNull(list);
+        Assert.Equal(2, list.Count);
+        Assert.Equal(new JSONValue.String("collect"), list[0]["entrypoint"]);
+        Assert.Equal(new JSONValue.String("1500000"), list[0]["amountMutez"]);
+        Assert.StartsWith("tz1", list[1]["delegate"]?.StringValue);
+    }
 
-    [Fact(Skip = Pending.Bridge), Trait(Category.Name, Category.Network)]
-    public void StartsTheWalletClientAgainstTheRelay() { }
+    [Fact(Timeout = 120_000), Trait(Category.Name, Category.Network)]
+    public async Task StartsTheWalletClientAgainstTheRelay()
+    {
+        var token = TestContext.Current.CancellationToken;
+        TaquitoBridge.Shared.Storage = new InMemoryBridgeStorage();
+        var result = await TaquitoBridge.Shared.Call("octezConnectStart", "Signet tests", "").WaitAsync(token);
+        Assert.Equal(new JSONValue.Bool(true), result["started"]);
+        var permissions = await TaquitoBridge.Shared.Call("octezConnectPermissions").WaitAsync(token);
+        Assert.Empty(permissions.ArrayValue ?? [JSONValue.NullValue]);
+        // Missing storage keys must read as the SDK's defaults (empty lists), not undefined.
+        var peers = await TaquitoBridge.Shared.Call("octezConnectPeers").WaitAsync(token);
+        Assert.Empty(peers.ArrayValue ?? [JSONValue.NullValue]);
+    }
 }
 
 /// <summary>
@@ -190,7 +212,7 @@ public class DAppSignPayloadTests
     }
 
     /// <summary>The bridge enforces the rule itself, so a C# bug cannot get an operation signed.</summary>
-    [Fact(Skip = Pending.Bridge)]
+    [Fact(Skip = "Pending port: KeyGenerator")]
     public void BridgeRefusesOperationBytesAndSignsMicheline() { }
 }
 

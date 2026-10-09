@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Signet.Models;
+using Signet.Services;
 
 namespace Signet.Tests;
 
@@ -83,8 +84,12 @@ public class LedgerFramingTests
 /// <summary>Ledger bridge</summary>
 public class LedgerBridgeTests
 {
-    [Fact(DisplayName = "lists devices without crashing when none is plugged in", Skip = Pending.Bridge)]
-    public void Devices() { }
+    [Fact(DisplayName = "lists devices without crashing when none is plugged in")]
+    public async Task Devices()
+    {
+        var list = await TaquitoBridge.Shared.Call("ledgerDevices");
+        Assert.NotNull(list.ArrayValue);
+    }
 
     [Fact(DisplayName = "signing with no Ledger connected fails cleanly", Skip = Pending.Ledger)]
     public void NoDevice() { }

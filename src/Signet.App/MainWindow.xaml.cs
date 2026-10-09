@@ -8,5 +8,6 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
         AppWindow.SetIcon("Assets/Signet.ico");
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(1100, 820));
     }
 }
