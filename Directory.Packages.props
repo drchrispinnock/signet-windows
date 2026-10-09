@@ -1,0 +1,20 @@
+<Project>
+  <!-- Versions are pinned here for every project (central package management). -->
+  <ItemGroup>
+    <!-- App -->
+    <PackageVersion Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
+    <PackageVersion Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
+    <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageVersion Include="Velopack" Version="1.2.161" />
+    <!-- Core: JavaScript host for the shared Taquito bridge (replaces JavaScriptCore) -->
+    <PackageVersion Include="Microsoft.ClearScript.V8" Version="7.5.1.1" />
+    <PackageVersion Include="Microsoft.ClearScript.V8.Native.win-x64" Version="7.5.1.1" />
+    <PackageVersion Include="Microsoft.ClearScript.V8.Native.win-arm64" Version="7.5.1.1" />
+    <!-- Core: Ledger USB HID (replaces IOKit), Ed25519 (replaces CryptoKit), QR codes (replaces Core Image) -->
+    <PackageVersion Include="HidSharp" Version="2.6.4" />
+    <PackageVersion Include="NSec.Cryptography" Version="26.4.0" />
+    <PackageVersion Include="QRCoder" Version="1.8.0" />
+    <!-- Tests -->
+    <PackageVersion Include="xunit.v3" Version="4.0.1" />
+  </ItemGroup>
+</Project>

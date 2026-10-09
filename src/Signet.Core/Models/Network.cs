@@ -1,0 +1,177 @@
+using System.Globalization;
+
+namespace Signet.Models;
+
+/// <summary>
+/// A chain the wallet can talk to and the node it uses for it. RPC URLs come from
+/// https://teztnets.com/teztnets.json; Ghostnet was retired, so Shadownet is the long-running
+/// public testnet. <c>RpcURL</c> is the node in use; <c>DefaultRPCURL</c> is the one we ship, which the
+/// user can override per network in Settings.
+/// </summary>
+public sealed record Network
+{
+    public enum FaucetKindValue
+    {
+        /// <summary>tacoinfra/tezos-faucet: <c>/info</c>, <c>/challenge</c> (proof of work), <c>/verify</c>.</summary>
+        Teztnets,
+        /// <summary>Nomadic Labs' PQPark faucet: <c>/info</c>, then <c>POST /send {to, amount}</c>.</summary>
+        Pqpark,
+    }
+
+    public Network(string name, string chain, Uri rpcURL, Uri? tezosDomainsURL, Uri? tzktURL, Uri? faucetURL = null,
+                   FaucetKindValue faucetKind = FaucetKindValue.Teztnets, Uri? explorerURL = null)
+    {
+        Name = name;
+        Chain = chain;
+        RpcURL = rpcURL;
+        DefaultRPCURL = rpcURL;
+        TezosDomainsURL = tezosDomainsURL;
+        TzktURL = tzktURL;
+        FaucetURL = faucetURL;
+        FaucetKind = faucetKind;
+        ExplorerURL = explorerURL;
+    }
+
+    public string Id => Name;
+
+    public string Name { get; }
+    /// <summary>Which chain this node serves, e.g. "mainnet" or "shadownet".</summary>
+    public string Chain { get; }
+    /// <summary>The node in use. Defaults to <c>DefaultRPCURL</c>.</summary>
+    public Uri RpcURL { get; init; }
+    /// <summary>The node we ship for this network.</summary>
+    public Uri DefaultRPCURL { get; }
+    /// <summary>Tezos Domains GraphQL endpoint, or <c>null</c> where the service does not run.</summary>
+    public Uri? TezosDomainsURL { get; }
+    /// <summary>TzKT indexer base URL (tokens, NFTs), or <c>null</c> where none is available.</summary>
+    public Uri? TzktURL { get; }
+    /// <summary>Testnet faucet, or <c>null</c> on mainnet (from teztnets.json).</summary>
+    public Uri? FaucetURL { get; init; }
+    /// <summary>Which faucet protocol <c>FaucetURL</c> speaks.</summary>
+    public FaucetKindValue FaucetKind { get; init; }
+    /// <summary>Block explorer for this network, used to link operations; <c>null</c> when there is none.</summary>
+    public Uri? ExplorerURL { get; init; }
+
+    /// <summary>Where to look an operation up, if this network has an explorer.</summary>
+    public Uri? ExplorerURLForOperation(string hash) => ExplorerLink(hash, "op");
+
+    /// <summary>Where to look a contract up, if this network has an explorer.</summary>
+    public Uri? ExplorerURLForContract(string address) => ExplorerLink(address, "contract");
+
+    // tzkt.io takes the hash as a path; self-hosted TzKT front ends use the hash route.
+    private Uri? ExplorerLink(string item, string route)
+    {
+        if (ExplorerURL is null) return null;
+        var baseText = ExplorerURL.AbsoluteString();
+        return ExplorerURL.Host == "tzkt.io" ? new Uri($"{baseText}/{item}") : new Uri($"{baseText}/#{route}/{item}");
+    }
+
+    public bool IsMainnet => Chain == "mainnet";
+    public bool IsUsingDefaultNode => RpcURL == DefaultRPCURL;
+
+    /// <summary>The same network talking to <c>url</c> instead of its current node.</summary>
+    public Network UsingNode(Uri url) => this with { RpcURL = url };
+
+    /// <summary>
+    /// Parses what the user typed for a node. A bare host such as <c>rpc.tzbeta.net</c> (optionally with
+    /// a port or path) is taken as HTTPS; an explicit <c>http://</c> or <c>https://</c> is kept.
+    /// Trailing slashes are dropped so paths append cleanly.
+    /// </summary>
+    public static Uri? NodeURL(string text)
+    {
+        var trimmed = text.Trim().TrimEnd('/');
+        if (trimmed.Length == 0 || trimmed.Contains(' ')) return null;
+        var lower = trimmed.ToLowerInvariant();
+        if (!lower.StartsWith("http://") && !lower.StartsWith("https://")) trimmed = "https://" + trimmed;
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var url)) return null;
+        var host = url.Host;
+        if (host.Length == 0 || !(host.Contains('.') || host == "localhost")) return null;
+        return url;
+    }
+
+    /// <summary>The node as shown to the user: the full URL, e.g. <c>https://rpc.tzbeta.net</c>.</summary>
+    public string NodeDisplayText => NodeDisplayTextStandalone(RpcURL);
+
+    public static string NodeDisplayTextStandalone(Uri url) => url.AbsoluteString();
+
+    public static readonly Network Mainnet = new(
+        name: "Mainnet",
+        chain: "mainnet",
+        rpcURL: new Uri("https://rpc.tzbeta.net"),
+        tezosDomainsURL: new Uri("https://api.tezos.domains/graphql"),
+        tzktURL: new Uri("https://api.tzkt.io"),
+        explorerURL: new Uri("https://tzkt.io"));
+
+    public static readonly Network Shadownet = new(
+        name: "Shadownet",
+        chain: "shadownet",
+        rpcURL: new Uri("https://rpc.shadownet.teztnets.com"),
+        tezosDomainsURL: null,
+        tzktURL: new Uri("https://api.shadownet.tzkt.io"),
+        faucetURL: new Uri("https://faucet.shadownet.teztnets.com"));
+
+    public static readonly Network Bakingnet = new(
+        name: "Bakingnet",
+        chain: "bakingnet",
+        rpcURL: new Uri("https://rpc.bakingnet.teztnets.com"),
+        tezosDomainsURL: null,
+        tzktURL: new Uri("https://api.bakingnet.tzkt.io"),
+        faucetURL: new Uri("https://faucet.bakingnet.teztnets.com"));
+
+    /// <summary>The current protocol-proposal testnet (Ushuaianet at the time of writing).</summary>
+    public static readonly Network Currentnet = new(
+        name: "Currentnet",
+        chain: "currentnet",
+        rpcURL: new Uri("https://rpc.currentnet.teztnets.com"),
+        tezosDomainsURL: null,
+        tzktURL: null,
+        faucetURL: new Uri("https://faucet.currentnet.teztnets.com"));
+
+    /// <summary>
+    /// Weeklynet restarts every Wednesday from tezos/tezos master and its hosts carry the launch
+    /// date (<c>rpc.weeklynet-YYYY-MM-DD.teztnets.com</c>); there is no dated-free alias, so the URL
+    /// is built from the most recent Wednesday (UTC). Set a node in Settings to pin another.
+    /// </summary>
+    public static Network Weeklynet => WeeklynetOn(DateTimeOffset.UtcNow);
+
+    public static Network WeeklynetOn(DateTimeOffset date)
+    {
+        var day = date.UtcDateTime.Date;
+        var daysSinceWednesday = ((int)day.DayOfWeek - (int)DayOfWeek.Wednesday + 7) % 7;
+        var stamp = day.AddDays(-daysSinceWednesday).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        return new Network(
+            name: "Weeklynet",
+            chain: "weeklynet",
+            rpcURL: new Uri($"https://rpc.weeklynet-{stamp}.teztnets.com"),
+            tezosDomainsURL: null,
+            tzktURL: null,
+            faucetURL: new Uri($"https://faucet.weeklynet-{stamp}.teztnets.com"));
+    }
+
+    /// <summary>
+    /// Nomadic Labs' post-quantum testnet (tz5 enabled, 6 s blocks). Not on teztnets.com: its node,
+    /// TzKT and faucet live under pqpark.dal.nomadic-labs.com, and the faucet is PQPark's own.
+    /// </summary>
+    public static readonly Network Quantumnet = new(
+        name: "Quantumnet",
+        chain: "quantumnet",
+        rpcURL: new Uri("https://quantumnet.pqpark.dal.nomadic-labs.com/rpc"),
+        tezosDomainsURL: null,
+        tzktURL: new Uri("https://quantumnet-tzkt.pqpark.dal.nomadic-labs.com"),
+        faucetURL: new Uri("https://quantumnet-faucet.pqpark.dal.nomadic-labs.com/api"),
+        faucetKind: FaucetKindValue.Pqpark,
+        explorerURL: new Uri("https://quantumnet-tzkt.pqpark.dal.nomadic-labs.com"));
+
+    /// <summary>A network of the user's own: any node they point it at. Defaults to a local node.</summary>
+    public static readonly Network Custom = new(
+        name: "Custom",
+        chain: "custom",
+        rpcURL: new Uri("http://localhost:8732"),
+        tezosDomainsURL: null,
+        tzktURL: null);
+
+    /// <summary>Networks offered in Settings, in display order, each with its default node.</summary>
+    public static IReadOnlyList<Network> All => [Mainnet, Shadownet, Bakingnet, Currentnet, Weeklynet, Quantumnet, Custom];
+
+    public static Network? Named(string? name) => All.FirstOrDefault(n => n.Name == name);
+}

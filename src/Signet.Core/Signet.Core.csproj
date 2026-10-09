@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Everything except the views: models, services, view models and the Taquito bridge host.
+       No UI dependencies, so `dotnet test` exercises it without WinUI. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Signet</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Microsoft.ClearScript.V8" />
+    <PackageReference Include="HidSharp" />
+    <PackageReference Include="NSec.Cryptography" />
+    <PackageReference Include="QRCoder" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The bundle is built and committed upstream; ship it as is, never copy or edit it here. -->
+    <EmbeddedResource Include="..\..\upstream\Signet\Resources\taquito-bridge.js" LogicalName="taquito-bridge.js" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Signet.Core.Tests" />
+  </ItemGroup>
+</Project>
