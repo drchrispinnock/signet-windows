@@ -65,8 +65,8 @@ public sealed partial class NetworkBadgeMenu : UserControl
             menu.Items.Add(item);
         }
         menu.Items.Add(new MenuFlyoutSeparator());
-        var networks = new MenuFlyoutItem { Text = "Networks…", IsEnabled = false };
-        ToolTipService.SetToolTip(networks, "Not available on Windows yet");
+        var networks = new MenuFlyoutItem { Text = "Networks…" };
+        networks.Click += (_, _) => model.IsPresentingNetworks = true;
         menu.Items.Add(networks);
     }
 }

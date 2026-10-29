@@ -27,8 +27,8 @@ public sealed partial class WalletHomeView : UserControl
         ActionsHost.Content = new ActionButtonsView(model);
         ActivityHost.Content = new ActivityTabsView(model);
         StatusHost.Content = new NodeStatusBar(model.NodeMonitor);
-        OperationsMenu.Opening += (_, _) => OperationsMenuItems.Fill(OperationsMenu, model);
-        OperationsMenuItems.InstallShortcuts(this, model);
+        OperationsMenu.Opening += (_, _) => OperationsMenuItems.Fill(OperationsMenu, model, OpenSettings);
+        OperationsMenuItems.InstallShortcuts(this, model, OpenSettings);
         model.PropertyChanged += Changed;
         Update();
         UpdateBalances();
@@ -84,6 +84,18 @@ public sealed partial class WalletHomeView : UserControl
         }
     }
 
+    /// <summary>
+    /// Settings has no flag on the model: upstream opens its own Settings scene with
+    /// <c>SettingsLink</c>. Here it is one more dialog, queued like the sheets.
+    /// </summary>
+    private bool settingsRequested;
+
+    public void OpenSettings()
+    {
+        settingsRequested = true;
+        _ = PresentSheets();
+    }
+
     /// <summary>Opens the sheet the model asks for. Only one ContentDialog can be open at a time, like a Mac sheet.</summary>
     private async Task PresentSheets()
     {
@@ -99,15 +111,18 @@ public sealed partial class WalletHomeView : UserControl
         else if (model.IsPresentingRememberKey) { dialog = new RememberKeySheet(model); reset = () => model.IsPresentingRememberKey = false; }
         else if (model.IsPresentingReceive && model.SelectedWallet is { } wallet) { dialog = new ReceiveSheet(wallet, model.Domains); reset = () => model.IsPresentingReceive = false; }
         else if (model.IsPresentingFaucet) { dialog = new FaucetSheet(model); reset = () => model.IsPresentingFaucet = false; }
+        else if (model.IsPresentingNetworks) { dialog = new NetworksSheet(model); reset = () => model.IsPresentingNetworks = false; }
+        else if (settingsRequested) { dialog = new SettingsView(model); reset = () => settingsRequested = false; }
         else
         {
             // Sheets not ported yet: drop the request rather than leave the flag set.
             model.IsPresentingSend = model.IsPresentingStaking = model.IsPresentingBaking = model.IsPresentingConnectLedger =
-                model.IsPresentingGovernance = model.IsPresentingNetworks = model.IsPresentingBuy = model.IsPresentingReceive = false;
+                model.IsPresentingGovernance = model.IsPresentingBuy = model.IsPresentingReceive = false;
             return;
         }
         dialogOpen = true;
         dialog.XamlRoot = XamlRoot;
+        dialog.RequestedTheme = Services.AppearanceApplier.Current;
         try { await dialog.ShowAsync(); }
         finally
         {

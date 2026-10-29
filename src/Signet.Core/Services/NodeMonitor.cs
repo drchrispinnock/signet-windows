@@ -176,10 +176,51 @@ public sealed partial class NodeMonitor : ObservableObject
         return $"{s / 86400} d";
     }
 
+    /// <summary>
+    /// Asks <c>node</c> which chain it serves (<c>/chains/main/chain_id</c>) and compares it with the
+    /// pinned id, so a node typed into Networks for the wrong network is warned about before it
+    /// is adopted, not only by the red status bar afterwards. No pinned id means nothing to compare.
+    /// </summary>
+    public static async Task<NodeIdentity> Identity(Uri node, string? expectedChainID, Probe probe)
+    {
+        if (expectedChainID is null) return new NodeIdentity.Unpinned();
+        var url = node.AppendingPathComponent("chains/main/chain_id");
+        ProbeReply? reply = null;
+        Exception? failure = null;
+        try { reply = await probe(url); }
+        catch (Exception e) { failure = e; }
+        return Identity(reply, failure, expectedChainID);
+    }
+
+    /// <summary>Pure for tests: the reply to <c>/chains/main/chain_id</c> against the pinned id. Exactly one of <c>reply</c>/<c>failure</c> is set.</summary>
+    public static NodeIdentity Identity(ProbeReply? reply, Exception? failure, string expectedChainID)
+    {
+        if (reply is null) return new NodeIdentity.Unchecked($"Cannot reach node: {failure?.Message ?? "no reply"}");
+        if (reply.Status is < 200 or >= 300) return new NodeIdentity.Unchecked($"Node returned HTTP {reply.Status}");
+        // A chain id is base58 with the "Net" prefix, 15 characters; anything else is not a node answering.
+        string? found = null;
+        try { if (JsonNode.Parse(reply.Data) is JsonValue v && v.TryGetValue<string>(out var s)) found = s; }
+        catch (JsonException) { }
+        if (found is null || !found.StartsWith("Net", StringComparison.Ordinal) || found.Length != 15)
+            return new NodeIdentity.Unchecked("Unexpected reply from node");
+        return found == expectedChainID ? new NodeIdentity.Matches(found) : new NodeIdentity.Mismatch(found, expectedChainID);
+    }
+
     public static async Task<ProbeReply> HttpProbe(Uri url)
     {
         var clock = Stopwatch.StartNew();
         var reply = await Http.Get(Http.Shared, url, TimeSpan.FromSeconds(8));
         return new ProbeReply(reply.Body, reply.Status, clock.Elapsed.TotalSeconds);
     }
+}
+
+/// <summary>What a node said about the chain it serves when asked before it is adopted (Networks sheet).</summary>
+public abstract record NodeIdentity
+{
+    /// <summary>The network pins no chain id (Weeklynet restarts weekly, Quantumnet may, Custom is anything).</summary>
+    public sealed record Unpinned : NodeIdentity;
+    public sealed record Matches(string ChainID) : NodeIdentity;
+    public sealed record Mismatch(string Found, string Expected) : NodeIdentity;
+    /// <summary>The node could not be asked, or answered with something that is not a chain id.</summary>
+    public sealed record Unchecked(string Reason) : NodeIdentity;
 }

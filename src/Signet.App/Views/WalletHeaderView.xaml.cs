@@ -155,7 +155,8 @@ public static class OperationsMenuItems
 {
     private const string NotYet = "Not available on Windows yet";
 
-    public static void Fill(MenuFlyout menu, WalletViewModel model)
+    /// <param name="openSettings">Upstream opens the Settings scene with <c>SettingsLink</c>; here the home view shows the dialog.</param>
+    public static void Fill(MenuFlyout menu, WalletViewModel model, Action openSettings)
     {
         menu.Items.Clear();
         var hasWallet = model.SelectedWallet is not null;
@@ -179,9 +180,11 @@ public static class OperationsMenuItems
         menu.Items.Add(Item("Baking…", null, help: NotYet));
         if (model.CanGovern) menu.Items.Add(Item("Governance…", null, help: NotYet));
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(Item("Networks…", null, help: NotYet));
-        menu.Items.Add(Item("Shielded settings…", null, help: NotYet));
-        menu.Items.Add(Item("Settings…", null, help: NotYet));
+        menu.Items.Add(Item("Networks…", () => model.IsPresentingNetworks = true));
+        // Upstream's "Shielded settings…" belongs with TzEL, which this port leaves out.
+        var settings = Item("Settings…", openSettings);
+        settings.KeyboardAcceleratorTextOverride = "Ctrl+,";
+        menu.Items.Add(settings);
         menu.Items.Add(Item("Refresh", () => _ = model.Refresh(), VirtualKey.R, VirtualKeyModifiers.Control, hasWallet));
     }
 
@@ -202,7 +205,7 @@ public static class OperationsMenuItems
     /// The burger menu's shortcuts, live while the window is open even when the menu is closed
     /// (the Mac's menu bar keeps them reachable the same way).
     /// </summary>
-    public static void InstallShortcuts(UIElement root, WalletViewModel model)
+    public static void InstallShortcuts(UIElement root, WalletViewModel model, Action openSettings)
     {
         void Add(VirtualKey key, VirtualKeyModifiers modifiers, Action action, Func<bool>? enabled = null)
         {
@@ -218,6 +221,7 @@ public static class OperationsMenuItems
         Add(VirtualKey.I, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => model.IsPresentingImportAccount = true);
         Add(VirtualKey.N, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => model.IsPresentingAddAddress = true);
         Add(VirtualKey.R, VirtualKeyModifiers.Control, () => _ = model.Refresh(), () => model.SelectedWallet is not null);
+        Add((VirtualKey)188, VirtualKeyModifiers.Control, openSettings);  // Ctrl+, (VK_OEM_COMMA), as on the Mac
         root.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;
     }
 }

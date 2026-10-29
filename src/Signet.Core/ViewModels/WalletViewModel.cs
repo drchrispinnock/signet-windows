@@ -237,6 +237,19 @@ public sealed partial class WalletViewModel : ObservableObject
     /// <summary>How the node monitor reaches a node; injectable for tests.</summary>
     private readonly NodeMonitor.Probe? nodeProbe;
 
+    /// <summary>
+    /// Asks the node typed in Networks which chain it serves before it is adopted, so a node for
+    /// the wrong network is warned about as it is entered, not only by the red status bar
+    /// afterwards. Networks that pin no chain id (Weeklynet, Quantumnet, Custom) are <c>Unpinned</c>.
+    /// Nothing is changed by asking. (Upstream's <c>layer:</c> argument waits for Etherlink.)
+    /// </summary>
+    public async Task<NodeIdentity> CheckNode(string text, Network @base)
+    {
+        if (Network.NodeURL(text) is not { } url) return new NodeIdentity.Unchecked(Network.NodeURLProblem(text));
+        var template = Network.Named(@base.Name) ?? @base;
+        return await NodeMonitor.Identity(url, template.ExpectedChainID, nodeProbe ?? NodeMonitor.HttpProbe);
+    }
+
     /// <summary>The node in use (saved or default) for any network, without switching to it.</summary>
     public Uri NodeURL(Network @base) => Resolved(Network.Named(@base.Name) ?? @base).RpcURL;
 

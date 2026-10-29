@@ -21,5 +21,6 @@ public sealed partial class MainWindow : Window
             presenter.PreferredMinimumHeight = 720;
         }
         Host.Content = new WalletHomeView(model);
+        Host.RequestedTheme = Services.AppearanceApplier.Current;
     }
 }

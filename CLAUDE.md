@@ -140,11 +140,15 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   `AssetListView`, `DelegateRowView`, `AccountNotOnChainView`, `ActivityTabsView` (transactions,
   tokens, NFTs), `NodeStatusBar`, `AccountAvatarView`, and the sheets Create, Import, Rename,
   Add address, Export, Forget, Remember key, Receive (Tezos side only) and Faucet.
+- `NetworksSheet` (node per network with the chain check, `NodeIdentity`; TzKT, explorer and
+  faucet links; no Layer 2 fields) and `SettingsView` (appearance, launch disclaimer, wallet
+  directory, backups; no Updates or Developer sections yet). Settings is a dialog opened from the
+  burger menu or Ctrl+, rather than a separate window; `Appearance` is applied by `AppearanceApplier`.
 - `WalletBackup` is still the `3b33fe1` version (no manifest or locked snapshot, S05/S28).
 
 Not ported, shown disabled in the menus with "Not available on Windows yet": Send, Buy, Stake,
-Baking, Governance, Connect Ledger (and `LedgerHID`, still a placeholder), dApps, multisig,
-Networks, Shielded settings, Settings. Run `dotnet test` and read the skipped tests for the
+Baking, Governance, Connect Ledger (and `LedgerHID`, still a placeholder), dApps, multisig.
+Shielded settings is left out of the menu altogether while TzEL is out of scope. Run `dotnet test` and read the skipped tests for the
 detailed backlog. The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
 
 Windows-specific porting notes:

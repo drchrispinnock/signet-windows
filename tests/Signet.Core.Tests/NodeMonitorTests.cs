@@ -174,3 +174,58 @@ public class NewHeadRefreshTests
         Assert.Equal([101, 103], seen);
     }
 }
+
+/// <summary>A node typed into Networks is asked which chain it serves before it is adopted.</summary>
+public class NodeIdentityTests
+{
+    private static NodeMonitor.ProbeReply Reply(string body, int status = 200) => new(Encoding.UTF8.GetBytes(body), status, 0.1);
+
+    [Fact]
+    public void ComparesTheChainIdWithThePinnedOne()
+    {
+        Assert.Equal(new NodeIdentity.Matches("NetXdQprcVkpaWU"), NodeMonitor.Identity(Reply("\"NetXdQprcVkpaWU\""), null, "NetXdQprcVkpaWU"));
+        Assert.Equal(new NodeIdentity.Mismatch("NetXsqzbfFenSTS", "NetXdQprcVkpaWU"), NodeMonitor.Identity(Reply("\"NetXsqzbfFenSTS\""), null, "NetXdQprcVkpaWU"));
+        Assert.Equal(new NodeIdentity.Unchecked("Unexpected reply from node"), NodeMonitor.Identity(Reply("<html>"), null, "NetXdQprcVkpaWU"));
+        Assert.Equal(new NodeIdentity.Unchecked("Unexpected reply from node"), NodeMonitor.Identity(Reply("\"not a chain id\""), null, "NetXdQprcVkpaWU"));
+        Assert.Equal(new NodeIdentity.Unchecked("Node returned HTTP 503"), NodeMonitor.Identity(Reply("", 503), null, "NetXdQprcVkpaWU"));
+        var failed = Assert.IsType<NodeIdentity.Unchecked>(NodeMonitor.Identity(null, new HttpRequestException("refused"), "NetXdQprcVkpaWU"));
+        Assert.StartsWith("Cannot reach node", failed.Reason);
+    }
+
+    [Fact]
+    public void LongLivedNetworksArePinnedAndTheOthersAreNot()
+    {
+        Assert.Equal("NetXdQprcVkpaWU", Network.Mainnet.ExpectedChainID);
+        Assert.Equal("NetXsqzbfFenSTS", Network.Shadownet.ExpectedChainID);
+        Assert.Equal("NetXvNVUNbWHxGt", Network.Bakingnet.ExpectedChainID);
+        Assert.Equal("NetXpX8WSZkAZZA", Network.Ushuaianet.ExpectedChainID);
+        Assert.True(Network.Weeklynet.ExpectedChainID is null && Network.Quantumnet.ExpectedChainID is null && Network.Custom.ExpectedChainID is null);
+    }
+
+    [Fact]
+    public async Task TheModelAsksTheNodeBeforeItIsAdopted()
+    {
+        Task<NodeMonitor.ProbeReply> Probe(Uri url)
+        {
+            if (!url.AbsolutePath.EndsWith("/chains/main/chain_id", StringComparison.Ordinal)) throw new HttpRequestException("bad URL");
+            return url.Host switch
+            {
+                "right.example" => Task.FromResult(Reply("\"NetXsqzbfFenSTS\"")),
+                "wrong.example" => Task.FromResult(Reply("\"NetXdQprcVkpaWU\"")),
+                _ => throw new HttpRequestException("cannot connect"),
+            };
+        }
+        var model = new Signet.ViewModels.WalletViewModel([], new MockChainService(), nodeProbe: Probe);
+        Assert.Equal(new NodeIdentity.Matches("NetXsqzbfFenSTS"), await model.CheckNode("https://right.example", Network.Shadownet));
+        Assert.Equal(new NodeIdentity.Mismatch("NetXdQprcVkpaWU", "NetXsqzbfFenSTS"), await model.CheckNode("https://wrong.example", Network.Shadownet));
+        // Custom and Weeklynet pin nothing, so the node is not even asked.
+        Assert.IsType<NodeIdentity.Unpinned>(await model.CheckNode("https://down.example", Network.Custom));
+        Assert.IsType<NodeIdentity.Unpinned>(await model.CheckNode("https://down.example", Network.Weeklynet));
+        Assert.IsType<NodeIdentity.Unchecked>(await model.CheckNode("https://down.example", Network.Mainnet));
+        Assert.IsType<NodeIdentity.Unchecked>(await model.CheckNode("ftp://x", Network.Mainnet));
+        // Upstream also checks a Layer 2 node against the Etherlink chain; Etherlink is not ported yet.
+        // Asking changes nothing.
+        Assert.Equal(Network.Shadownet.DefaultRPCURL, model.NodeURL(Network.Shadownet));
+        Assert.Equal(Network.Mainnet, model.Network);
+    }
+}
