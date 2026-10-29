@@ -30,5 +30,9 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The Mac app's artwork, used as it is (like the bridge bundle): never copied into this repo. -->
+    <Content Include="..\..\upstream\Signet\Resources\Assets.xcassets\TezosToken.imageset\tezos-token-round.svg" Link="Assets\TezosToken.svg" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\upstream\Signet\Resources\Assets.xcassets\EtherlinkLogo.imageset\etherlink-avatar.svg" Link="Assets\EtherlinkLogo.svg" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\upstream\Signet\Resources\Assets.xcassets\ShieldLogo.imageset\shield.png" Link="Assets\ShieldLogo.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

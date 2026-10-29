@@ -8,12 +8,58 @@
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
+
+            <!-- Upstream's AccentColor: Tezos brand blue (#0D61FF), the Mac app's tint. -->
+            <Color x:Key="SystemAccentColor">#0D61FF</Color>
+            <Color x:Key="SystemAccentColorLight1">#3D80FF</Color>
+            <Color x:Key="SystemAccentColorLight2">#6E9FFF</Color>
+            <Color x:Key="SystemAccentColorLight3">#9EBFFF</Color>
+            <Color x:Key="SystemAccentColorDark1">#0B52D9</Color>
+            <Color x:Key="SystemAccentColorDark2">#0943B3</Color>
+            <Color x:Key="SystemAccentColorDark3">#07348C</Color>
+
+            <!-- Sheets are ContentDialogs; the Mac's are 420 to 560 points wide. -->
+            <x:Double x:Key="ContentDialogMaxWidth">640</x:Double>
+            <x:Double x:Key="ContentDialogMaxHeight">900</x:Double>
+
             <Style x:Key="CardStyle" TargetType="Border">
                 <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
                 <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="CornerRadius" Value="8" />
                 <Setter Property="Padding" Value="16" />
+            </Style>
+
+            <!-- Secondary and tertiary text, as SwiftUI's .secondary and .tertiary foreground styles. -->
+            <Style x:Key="SecondaryText" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Style>
+            <Style x:Key="CaptionSecondaryText" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Style>
+            <Style x:Key="SheetTitle" TargetType="TextBlock" BasedOn="{StaticResource SubtitleTextBlockStyle}" />
+            <Style x:Key="ErrorText" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCriticalBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+            <Style x:Key="CautionText" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCautionBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+            <Style x:Key="NoteText" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+            <Style x:Key="MonoText" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="Cascadia Mono, Consolas" />
+            </Style>
+
+            <!-- A grey lozenge such as "Watch only" beside the account name. -->
+            <Style x:Key="TagBorder" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource ControlAltFillColorTertiaryBrush}" />
+                <Setter Property="CornerRadius" Value="9" />
+                <Setter Property="Padding" Value="7,1,7,2" />
+                <Setter Property="VerticalAlignment" Value="Center" />
             </Style>
         </ResourceDictionary>
     </Application.Resources>

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Signet.App.Views.WalletHomeView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:views="using:Signet.App.Views">
+    <!-- The default screen from docs/spec/EXAMPLE.png: header, action row, asset list, activity.
+         With no wallets yet it shows a prompt to create the first address instead. -->
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="Dashboard" Padding="24" RowSpacing="24">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <views:WalletIdentityView x:Name="Identity" VerticalAlignment="Top" />
+                <ContentPresenter x:Name="BadgeHost" Grid.Column="1" VerticalAlignment="Top" Margin="0,4,0,0" />
+                <!-- The hamburger menu in the top-right corner: app-level actions, not wallet switching. -->
+                <Button x:Name="MenuButton" Grid.Column="2" VerticalAlignment="Top" Background="Transparent" BorderThickness="0"
+                        Padding="8,4" AutomationProperties.Name="Menu">
+                    <FontIcon Glyph="&#xE700;" FontSize="16" />
+                    <Button.Flyout>
+                        <MenuFlyout x:Name="OperationsMenu" Placement="BottomEdgeAlignedRight" />
+                    </Button.Flyout>
+                </Button>
+            </Grid>
+            <ContentPresenter x:Name="ActionsHost" Grid.Row="1" />
+            <StackPanel x:Name="BalancesHost" Grid.Row="2" Spacing="12" />
+            <Border Grid.Row="3" Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+            <ContentPresenter x:Name="ActivityHost" Grid.Row="4" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
+        </Grid>
+
+        <ContentPresenter x:Name="WelcomeHost" Padding="24" />
+
+        <TextBlock x:Name="ErrorLine" Grid.Row="0" VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="8,8,8,10"
+                   Style="{StaticResource ErrorText}" TextAlignment="Center" Visibility="Collapsed" />
+
+        <Border Grid.Row="1" Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+        <ContentPresenter x:Name="StatusHost" Grid.Row="2" HorizontalContentAlignment="Stretch" />
+    </Grid>
+</UserControl>

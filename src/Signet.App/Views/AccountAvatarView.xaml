@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Signet.App.Views.AccountAvatarView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    AutomationProperties.AccessibilityView="Raw">
+    <Grid x:Name="Root">
+        <Ellipse Fill="{ThemeResource ControlAltFillColorTertiaryBrush}" />
+        <FontIcon x:Name="Placeholder" Glyph="&#xE77B;" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        <Border CornerRadius="999">
+            <Image x:Name="Picture" Stretch="UniformToFill" />
+        </Border>
+        <Ellipse Stroke="{ThemeResource ControlStrokeColorDefaultBrush}" StrokeThickness="1" />
+    </Grid>
+</UserControl>

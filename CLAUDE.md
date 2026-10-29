@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A Windows port of **Signet**, the macOS Tezos wallet in SwiftUI. The Mac app is the source of
 truth and keeps evolving; this repo follows it. It is checked out as the git submodule `upstream/`
 (origin `drchrispinnock/signet`; a working copy usually also sits at `..\signet`). Before porting
-or changing a feature, read `upstream/CLAUDE.md` (detailed architecture), `upstream/spec/SPEC.md`
-and `upstream/spec/EXAMPLE.png`. Behaviour, wording, file formats and edge cases should match
+or changing a feature, read `upstream/CLAUDE.md` (detailed architecture), `upstream/docs/spec/SPEC.md`
+and `upstream/docs/spec/EXAMPLE.png`. Behaviour, wording, file formats and edge cases should match
 the Mac app unless Windows forces a difference. When it does, note the difference here.
 
 Stack: C# / .NET 10, WinUI 3 (Windows App SDK, unpackaged), CommunityToolkit.Mvvm, xUnit v3.
@@ -118,24 +118,34 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 ## Status
 
-Ported as of upstream `3b33fe1`:
-- All of `Signet/Models`.
-- The `TaquitoBridge` host, with `JSONValue`, `OctezConnectStorage`, and `AtomicFile` for
-  Foundation's `.atomic` writes.
-- `KeyGenerator`, `TezosClientStore`/`WalletStore`, `AppStateStore`, `WalletDirectorySettings`,
-  `WalletBackup`/`BackupSettings`.
-- The chain layer: `ChainService` (`IChainService`, `ChainError`), `MockChainService`,
-  `TaquitoChainService`, `TzKTService`, `TezosDomainsService`, `Profiles`, `IPFS`,
-  `FaucetService` and `NodeMonitor`.
-- The tests for all of the above.
+The pin is upstream `9b9fa4e`, but that commit was **not ported in full**: the jump from `3b33fe1`
+brought the account-management UI up to date and skipped whole subsystems. Ported as of `9b9fa4e`:
+- Models, except the Etherlink and shielded parts of `Network` (`l2…`, `shielded…`) and
+  `Multisig` (only `MultisigContract`). `AppState` carries the Layer 2 and shielded maps through unread.
+- The `TaquitoBridge` host (`JSONValue` with `IntValue`, `BridgeError.Typed`). Not yet: the
+  call policy (S30: signing calls, read deadlines, context discard), `OperationJournal` (the
+  bundle falls back to its in-memory journal), `LedgerSessions`, log redaction and rotation (S11).
+- `KeyGenerator`, `KeyImporter`, `SessionKeys`, `TezosClientStore` (journal, `contracts`, removal
+  snapshots, address-checked secrets), `WalletStore`, `AppStateStore` (nodes and service links),
+  `WalletDirectorySettings`, `EndpointPolicy` (host classification only), `QRCode`.
+- The chain layer with approved limits (S14), `SentOperation`, `Portfolio` (S26) and chain pinning
+  (S12): `ChainService`, `MockChainService`, `TaquitoChainService`, `TzKTService`, `NodeMonitor`
+  and the rest as before. Not yet: `BoundedHTTP`/`JSONBudget` (S19), `PublicHTTPClient`, `ArtworkCache`.
+- `WalletViewModel`: accounts (create, import, session keys, remember, rename, forget, export,
+  address book, octez-client import), refresh, networks and nodes, backups, faucet, staking and
+  governance pass-throughs. Not yet: TzEL, Etherlink, multisig, dApps, Ledger, Buy.
+  `SendViewModel` exists only for its `SendError`.
+- Views: `WalletHomeView` (with `NoWalletsView` and the disclaimer), the header
+  (`WalletIdentityView`, `OperationsMenuItems`), `NetworkBadgeMenu`, `ActionButtonsView`,
+  `AssetListView`, `DelegateRowView`, `AccountNotOnChainView`, `ActivityTabsView` (transactions,
+  tokens, NFTs), `NodeStatusBar`, `AccountAvatarView`, and the sheets Create, Import, Rename,
+  Add address, Export, Forget, Remember key, Receive (Tezos side only) and Faucet.
+- `WalletBackup` is still the `3b33fe1` version (no manifest or locked snapshot, S05/S28).
 
-`LedgerHID` is a placeholder that reports no devices. The app shows `Views/BridgeCheckView`, a
-temporary Windows-only page (node head, balance breakdown, read-only wallet listing, throwaway key
-generation, live bridge log) that goes away when `WalletHomeView` is ported. Next, in order:
-`KeyImporter`, `LedgerService`, `DAppConnectionManager`, `OctezConnect`, `MtPelerin`/`BuyProvider`,
-`WalletViewModel`/`SendViewModel`, then the views screen by screen. `ImageLoader` and `QRCode`
-belong with the views (WinUI imaging). Run `dotnet test` and read the skipped tests for the detailed backlog. The bridge log is
-at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
+Not ported, shown disabled in the menus with "Not available on Windows yet": Send, Buy, Stake,
+Baking, Governance, Connect Ledger (and `LedgerHID`, still a placeholder), dApps, multisig,
+Networks, Shielded settings, Settings. Run `dotnet test` and read the skipped tests for the
+detailed backlog. The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
 
 Windows-specific porting notes:
 - `UserDefaults` is a C# class of that name backed by `%LOCALAPPDATA%\Signet\preferences.json`.
@@ -145,7 +155,19 @@ Windows-specific porting notes:
   PowerShell 5.1's `Get-Content` reads them as ANSI, so a scripted rewrite garbles them (`â€¦`).
   Edit them with the editor tools, or with explicit UTF-8 encodings.
 - `WalletStore.add(_:secretKey:)` is `AddWithSecretKey`, because both Swift overloads take a string.
-- `wallet_lock` is an exclusive open with a 30-second wait instead of `lockf`.
+- `wallet_lock` is an exclusive open instead of `lockf`, tried for 5 seconds (`StoreError.Locked`)
+  behind a per-directory in-process lock, as upstream. The removal snapshot's storage identity
+  is the directory's path and creation time (upstream: device and inode).
+- Sheets are ContentDialogs deriving from `Views/Sheet.cs`; the primary button runs the action and
+  the dialog stays open with the error when it fails. Small dashboard controls and the sheets are
+  built in code (`Views/Foo.cs`, no XAML); the window shell and `WalletHomeView` have XAML.
+- There is no menu bar: upstream's Operations menu is the burger menu only, and its shortcuts
+  (Ctrl+N, Ctrl+Shift+I, Ctrl+Shift+N, Ctrl+R) are installed on the window.
+- `Services/ImageLoader.cs` (app) uses `BitmapImage`, trying each URL in turn; no disk cache yet.
+- The token, Etherlink and shield logos are linked from `upstream/Signet/Resources/Assets.xcassets`
+  in `Signet.App.csproj`, never copied.
+- `dotnet publish` of the app drops `Signet.pri` and the `.xbf` files and the result crashes with
+  0xC000027B. A runnable folder is the Release build output (`bin\x64\Release\…\win-x64`).
 - The Mac's chmod 600 assertions are dropped (see `TestSupport.cs`).
 
 This PC has Smart App Control enforced. It can block a freshly built, unsigned `Signet.exe` with
