@@ -27,14 +27,27 @@ public sealed partial class DelegateRowView : UserControl
         var row = new Grid { ColumnSpacing = 12 };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(44) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var text = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
         text.Children.Add(headline);
         text.Children.Add(subtitle);
         Grid.SetColumn(text, 1);
+        var chevron = new FontIcon { Glyph = "", FontSize = 12, Foreground = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"], VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(chevron, 2);
         row.Children.Add(icon);
         row.Children.Add(text);
-        ToolTipService.SetToolTip(row, "Delegation and staking (the Staking sheet is not available on Windows yet)");
-        Content = row;
+        row.Children.Add(chevron);
+        // Click → Staking. A contract delegates through its signers (upstream opens Sign multisig
+        // there); multisig is not ported, so a contract's row only informs.
+        var button = new Button
+        {
+            Content = row, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0), Padding = new Thickness(0, 4, 0, 4),
+        };
+        button.Click += (_, _) => { if (model.SelectedWallet?.Address.IsContract != true) model.IsPresentingStaking = true; };
+        ToolTipService.SetToolTip(button, "Delegation and staking");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, "Delegation and staking");
+        Content = button;
         model.PropertyChanged += Changed;
         Update();
     }

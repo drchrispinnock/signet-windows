@@ -148,9 +148,12 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   `ChainSidePicker`), with `OperationJournal` behind the bridge's `operationRead`/`operationSave`/
   `operationRemove` natives, stored in `%USERPROFILE%\.signet\pending_operations.json` (S15).
   `QuantumnetSendTests` is a Windows-only live round trip through the journal.
+- Staking: `StakingSheet` (delegate, change or remove the delegate, stake, unstake, finalize),
+  opened from the Stake tile and the delegate row. A contract's delegate row does nothing yet
+  (upstream opens Sign multisig there).
 - `WalletBackup` is still the `3b33fe1` version (no manifest or locked snapshot, S05/S28).
 
-Not ported, shown disabled in the menus with "Not available on Windows yet": Buy, Stake,
+Not ported, shown disabled in the menus with "Not available on Windows yet": Buy,
 Baking, Governance, Connect Ledger (and `LedgerHID`, still a placeholder), dApps, multisig.
 Shielded settings is left out of the menu altogether while TzEL is out of scope. Run `dotnet test` and read the skipped tests for the
 detailed backlog. The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.

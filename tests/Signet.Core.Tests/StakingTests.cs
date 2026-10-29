@@ -56,11 +56,37 @@ public class StakingOperationTests
 
 public class StakingViewModelTests
 {
-    [Fact(Skip = Pending.ViewModel)]
-    public void RefreshLoadsDelegateInfoAndOperationsRoundTrip() { }
+    private static readonly OperationLimits Limits = new("421", 200, 0);
 
-    [Fact(Skip = Pending.ViewModel)]
-    public void EncryptedWalletNeedsThePassword() { }
+    [Fact]
+    public async Task RefreshLoadsDelegateInfoAndOperationsRoundTrip()
+    {
+        var store = new InMemoryWalletStore();
+        foreach (var wallet in Signet.ViewModels.WalletViewModel.SampleWallets) store.AddWithSecretKey(wallet, $"edsk{wallet.Alias}");
+        var model = new Signet.ViewModels.WalletViewModel(chain: new MockChainService(), walletStore: store);
+        await model.Refresh();
+        Assert.Equal(MockChainService.CaptainStake, model.DelegateInfo?.Delegate);
+        Assert.False(model.DelegateInfo?.IsBaker);
+
+        var estimate = await model.EstimateStaking(new StakingOperation.Stake(1));
+        Assert.True(estimate.Fee > 0);
+        var result = await model.PerformStaking(new StakingOperation.Delegate(MockChainService.CaptainStake), estimate.Limits, null);
+        Assert.Equal("ooMockStakingsetDelegate", result.Hash);
+        Assert.Equal(9_000_000, result.Level);
+        Assert.Equal("Captain Stake", (await model.Bakers()).FirstOrDefault()?.Alias);
+    }
+
+    [Fact]
+    public async Task EncryptedWalletNeedsThePassword()
+    {
+        var vault = new Wallet("Vault", new Address("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"), publicKey: "edpkV", keyKind: KeyKind.Encrypted);
+        var store = new InMemoryWalletStore();
+        store.AddWithSecretKey(vault, "edeskFAKE");
+        var model = new Signet.ViewModels.WalletViewModel(chain: new MockChainService(), walletStore: store);
+        await Assert.ThrowsAsync<ChainError.WrongPassphrase>(() => model.PerformStaking(new StakingOperation.FinalizeUnstake(), Limits, "nope"));
+        var ok = await model.PerformStaking(new StakingOperation.FinalizeUnstake(), Limits, "correct horse");
+        Assert.Equal("ooMockStakingfinalizeUnstake", ok.Hash);
+    }
 }
 
 /// <summary>Helpers shared by the live Quantumnet tests.</summary>
