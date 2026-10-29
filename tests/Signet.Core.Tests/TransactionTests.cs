@@ -71,8 +71,24 @@ public class TransactionParsingTests
         Assert.Equal(TezosTransaction.TransactionDirection.SelfTransfer, txs[6].Direction);
     }
 
-    [Fact(Skip = Pending.ViewModel)] public void NamesPreferOurRecordsThenTheIndexer() { }
-    [Fact(Skip = Pending.ViewModel)] public void RefreshLoadsTransactions() { }
+    [Fact]
+    public void NamesPreferOurRecordsThenTheIndexer()
+    {
+        var model = new Signet.ViewModels.WalletViewModel(Signet.ViewModels.WalletViewModel.SampleWallets, new MockChainService());
+        Assert.Equal(("Savings", true), model.DisplayName(Signet.ViewModels.WalletViewModel.SampleWallets[1].Address, "Somebody Else"));
+        Assert.Equal(("Captain Stake", false), model.DisplayName(MockChainService.CaptainStake, "Captain Stake"));
+        var stranger = new Address("tz3WXYtyDUNL91qfiCJtVUX746QpNv5i5ve5");
+        Assert.Equal((stranger.Shortened(), false), model.DisplayName(stranger, null));
+    }
+
+    [Fact]
+    public async Task RefreshLoadsTransactions()
+    {
+        var model = new Signet.ViewModels.WalletViewModel(Signet.ViewModels.WalletViewModel.SampleWallets, new MockChainService());
+        await model.Refresh();
+        Assert.Equal(4, model.Transactions.Count);
+        Assert.Equal(Signet.ViewModels.WalletViewModel.ActivityTab.Transactions, model.ActivityTabSelection);
+    }
 
     [Fact, Trait(Category.Name, Category.Network)]
     public async Task CaptainStakeHasHistoryOnTzKT()

@@ -28,6 +28,8 @@ public abstract record NodeStatus
         _ => LightColor.Grey,
     };
 
+    public bool IsHealthy => this is Healthy;
+
     public int? Level => this switch
     {
         Healthy h => h.BlockLevel,
@@ -129,7 +131,7 @@ public sealed partial class NodeMonitor : ObservableObject
         Exception? failure = null;
         try { reply = await probe(url); }
         catch (Exception e) { failure = e; }
-        Status = Evaluate(reply, failure, DateTimeOffset.UtcNow);
+        Status = Evaluate(reply, failure, DateTimeOffset.UtcNow, Network.ExpectedChainID);
         LastChecked = DateTimeOffset.Now;
         if (Status.Level is { } level && level != lastLevel)
         {
@@ -140,7 +142,7 @@ public sealed partial class NodeMonitor : ObservableObject
     }
 
     /// <summary>Pure classification so it can be tested without a network. Exactly one of <c>reply</c>/<c>failure</c> is set.</summary>
-    public static NodeStatus Evaluate(ProbeReply? reply, Exception? failure, DateTimeOffset now)
+    public static NodeStatus Evaluate(ProbeReply? reply, Exception? failure, DateTimeOffset now, string? expectedChainID = null)
     {
         if (reply is null) return new NodeStatus.Unreachable($"Cannot reach node: {failure?.Message ?? "no reply"}");
         if (reply.Status is < 200 or >= 300) return new NodeStatus.Degraded($"Node returned HTTP {reply.Status}", null);
@@ -151,6 +153,9 @@ public sealed partial class NodeMonitor : ObservableObject
             obj["timestamp"] is not JsonValue ts || !ts.TryGetValue<string>(out var stamp) ||
             ParseTimestamp(stamp) is not { } time)
             return new NodeStatus.Degraded("Unexpected reply from node", null);
+        // The header names its chain: a node on another network is as wrong as no node (S12).
+        if (expectedChainID is not null && obj["chain_id"] is JsonValue cv && cv.TryGetValue<string>(out var found) && found != expectedChainID)
+            return new NodeStatus.Unreachable($"Node serves chain {found}, not {expectedChainID}");
 
         var age = (now - time).TotalSeconds;
         if (age > StaleHead) return new NodeStatus.Degraded($"Node is behind: head is {Describe(age)} old", level);

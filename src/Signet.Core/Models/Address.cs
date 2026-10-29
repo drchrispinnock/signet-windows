@@ -22,6 +22,12 @@ public readonly record struct Address(string Value)
     public bool IsContract => Value.StartsWith("KT1", StringComparison.Ordinal);
 
     /// <summary>
+    /// Whether the Etherlink rollup accepts this key through its Tezos-style RPC: a scheme check
+    /// only (tz1 to tz3 for now), not validity or anything about the account on chain.
+    /// </summary>
+    public bool IsUsableOnEtherlink => Scheme is AddressScheme.Tz1 or AddressScheme.Tz2 or AddressScheme.Tz3;
+
+    /// <summary>
     /// Shortened form for headers, e.g. <c>tz1VSUr8wwN...Th8Cjcjb</c>. Keeps the full prefix so the
     /// scheme stays visible and enough of each end to tell similar addresses apart.
     /// </summary>

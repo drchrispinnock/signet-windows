@@ -57,7 +57,7 @@ public class QuantumnetTests
         Assert.Equal(Network.FaucetKindValue.Pqpark, q.FaucetKind);
         Assert.Equal("https://quantumnet-tzkt.pqpark.dal.nomadic-labs.com/#op/ooX", q.ExplorerURLForOperation("ooX")?.AbsoluteString());
         Assert.Equal("https://tzkt.io/ooX", Network.Mainnet.ExplorerURLForOperation("ooX")?.AbsoluteString());
-        Assert.Null(Network.Shadownet.ExplorerURLForOperation("ooX"));
+        Assert.Equal(new Uri("https://shadownet.tzkt.io/ooX"), Network.Shadownet.ExplorerURLForOperation("ooX"));
         Assert.Contains("Quantumnet", Network.All.Select(n => n.Name));
     }
 

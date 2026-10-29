@@ -56,8 +56,22 @@ public class TezBalanceTests
 
 public class AccountNotOnChainTests
 {
-    [Fact(Skip = Pending.ViewModel)]
-    public void FlagsTheAccountInsteadOfFailing() { }
+    private sealed class MissingChain : TestChainService
+    {
+        public override Task<TezBalance> TezBalanceFor(Address address) => throw new ChainError.AccountNotOnChain(address);
+        public override Task<IReadOnlyList<string>> DomainsFor(Address address) => Task.FromResult<IReadOnlyList<string>>(["ghost.tez"]);
+    }
+
+    [Fact]
+    public async Task FlagsTheAccountInsteadOfFailing()
+    {
+        var model = new Signet.ViewModels.WalletViewModel(Signet.ViewModels.WalletViewModel.SampleWallets, new MissingChain());
+        await model.Refresh();
+        Assert.True(model.AccountNotOnChain);
+        Assert.Empty(model.Assets);  // the Etherlink row is not shown either
+        Assert.Null(model.ErrorMessage);
+        Assert.Equal(["ghost.tez"], model.Domains);  // other lookups still run
+    }
 
     /// <summary>A brand-new key has certainly never been funded, so both paths must report it as absent.</summary>
     [Fact, Trait(Category.Name, Category.Network)]

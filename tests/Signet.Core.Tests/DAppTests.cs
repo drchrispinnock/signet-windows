@@ -55,7 +55,7 @@ public class DAppRequestParsingTests
     {
         Assert.Equal(Network.Mainnet, DAppRequest.NetworkFor("mainnet", null));
         Assert.Equal(Network.Shadownet, DAppRequest.NetworkFor("shadownet", null));
-        Assert.Equal(Network.Currentnet, DAppRequest.NetworkFor("ushuaianet", null));
+        Assert.Equal(Network.Ushuaianet, DAppRequest.NetworkFor("ushuaianet", null));
         Assert.Equal(Network.Shadownet, DAppRequest.NetworkFor("custom", new Uri("https://rpc.shadownet.teztnets.com")));
         Assert.Equal("custom", DAppRequest.NetworkFor("custom", new Uri("https://rpc.example.org"))?.Chain);
         Assert.Null(DAppRequest.NetworkFor("ghostnet", null));
@@ -216,7 +216,7 @@ public class DAppSignPayloadTests
     public async Task BridgeRefusesOperationBytesAndSignsMicheline()
     {
         var material = await new KeyGenerator().Generate(AddressScheme.Tz1);
-        var spec = new SigningKey.Secret(material.SecretKey, null).BridgeSpec;
+        var spec = new SigningKey.Secret(material.SecretKey, null, new Address(material.Address)).BridgeSpec;
         foreach (var type in new[] { "micheline", "operation", "raw" })
             await Assert.ThrowsAnyAsync<Exception>(() => TaquitoBridge.Shared.Call("octezConnectSign", spec, Forged, type));
         await Assert.ThrowsAnyAsync<Exception>(() => TaquitoBridge.Shared.Call("octezConnectSign", spec, "0501000000076865792074657a"));

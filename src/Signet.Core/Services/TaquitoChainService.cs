@@ -6,16 +6,12 @@ using Signet.Models;
 
 namespace Signet.Services;
 
-/// <summary>
-/// Live chain access through the Taquito bridge. Anything the bridge does not provide yet is
-/// delegated to <c>Fallback</c> so the UI stays complete while features land one at a time.
-/// </summary>
-public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? bridge = null, IChainService? fallback = null, HttpClient? http = null)
+/// <summary>Live chain access through the Taquito bridge.</summary>
+public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? bridge = null, HttpClient? http = null)
     : IChainService
 {
     public Network Network { get; } = network ?? Network.Mainnet;
     private readonly TaquitoBridge bridge = bridge ?? TaquitoBridge.Shared;
-    public IChainService Fallback { get; } = fallback ?? new MockChainService();
     private readonly HttpClient http = http ?? Http.Shared;
 
     private string Rpc => Network.RpcURL.AbsoluteString();
@@ -65,7 +61,8 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
         catch (JsonException) { throw new FormatException("The node's balance reply could not be parsed."); }
     }
 
-    public Task<decimal> EtherlinkBalanceFor(Address address) => Fallback.EtherlinkBalanceFor(address);
+    /// <summary>Etherlink is not ported yet, so no network has a Layer 2 node to ask.</summary>
+    public Task<decimal> EtherlinkBalanceFor(Address address) => throw new ChainError.NoEtherlinkNode();
 
     public async Task<IReadOnlyList<TezosTransaction>> RecentTransactionsFor(Address address, int limit)
     {
@@ -89,19 +86,48 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
     {
         if (wallet.PublicKey is not { } publicKey)
             throw new TaquitoBridge.BridgeError.JavaScript($"Account “{wallet.Alias}” has no public key, so its fees cannot be estimated.");
+        await VerifyChain();
         var result = await bridge.Call("estimateTransfer", Rpc, wallet.Address.Value, publicKey, destination.Value, Mutez.FromTez(amount));
-        if (Mutez.ToTez(result["feeMutez"]?.StringValue) is not { } fee ||
-            Mutez.ToTez(result["burnMutez"]?.StringValue) is not { } burn ||
-            Mutez.ToTez(result["totalCostMutez"]?.StringValue) is null)
-            throw new TaquitoBridge.BridgeError.JavaScript($"unexpected estimate payload: {result}");
-        return new TransferEstimate(fee, burn, amount + fee + burn,
-                                    (int)(result["gasLimit"]?.DoubleValue ?? 0), (int)(result["storageLimit"]?.DoubleValue ?? 0));
+        return EstimateFrom(result, amount);
     }
 
-    public async Task<string> SendTransfer(Wallet wallet, SigningKey signer, Address destination, decimal amount)
+    /// <summary>An estimate as the bridge reports it: fee, burn and the limits to send with (S14, S20).</summary>
+    public static TransferEstimate EstimateFrom(JSONValue result, decimal amount = 0)
     {
-        var result = await Signing(() => bridge.Call("sendTransfer", Rpc, signer.BridgeSpec, destination.Value, Mutez.FromTez(amount)));
-        return result["hash"]?.StringValue ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected send payload: {result}");
+        if (Mutez.ToTez(result["feeMutez"]?.StringValue) is not { } fee ||
+            Mutez.ToTez(result["burnMutez"]?.StringValue) is not { } burn ||
+            result["gasLimit"]?.IntValue is not { } gasLimit || result["storageLimit"]?.IntValue is not { } storageLimit ||
+            OperationLimits.From(result["limits"]) is not { } limits)
+            throw new TaquitoBridge.BridgeError.JavaScript($"unexpected estimate payload: {result}");
+        return new TransferEstimate(fee, burn, amount + fee + burn, gasLimit, storageLimit, limits);
+    }
+
+    /// <summary>Refuses the node before anything is estimated or signed when it serves another chain (S12).</summary>
+    public async Task VerifyChain()
+    {
+        if (Network.ExpectedChainID is not { } expected) return;
+        await bridge.Call("assertChain", Rpc, expected);
+    }
+
+    public async Task<SentOperation> SendTransfer(Wallet wallet, SigningKey signer, Address destination, decimal amount, OperationLimits limits)
+    {
+        await VerifyChain();
+        var result = await Signing(() => bridge.Call("sendTransfer", Rpc, signer.BridgeSpec, destination.Value, Mutez.FromTez(amount), limits.Json));
+        return SentOperation.From(result) ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected send payload: {result}");
+    }
+
+    public async Task<SentOperation?> PendingOperationFor(Address address)
+    {
+        await VerifyChain();
+        var value = await bridge.Call("pendingOperation", Rpc, address.Value);
+        return value.IsNull ? null : SentOperation.From(value);
+    }
+
+    public async Task<SentOperation> Rebroadcast(SentOperation sent)
+    {
+        if (sent.SignedBytes is not { } bytes) throw new TaquitoBridge.BridgeError.JavaScript($"There are no signed bytes to send again for {sent.Hash}.");
+        var result = await bridge.Call("injectSignedBytes", Rpc, bytes);
+        return SentOperation.From(result) ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected injection payload: {result}");
     }
 
     /// <summary>
@@ -117,26 +143,21 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
         }
     }
 
+    /// <summary>
+    /// Every operation is forged and injected locally, so the block watcher is the one way to
+    /// see it land: it scans up to 15 blocks from the recorded level and returns the block's.
+    /// </summary>
     public async Task<int> WaitForConfirmation(string operationHash)
     {
-        try
-        {
-            var result = await bridge.Call("waitForConfirmation", operationHash, 1);
-            return (int)(result.DoubleValue ?? 0);
-        }
-        catch (TaquitoBridge.BridgeError.JavaScript e) when (e.Message.Contains("unknown operation"))
-        {
-            // Raw operations are not tracked by Taquito; watch the chain for them instead.
-            var result = await bridge.Call("waitForRawOperation", Rpc, operationHash, 15);
-            return (int)(result.DoubleValue ?? 0);
-        }
+        var result = await bridge.Call("waitForRawOperation", Rpc, operationHash, 15);
+        return result.IntValue ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected confirmation payload: {result}");
     }
 
     public async Task<DelegateInfo> DelegateInfoFor(Address address)
     {
         var r = await bridge.Call("getDelegateInfo", Rpc, address.Value);
         static Address? Addr(JSONValue? v) => v?.StringValue is { } s ? new Address(s) : null;
-        static int? Int(JSONValue? v) => v?.DoubleValue is { } d ? (int)d : null;
+        static int? Int(JSONValue? v) => v?.IntValue;
         DelegateInfo.BakerRecord? baker = null;
         if (r["baker"] is { ObjectValue: not null } b)
         {
@@ -186,26 +207,22 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
     {
         if (wallet.PublicKey is not { } publicKey)
             throw new TaquitoBridge.BridgeError.JavaScript($"Account “{wallet.Alias}” has no public key, so its fees cannot be estimated.");
+        await VerifyChain();
         if (RawContents(operation) is { } contents)
-        {
-            var raw = await bridge.Call("estimateRawOperation", Rpc, wallet.Address.Value, publicKey, JsonSerializer.Serialize(contents));
-            var rawFee = Mutez.ToTez(raw["feeMutez"]?.StringValue) ?? 0;
-            return new TransferEstimate(rawFee, 0, rawFee, (int)(raw["gasLimit"]?.DoubleValue ?? 0), 0);
-        }
+            return EstimateFrom(await bridge.Call("estimateRawOperation", Rpc, wallet.Address.Value, publicKey, JsonSerializer.Serialize(contents)));
         var r = await bridge.Call("estimateStakingOperation", Rpc, wallet.Address.Value, publicKey, operation.BridgeKind,
                                   JsonSerializer.Serialize(operation.BridgeArgument));
-        if (Mutez.ToTez(r["feeMutez"]?.StringValue) is not { } fee || Mutez.ToTez(r["burnMutez"]?.StringValue) is not { } burn)
-            throw new TaquitoBridge.BridgeError.JavaScript($"unexpected estimate payload: {r}");
         var amount = operation is StakingOperation.Stake s ? s.Amount : 0;
-        return new TransferEstimate(fee, burn, amount + fee + burn, (int)(r["gasLimit"]?.DoubleValue ?? 0), (int)(r["storageLimit"]?.DoubleValue ?? 0));
+        return EstimateFrom(r, amount);
     }
 
-    public async Task<string> PerformStaking(StakingOperation operation, Wallet wallet, SigningKey signer)
+    public async Task<SentOperation> PerformStaking(StakingOperation operation, Wallet wallet, SigningKey signer, OperationLimits limits)
     {
+        await VerifyChain();
         var r = await Signing(() => RawContents(operation) is { } contents
-            ? bridge.Call("sendRawOperation", Rpc, signer.BridgeSpec, JsonSerializer.Serialize(contents))
-            : bridge.Call("sendStakingOperation", Rpc, signer.BridgeSpec, operation.BridgeKind, JsonSerializer.Serialize(operation.BridgeArgument)));
-        return r["hash"]?.StringValue ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected payload: {r}");
+            ? bridge.Call("sendRawOperation", Rpc, signer.BridgeSpec, JsonSerializer.Serialize(contents), limits.Json)
+            : bridge.Call("sendStakingOperation", Rpc, signer.BridgeSpec, operation.BridgeKind, JsonSerializer.Serialize(operation.BridgeArgument), limits.Json));
+        return SentOperation.From(r) ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected payload: {r}");
     }
 
     public async Task<string> ProofOfPossession(SigningKey signer)
@@ -230,7 +247,7 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
         static decimal Dec(JSONValue? v) =>
             v?.StringValue is { } s && decimal.TryParse(s, NumberStyles.Number, CultureInfo.InvariantCulture, out var d) ? d
             : v?.DoubleValue is { } n ? (decimal)n : 0;
-        static int? Int(JSONValue? v) => v?.DoubleValue is { } d ? (int)d : null;
+        static int? Int(JSONValue? v) => v?.IntValue;
         return new GovernanceInfo
         {
             Kind = VotingPeriodKindExtensions.FromRawValue(r["kind"]?.StringValue),
@@ -254,20 +271,27 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
 
     public async Task<string> PerformGovernance(GovernanceOperation operation, Wallet wallet, SigningKey signer)
     {
+        await VerifyChain();
         var r = await Signing(() => bridge.Call("sendGovernanceOperation", Rpc, signer.BridgeSpec, operation.BridgeKind,
                                                 JsonSerializer.Serialize(operation.BridgeArgument)));
         return r["hash"]?.StringValue ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected payload: {r}");
     }
 
-    /// <summary>Fungible tokens from TzKT. Indexer trouble is logged and shown as an empty list.</summary>
-    public async Task<IReadOnlyList<AssetBalance>> TokenBalancesFor(Address address)
+    public async Task<IReadOnlyList<AssetBalance>> TokenBalancesFor(Address address) =>
+        Network.TzktURL is { } tzkt ? await new TzKTService(tzkt, http).FungibleTokensFor(address) : [];
+
+    /// <summary>
+    /// One paginated indexer snapshot for both tabs. Indexer trouble is reported as
+    /// <c>Unavailable</c>, never as an account with nothing in it (S26).
+    /// </summary>
+    public async Task<Portfolio> PortfolioFor(Address address)
     {
-        if (Network.TzktURL is not { } tzkt) return [];
-        try { return await new TzKTService(tzkt, http).FungibleTokensFor(address); }
+        if (Network.TzktURL is not { } tzkt) return Portfolio.Empty;
+        try { return await new TzKTService(tzkt, http).PortfolioFor(address); }
         catch (Exception e) when (IsLookupFailure(e))
         {
-            Trace.WriteLine($"TzKT token lookup failed for {address}: {e.Message}");
-            return [];
+            Trace.WriteLine($"TzKT portfolio lookup failed for {address}: {e.Message}");
+            return new Portfolio([], [], new Portfolio.PortfolioState.Unavailable(e.Message));
         }
     }
 
@@ -286,20 +310,9 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
         }
     }
 
-    /// <summary>
-    /// NFTs from the TzKT indexer. Indexer trouble is logged and shown as an empty grid rather
-    /// than failing the whole refresh.
-    /// </summary>
-    public async Task<IReadOnlyList<NFT>> NftsFor(Address address)
-    {
-        if (Network.TzktURL is not { } tzkt) return [];
-        try { return await new TzKTService(tzkt, http).NftsFor(address); }
-        catch (Exception e) when (IsLookupFailure(e))
-        {
-            Trace.WriteLine($"TzKT NFT lookup failed for {address}: {e.Message}");
-            return [];
-        }
-    }
+    /// <summary>NFTs from the TzKT indexer.</summary>
+    public async Task<IReadOnlyList<NFT>> NftsFor(Address address) =>
+        Network.TzktURL is { } tzkt ? await new TzKTService(tzkt, http).NftsFor(address) : [];
 
     /// <summary>Network, timeout and parse failures: what upstream's bare <c>catch</c> absorbs for indexer lookups.</summary>
     private static bool IsLookupFailure(Exception e) =>

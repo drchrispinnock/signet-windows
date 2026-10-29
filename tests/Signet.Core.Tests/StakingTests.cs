@@ -100,7 +100,9 @@ public class QuantumnetStakingTests
     public async Task DelegateStakeAndRegisterOnQuantumnet()
     {
         var (wallet, material, chain) = await Quantumnet.FundedTz1("stake-test");
-        var signer = new SigningKey.Secret(material.SecretKey, null);
+        var signer = new SigningKey.Secret(material.SecretKey, null, wallet.Address);
+        async Task<string> Perform(StakingOperation operation) =>
+            (await chain.PerformStaking(operation, wallet, signer, (await chain.EstimateStaking(operation, wallet)).Limits!)).Hash;
 
         var before = await chain.DelegateInfoFor(wallet.Address);
         Assert.True(before.Delegate is null && !before.IsBaker);
@@ -109,14 +111,14 @@ public class QuantumnetStakingTests
         var baker = bakers.FirstOrDefault(b => b.AcceptsStaking == true) ?? bakers.FirstOrDefault();
         Assert.True(baker is not null, "no bakers listed on Quantumnet");
 
-        var d = await chain.PerformStaking(new StakingOperation.Delegate(baker.Address), wallet, signer);
+        var d = await Perform(new StakingOperation.Delegate(baker.Address));
         await chain.WaitForConfirmation(d);
         var delegated = await chain.DelegateInfoFor(wallet.Address);
         Assert.Equal(baker.Address, delegated.Delegate);
 
         if (delegated.DelegateAcceptsStaking == true)
         {
-            var s = await chain.PerformStaking(new StakingOperation.Stake(5), wallet, signer);
+            var s = await Perform(new StakingOperation.Stake(5));
             await chain.WaitForConfirmation(s);
             await Task.Delay(TimeSpan.FromSeconds(8), TestContext.Current.CancellationToken);
             var after = await chain.TezBalanceFor(wallet.Address);
@@ -127,7 +129,7 @@ public class QuantumnetStakingTests
             TestContext.Current.SendDiagnosticMessage($"baker {baker.Alias ?? baker.Address.Value} does not accept staking; skipped the stake step");
         }
 
-        var r = await chain.PerformStaking(new StakingOperation.RegisterAsBaker(), wallet, signer);
+        var r = await Perform(new StakingOperation.RegisterAsBaker());
         await chain.WaitForConfirmation(r);
         var registered = await chain.DelegateInfoFor(wallet.Address);
         Assert.True(registered.IsBaker);
@@ -169,15 +171,17 @@ public class QuantumnetBakerParametersTests
     public async Task SetsParametersAndMaybeATz6ConsensusKey()
     {
         var (wallet, material, chain) = await Quantumnet.FundedTz1("baker-test");
-        var signer = new SigningKey.Secret(material.SecretKey, null);
+        var signer = new SigningKey.Secret(material.SecretKey, null, wallet.Address);
+        async Task<string> Perform(StakingOperation operation) =>
+            (await chain.PerformStaking(operation, wallet, signer, (await chain.EstimateStaking(operation, wallet)).Limits!)).Hash;
 
-        var reg = await chain.PerformStaking(new StakingOperation.RegisterAsBaker(), wallet, signer);
+        var reg = await Perform(new StakingOperation.RegisterAsBaker());
         await chain.WaitForConfirmation(reg);
 
         var parameters = StakingParameters.FromUserValues(5, 10)!;
         var estimate = await chain.EstimateStaking(new StakingOperation.SetStakingParameters(parameters, wallet.Address), wallet);
         Assert.True(estimate.Fee > 0);
-        var setHash = await chain.PerformStaking(new StakingOperation.SetStakingParameters(parameters, wallet.Address), wallet, signer);
+        var setHash = await Perform(new StakingOperation.SetStakingParameters(parameters, wallet.Address));
         await chain.WaitForConfirmation(setHash);
         await Task.Delay(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken);
         var info = await chain.DelegateInfoFor(wallet.Address);
@@ -202,7 +206,7 @@ public class QuantumnetBakerParametersTests
         string hash;
         try
         {
-            hash = await chain.PerformStaking(new StakingOperation.UpdateConsensusKey(xmpk, null), wallet, signer);
+            hash = await Perform(new StakingOperation.UpdateConsensusKey(xmpk, null));
         }
         catch (TaquitoBridge.BridgeError.JavaScript e) when (e.Message.Contains("consensus_key.active"))
         {

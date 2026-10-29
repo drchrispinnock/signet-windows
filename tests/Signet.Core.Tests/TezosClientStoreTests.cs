@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Signet.Models;
 using Signet.Services;
+using Signet.ViewModels;
 
 namespace Signet.Tests;
 
@@ -262,8 +263,28 @@ public class TezosClientStoreImportTests
 
 public class ImportViewModelTests
 {
-    [Fact(Skip = Pending.ViewModel)] public void OffersImportOnColdStartAndClearsItAfterwards() { }
-    [Fact(Skip = Pending.ViewModel)] public void NoOfferWithoutASource() { }
+    [Fact]
+    public void OffersImportOnColdStartAndClearsItAfterwards()
+    {
+        var @base = TestSupport.TempDir("vm");
+        var octez = Directory.CreateDirectory(Path.Combine(@base, "tezos-client")).FullName;
+        TestSupport.WriteText(octez, "public_key_hashs", """[ { "name": "alice", "value": "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb" } ]""");
+
+        var model = new WalletViewModel(chain: new MockChainService(), walletStore: new TezosClientStore(Path.Combine(@base, "signet")), importSource: octez);
+        Assert.Empty(model.Wallets);
+        Assert.Equal(1, model.ImportableWalletCount);
+
+        Assert.Equal(1, model.ImportFromOctezClient());
+        Assert.Equal("alice", model.SelectedWallet?.Alias);
+        Assert.Equal(0, model.ImportableWalletCount);
+    }
+
+    [Fact]
+    public void NoOfferWithoutASource()
+    {
+        var model = new WalletViewModel(chain: new MockChainService());
+        Assert.Equal(0, model.ImportableWalletCount);
+    }
 }
 
 public class FileAppStateStoreTests
@@ -299,6 +320,16 @@ public class FileAppStateStoreTests
         Assert.Equal(new AppState { NetworkName = "Shadownet", SelectedWalletAlias = "x" }, new FileAppStateStore(dir).Load());
     }
 
-    [Fact(Skip = Pending.ViewModel)]
-    public void ModelRestoresSelectionFromTheStateFile() { }
+    [Fact]
+    public void ModelRestoresSelectionFromTheStateFile()
+    {
+        var dir = TestSupport.TempDir("state");
+        var wallets = new TezosClientStore(dir);
+        wallets.AddWithSecretKey(new Wallet("first", new Address("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"), publicKey: "edpkA", keyKind: KeyKind.Unencrypted), "edskA");
+        wallets.AddWithSecretKey(new Wallet("pq", new Address("tz5c9dMrWKhwBbSUPhxQRdwUnMMYHfqnpQRD"), publicKey: "mdpkB", keyKind: KeyKind.Unencrypted), "mdskB");
+        new FileAppStateStore(dir).Save(new AppState { SelectedWalletAlias = "pq" });
+
+        var model = new WalletViewModel(chain: new MockChainService(), walletStore: wallets, stateStore: new FileAppStateStore(dir));
+        Assert.Equal("pq", model.SelectedWallet?.Alias);
+    }
 }

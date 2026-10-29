@@ -91,7 +91,31 @@ public class WalletBackupTests
 
 public class BackupViewModelTests
 {
-    [Fact(Skip = Pending.ViewModel)] public void BacksUpOnLaunchAndAfterCreatingAKey() { }
+    [Fact]
+    public async Task BacksUpOnLaunchAndAfterCreatingAKey()
+    {
+        var @base = TestSupport.TempDir("vmbk");
+        string wallet = Path.Combine(@base, "wallet"), backups = Path.Combine(@base, "backups");
+        new TezosClientStore(wallet).AddWithSecretKey(
+            new Wallet("seed", new Address("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"), publicKey: "edpkS", keyKind: KeyKind.Unencrypted), "edskS");
+
+        var defaults = UserDefaults.Temporary();
+        defaults.Set(WalletDirectorySettings.Key, wallet);
+        defaults.Set(BackupSettings.DirectoryKey, backups);
+
+        var model = new Signet.ViewModels.WalletViewModel(chain: new MockChainService(),
+            directorySettings: new WalletDirectorySettings(defaults),
+            storeFactory: dir => (new TezosClientStore(dir), new FileAppStateStore(dir)),
+            backupSettings: new BackupSettings(defaults));
+        // The launch backup is asynchronous; wait for it.
+        for (var i = 0; i < 50 && model.LastBackup is null; i++) await Task.Delay(50, TestContext.Current.CancellationToken);
+        Assert.IsType<WalletBackup.Outcome.Created>(model.LastBackup?.Outcome);
+        Assert.Single(WalletBackup.GenerationsIn(backups));
+
+        await model.CreateWallet("fresh", AddressScheme.Tz1);
+        Assert.Equal(2, WalletBackup.GenerationsIn(backups).Count);
+        Assert.Equal(["seed", "fresh"], new TezosClientStore(WalletBackup.GenerationsIn(backups)[^1]).Load().Select(w => w.Alias));
+    }
 }
 
 public class ForcedBackupTests

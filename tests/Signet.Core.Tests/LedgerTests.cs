@@ -53,7 +53,7 @@ public class LedgerKeyTests
         Assert.Equal("tz2abc", spec.GetProperty("address").GetString());
         Assert.True(ledger.IsLedger);
 
-        var secret = new SigningKey.Secret("edskX", "pw");
+        var secret = new SigningKey.Secret("edskX", "pw", new Address("tz1abc"));
         var s2 = JsonDocument.Parse(secret.BridgeSpec).RootElement;
         Assert.Equal("secret", s2.GetProperty("kind").GetString());
         Assert.Equal("edskX", s2.GetProperty("secretKey").GetString());

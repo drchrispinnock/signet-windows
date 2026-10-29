@@ -57,7 +57,8 @@ public sealed class MockChainService : IChainService
     public Task<TransferEstimate> EstimateTransfer(Wallet wallet, Address destination, decimal amount)
     {
         var burn = destination == CaptainStake ? 0 : 0.06425m;
-        return Task.FromResult(new TransferEstimate(0.000521m, burn, amount + 0.000521m + burn, 169, burn > 0 ? 257 : 0));
+        return Task.FromResult(new TransferEstimate(0.000521m, burn, amount + 0.000521m + burn, 169, burn > 0 ? 257 : 0,
+                                                    new OperationLimits("521", 169, burn > 0 ? 257 : 0)));
     }
 
     /// <summary>Encrypted mock keys open with the password "correct horse" only.</summary>
@@ -67,11 +68,18 @@ public sealed class MockChainService : IChainService
             throw new ChainError.WrongPassphrase();
     }
 
-    public Task<string> SendTransfer(Wallet wallet, SigningKey signer, Address destination, decimal amount)
+    public Task<SentOperation> SendTransfer(Wallet wallet, SigningKey signer, Address destination, decimal amount, OperationLimits limits)
     {
         CheckPassphrase(wallet, signer);
-        return Task.FromResult("ooMockOperationHash1111111111111111111111111111111111");
+        return Task.FromResult(new SentOperation("ooMockOperationHash1111111111111111111111111111111111", SignedBytes: "ab"));
     }
+
+    public Task<SentOperation?> PendingOperationFor(Address address) => Task.FromResult<SentOperation?>(null);
+
+    public Task<SentOperation> Rebroadcast(SentOperation sent) => Task.FromResult(new SentOperation(sent.Hash, SignedBytes: sent.SignedBytes));
+
+    public async Task<Portfolio> PortfolioFor(Address address) =>
+        new(await TokenBalancesFor(address), await NftsFor(address), new Portfolio.PortfolioState.Complete());
 
     public Task<int> WaitForConfirmation(string operationHash) => Task.FromResult(9_000_000);
 
@@ -95,12 +103,12 @@ public sealed class MockChainService : IChainService
     ]);
 
     public Task<TransferEstimate> EstimateStaking(StakingOperation operation, Wallet wallet) =>
-        Task.FromResult(new TransferEstimate(0.000421m, 0, 0.000421m, 200, 0));
+        Task.FromResult(new TransferEstimate(0.000421m, 0, 0.000421m, 200, 0, new OperationLimits("421", 200, 0)));
 
-    public Task<string> PerformStaking(StakingOperation operation, Wallet wallet, SigningKey signer)
+    public Task<SentOperation> PerformStaking(StakingOperation operation, Wallet wallet, SigningKey signer, OperationLimits limits)
     {
         CheckPassphrase(wallet, signer);
-        return Task.FromResult($"ooMockStaking{operation.BridgeKind}");
+        return Task.FromResult(new SentOperation($"ooMockStaking{operation.BridgeKind}"));
     }
 
     public Task<string> ProofOfPossession(SigningKey signer) => Task.FromResult("BLsigMockProof");

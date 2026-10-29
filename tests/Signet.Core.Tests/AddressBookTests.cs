@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Signet.Models;
 using Signet.Services;
+using Signet.ViewModels;
 
 namespace Signet.Tests;
 
@@ -79,10 +80,34 @@ public class WatchOnlyStoreTests
 
 public class AddressBookViewModelTests
 {
-    [Fact(Skip = Pending.ViewModel)] public void AddsValidatesAndSelects() { }
+    [Fact]
+    public async Task AddsValidatesAndSelects()
+    {
+        var store = new InMemoryWalletStore();
+        var model = new WalletViewModel(chain: new MockChainService(), walletStore: store);
+        await model.CreateWallet("Main", AddressScheme.Tz1);
+
+        await model.AddWatchOnlyWallet(" Captain Stake ", " tz1dCaMnnMJk76UodjewCK67ABiXWjcKj73N ");
+        var entry = model.SelectedWallet;
+        Assert.NotNull(entry);
+        Assert.Equal("Captain Stake", entry.Alias);
+        Assert.Equal(KeyKind.None, entry.KeyKind);
+        Assert.Equal(2, store.Load().Count);
+
+        await Assert.ThrowsAnyAsync<WalletViewModel.WalletError>(() => model.AddWatchOnlyWallet("Bad", "tz1dCaMnnMJk76UodjewCK67ABiXWjcKj73M"));
+        await Assert.ThrowsAnyAsync<WalletViewModel.WalletError>(() => model.AddWatchOnlyWallet("Again", "tz1dCaMnnMJk76UodjewCK67ABiXWjcKj73N"));
+        await Assert.ThrowsAnyAsync<WalletViewModel.WalletError>(() => model.AddWatchOnlyWallet("Main", "KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton"));
+        Assert.Equal(2, model.Wallets.Count);
+    }
 }
 
 public class ProfileNameTests
 {
-    [Fact(Skip = Pending.ViewModel)] public void ProfileNameComesFromTheChainServiceOrIsNil() { }
+    [Fact]
+    public async Task ProfileNameComesFromTheChainServiceOrIsNil()
+    {
+        var model = new WalletViewModel(chain: new MockChainService());
+        Assert.Equal("Captain Stake", await model.ProfileName(MockChainService.CaptainStake));
+        Assert.Null(await model.ProfileName(new Address("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb")));
+    }
 }

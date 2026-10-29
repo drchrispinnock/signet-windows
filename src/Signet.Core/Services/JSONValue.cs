@@ -58,6 +58,17 @@ public abstract record JSONValue
     public string? StringValue => this is String s ? s.Value : null;
     public bool? BoolValue => this is Bool b ? b.Value : null;
     public double? DoubleValue => this is Number n ? n.Value : null;
+    /// <summary>
+    /// A whole number the server sent that fits an <c>int</c>; <c>null</c> for anything else (NaN, infinity,
+    /// fractions, values beyond 2^53 or <c>int</c>), so a bad reply is an error rather than a trap (S20).
+    /// </summary>
+    public int? IntValue => this switch
+    {
+        Number n when double.IsFinite(n.Value) && n.Value == Math.Round(n.Value) && Math.Abs(n.Value) < 9_007_199_254_740_992d
+                      && n.Value >= int.MinValue && n.Value <= int.MaxValue => (int)n.Value,
+        String s when int.TryParse(s.Value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var i) => i,
+        _ => null,
+    };
     public IReadOnlyDictionary<string, JSONValue>? ObjectValue => this is Object o ? o.Members : null;
     public IReadOnlyList<JSONValue>? ArrayValue => this is Array a ? a.Items : null;
     public bool IsNull => this is Null;

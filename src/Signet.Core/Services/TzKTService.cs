@@ -25,8 +25,13 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
             {
                 public sealed record Format(string? Uri, string? MimeType);
 
-                /// <summary>Decimals come back as a string in TZIP-21 metadata.</summary>
-                public int DecimalPlaces => int.TryParse(Decimals, NumberStyles.Integer, CultureInfo.InvariantCulture, out var d) ? d : 0;
+                /// <summary>
+                /// Decimals come back as a string in TZIP-21 metadata. Only a whole number in
+                /// 0...36 counts; anything else is treated as missing, so a token cannot claim
+                /// nonsensical scaling (S26).
+                /// </summary>
+                public int? DecimalPlaces =>
+                    int.TryParse(Decimals?.Trim(' '), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var d) && d is >= 0 and <= 36 ? d : null;
             }
         }
     }
@@ -40,32 +45,60 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
         return reply.Body;
     }
 
-    /// <summary>All tokens the account holds a positive balance of.</summary>
-    public async Task<IReadOnlyList<TokenBalance>> TokenBalancesFor(Address address, int limit = 200)
+    public const int PageSize = 200;
+    /// <summary>At most this many pages per snapshot; beyond that the portfolio is reported as partial.</summary>
+    public const int MaxPages = 5;
+
+    /// <summary>One page of the tokens the account holds a positive balance of, most recently changed first.</summary>
+    public async Task<IReadOnlyList<TokenBalance>> TokenBalancesFor(Address address, int limit = PageSize, int offset = 0)
     {
         var url = BaseURL.AppendingPathComponent("v1/tokens/balances").WithQuery(
-            ("account", address.Value), ("balance.gt", "0"), ("limit", limit.ToString(CultureInfo.InvariantCulture)), ("sort.desc", "lastLevel"));
-        return Decode(await GetJSON(url, TimeSpan.FromSeconds(20)));
+            ("account", address.Value), ("balance.gt", "0"), ("limit", limit.ToString(CultureInfo.InvariantCulture)),
+            ("offset", offset.ToString(CultureInfo.InvariantCulture)), ("sort.desc", "lastLevel"));
+        return Decode(await GetJSON(url, TimeSpan.FromSeconds(20))).Take(limit).ToList();
     }
 
     public static IReadOnlyList<TokenBalance> Decode(byte[] data) =>
         JsonSerializer.Deserialize<List<TokenBalance>>(data, DecodeOptions) ?? [];
 
+    /// <summary>Every page up to <c>MaxPages</c>, and whether that was all of them (S26).</summary>
+    public async Task<(IReadOnlyList<TokenBalance> Rows, bool Complete)> AllTokenBalancesFor(Address address)
+    {
+        var rows = new List<TokenBalance>();
+        for (var page = 0; page < MaxPages; page++)
+        {
+            var batch = await TokenBalancesFor(address, PageSize, page * PageSize);
+            rows.AddRange(batch);
+            if (batch.Count < PageSize) return (rows, true);
+        }
+        return (rows, false);
+    }
+
+    /// <summary>Tokens and NFTs from one snapshot, marked partial when the account holds more than was fetched.</summary>
+    public async Task<Portfolio> PortfolioFor(Address address)
+    {
+        var (rows, complete) = await AllTokenBalancesFor(address);
+        return new Portfolio(FungibleTokens(rows), Nfts(rows),
+                             complete ? new Portfolio.PortfolioState.Complete() : new Portfolio.PortfolioState.Partial(rows.Count));
+    }
+
     /// <summary>NFTs are tokens with no decimal places and some image to show.</summary>
-    public async Task<IReadOnlyList<NFT>> NftsFor(Address address) => Nfts(await TokenBalancesFor(address));
+    public async Task<IReadOnlyList<NFT>> NftsFor(Address address) => Nfts((await AllTokenBalancesFor(address)).Rows);
 
     /// <summary>
     /// Fungible (DeFi) tokens: anything with decimal places, or an FA1.2 token (always fungible).
     /// Tokens with zero decimals and no image, such as Tezos Domains, are neither NFT nor asset.
     /// </summary>
-    public async Task<IReadOnlyList<AssetBalance>> FungibleTokensFor(Address address) => FungibleTokens(await TokenBalancesFor(address));
+    public async Task<IReadOnlyList<AssetBalance>> FungibleTokensFor(Address address) => FungibleTokens((await AllTokenBalancesFor(address)).Rows);
 
     public static IReadOnlyList<AssetBalance> FungibleTokens(IReadOnlyList<TokenBalance> balances) =>
         balances.Select(row =>
         {
             var metadata = row.Token.Metadata;
-            var decimals = metadata?.DecimalPlaces ?? 0;
-            if (decimals <= 0 && row.Token.Standard?.ToLowerInvariant() != "fa1.2") return null;
+            var isFA12 = row.Token.Standard?.ToLowerInvariant() == "fa1.2";
+            // A token whose decimals are unreadable is not scaled by a guess: FA1.2 is taken as 0, anything else is skipped.
+            if ((metadata?.DecimalPlaces ?? (isFA12 ? 0 : null)) is not { } decimals) return null;
+            if (decimals <= 0 && !isFA12) return null;
             if (Scaled(row.Balance, decimals) is not { } amount) return null;
             var contract = row.Token.Contract.Address;
             var symbol = NonEmpty(metadata?.Symbol?.Trim());
@@ -122,25 +155,26 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
         .ToList();
 
     /// <summary>
-    /// displayUri is a sized-down render meant for galleries, so prefer it; thumbnailUri is often a
-    /// marketplace's generic placeholder; artifactUri is the full asset, used only if it is an image.
+    /// Every URL worth trying for the tile, best first: displayUri is a sized-down render meant
+    /// for galleries, so it comes first (one URL per gateway); then thumbnailUri, often a
+    /// marketplace's generic placeholder but small, so it is the fallback when the display
+    /// render is too large to download (<c>ImageLoader.MaxBytes</c>) or missing from every gateway;
+    /// then artifactUri, the full asset, only if it is an image.
     /// </summary>
     public static IReadOnlyList<Uri> BestImageURLs(TokenBalance.TokenInfo.MetadataInfo metadata)
     {
-        foreach (var candidate in new[] { metadata.DisplayUri, metadata.ThumbnailUri })
-        {
-            if (candidate is not null && IPFS.CandidateURLs(candidate) is { Count: > 0 } urls) return urls;
-        }
+        var uris = new[] { metadata.DisplayUri, metadata.ThumbnailUri }.OfType<string>().ToList();
         if (metadata.ArtifactUri is { } artifact)
         {
             var mime = metadata.Formats?.FirstOrDefault(f => f.Uri == artifact)?.MimeType ?? "";
-            if (mime.StartsWith("image/", StringComparison.Ordinal)) return IPFS.CandidateURLs(artifact);
+            if (mime.StartsWith("image/", StringComparison.Ordinal)) uris.Add(artifact);
         }
-        return [];
+        var urls = new List<Uri>();
+        foreach (var uri in uris)
+            foreach (var url in IPFS.CandidateURLs(uri))
+                if (!urls.Contains(url)) urls.Add(url);
+        return urls;
     }
-
-    public static Uri? BestImageURL(TokenBalance.TokenInfo.MetadataInfo metadata) =>
-        BestImageURLs(metadata) is { Count: > 0 } urls ? urls[0] : null;
 
     // ---- Profiles --------------------------------------------------------------------------------
 
@@ -179,7 +213,7 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
     {
         var url = BaseURL.AppendingPathComponent($"v1/accounts/{address.Value}/operations").WithQuery(
             ("type", "transaction,delegation,origination"), ("limit", limit.ToString(CultureInfo.InvariantCulture)), ("sort.desc", "id"));
-        return ParseOperations(await GetJSON(url, TimeSpan.FromSeconds(20)), address);
+        return ParseOperations(await GetJSON(url, TimeSpan.FromSeconds(20)), address).Take(limit).ToList();
     }
 
     /// <summary>Pure parser for <c>/v1/accounts/{address}/operations</c>.</summary>
@@ -211,7 +245,12 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
                 TezosTransaction.TransactionKind.Origination => row["originatedContract"] as JsonObject,
                 _ => null,
             };
-            var outgoing = senderAddress == address.Value;
+            // An internal operation a contract emitted because we called it (a multisig paying
+            // out) is ours: the indexer lists it under our account with the contract as sender
+            // and us as initiator, so it must not read as money coming in from the contract.
+            var initiator = Str((row["initiator"] as JsonObject)?["address"]);
+            var initiatedByUs = senderAddress != address.Value && initiator == address.Value;
+            var outgoing = senderAddress == address.Value || initiatedByUs;
             var direction = outgoing
                 ? (Str(other?["address"]) == address.Value ? TezosTransaction.TransactionDirection.SelfTransfer : TezosTransaction.TransactionDirection.Outgoing)
                 : TezosTransaction.TransactionDirection.Incoming;
@@ -240,6 +279,7 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
                     DelegationTarget = address,
                 };
             }
+            if (initiatedByUs) tx = tx with { Via = new Address(senderAddress) };
             result.Add(tx);
         }
         return result;
@@ -253,7 +293,7 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
         var url = BaseURL.AppendingPathComponent("v1/delegates").WithQuery(
             ("active", "true"), ("sort.desc", "numDelegators"), ("limit", limit.ToString(CultureInfo.InvariantCulture)),
             ("select", "address,alias,stakingBalance,numDelegators,stakersCount,limitOfStakingOverBaking"));
-        return ParseBakers(await GetJSON(url, TimeSpan.FromSeconds(20)));
+        return ParseBakers(await GetJSON(url, TimeSpan.FromSeconds(20))).Take(limit).ToList();
     }
 
     public static IReadOnlyList<BakerCandidate> ParseBakers(byte[] data)

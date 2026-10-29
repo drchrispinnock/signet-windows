@@ -23,6 +23,12 @@ public sealed record TezosTransaction(
     public enum TransactionKind { Transaction, Delegation, Origination, Other }
     public enum TransactionDirection { Incoming, Outgoing, SelfTransfer }
 
+    /// <summary>
+    /// The contract that carried this out on our behalf: an internal operation a multisig (or any
+    /// contract we called) emitted, which the indexer lists under our account with the contract
+    /// as sender and us as initiator. <c>null</c> for operations we sent ourselves.
+    /// </summary>
+    public Address? Via { get; init; }
     /// <summary>Delegations only: where the delegator was pointing before.</summary>
     public Address? PreviousDelegate { get; init; }
     /// <summary>Delegations only: the delegator's balance at the time (what moved in or out of our stake).</summary>

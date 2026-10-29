@@ -77,4 +77,9 @@ public sealed record Wallet
     public KeyKind KeyKind { get; init; }
     /// <summary>Where the key lives on a Ledger, when <c>KeyKind</c> is <c>Ledger</c> and the locator parsed.</summary>
     public LedgerKey? LedgerKey { get; init; }
+    /// <summary>
+    /// A paper key imported for this run only: its secret is in memory (<c>SessionKeyStore</c>), not
+    /// in the wallet directory, and is gone when Signet quits.
+    /// </summary>
+    public bool IsSessionOnly { get; init; }
 }

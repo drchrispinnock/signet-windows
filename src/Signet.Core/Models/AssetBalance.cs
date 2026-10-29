@@ -9,6 +9,8 @@ public sealed record AssetBalance(string Id, AssetBalance.AssetKind Kind, string
     {
         public sealed record Tez : AssetKind;
         public sealed record Etherlink : AssetKind;
+        /// <summary>The account's shielded tez on the TzEL rollup (shown while shielded transactions are on).</summary>
+        public sealed record Shielded : AssetKind;
         public sealed record Token(string Contract, string TokenId) : AssetKind;
     }
 
@@ -23,8 +25,16 @@ public sealed record AssetBalance(string Id, AssetBalance.AssetKind Kind, string
     public IReadOnlyList<Uri> IconURLs { get; init; } = [];
     /// <summary><c>fa1.2</c> / <c>fa2</c> for tokens.</summary>
     public string? Standard { get; init; }
+    /// <summary>
+    /// Why the amount could not be read (the Etherlink node unreachable); the row shows this
+    /// instead of a figure.
+    /// </summary>
+    public string? Unavailable { get; init; }
 
     public string FormattedAmount => Format(Amount, Symbol);
+
+    /// <summary>The Shielded row before the TzEL wallet exists: always 0 tz.</summary>
+    public static readonly AssetBalance ShieldedPlaceholder = new("shielded", new AssetKind.Shielded(), "Shielded", "tz", 0);
 
     public static string Format(decimal amount, string symbol) =>
         $"{amount.ToString("#,0.######", CultureInfo.CurrentCulture)} {symbol}";

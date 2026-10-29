@@ -123,8 +123,11 @@ public sealed class LedgerKey : IEquatable<LedgerKey>
 /// <summary>What an operation is signed with. Built on demand for the one operation and not kept.</summary>
 public abstract record SigningKey
 {
-    /// <summary>A base58 secret key from the wallet directory, with the password if it is encrypted.</summary>
-    public sealed record Secret(string Key, string? Passphrase) : SigningKey;
+    /// <summary>
+    /// A base58 secret key from the wallet directory, with the password if it is encrypted, and
+    /// the address it must derive: the bridge refuses to sign if the key is somebody else's.
+    /// </summary>
+    public sealed record Secret(string Key, string? Passphrase, Address Address) : SigningKey;
     /// <summary>A key on a Ledger; the device signs after the user approves on it.</summary>
     public sealed record Ledger(LedgerKey Key, Address Address) : SigningKey;
 
@@ -135,7 +138,7 @@ public abstract record SigningKey
     {
         Secret s => JsonSerializer.Serialize(new Dictionary<string, object>
         {
-            ["kind"] = "secret", ["secretKey"] = s.Key, ["passphrase"] = s.Passphrase ?? "",
+            ["kind"] = "secret", ["secretKey"] = s.Key, ["passphrase"] = s.Passphrase ?? "", ["address"] = s.Address.Value,
         }),
         Ledger l => JsonSerializer.Serialize(new Dictionary<string, object>
         {

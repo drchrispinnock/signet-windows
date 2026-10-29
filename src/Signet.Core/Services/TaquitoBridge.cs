@@ -27,6 +27,23 @@ public sealed class TaquitoBridge
         public sealed class LoadFailed(string detail) : BridgeError($"Taquito bridge failed to load: {detail}");
         public sealed class JavaScript(string detail) : BridgeError(detail);
         public sealed class NotAFunction(string name) : BridgeError($"TaquitoBridge.{name} is not a function");
+
+        /// <summary>
+        /// The <see cref="ChainError"/> this failure stands for when the bridge's text is one every signing path
+        /// words the same way (wrong password, Ledger trouble, a key for another address); otherwise
+        /// the bridge error itself, untouched.
+        /// </summary>
+        public Exception AsChainError => this is JavaScript && ChainError.FromBridgeMessage(Message) is { } known ? known : this;
+
+        /// <summary>
+        /// Runs a bridge call and rethrows a bridge failure through <c>AsChainError</c>. Any other error
+        /// passes through unchanged, so a typed catch keeps exactly its scope.
+        /// </summary>
+        public static async Task<T> Typed<T>(Func<Task<T>> body)
+        {
+            try { return await body(); }
+            catch (BridgeError e) when (e.AsChainError is ChainError known) { throw known; }
+        }
     }
 
     public static TaquitoBridge Shared { get; } = new();

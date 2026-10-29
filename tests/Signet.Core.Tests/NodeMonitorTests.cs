@@ -126,10 +126,51 @@ public class NodeTextTests
 
 public class PerNetworkNodeTests
 {
-    [Fact(Skip = Pending.ViewModel)] public void EditsAnotherNetworksNodeWithoutSwitching() { }
+    [Fact]
+    public void EditsAnotherNetworksNodeWithoutSwitching()
+    {
+        var state = new InMemoryAppStateStore();
+        var model = new Signet.ViewModels.WalletViewModel(Signet.ViewModels.WalletViewModel.SampleWallets, new MockChainService(), stateStore: state);
+        Assert.Equal("Mainnet", model.Network.Name);
+
+        Assert.True(model.SetNode("rpc.shadownet.example.org", Network.Shadownet));
+        Assert.Equal("Mainnet", model.Network.Name);                       // still on mainnet
+        Assert.Equal("rpc.shadownet.example.org", model.NodeURL(Network.Shadownet).Host);
+        Assert.Equal("https://rpc.shadownet.example.org", state.Load().NodeURLs?["Shadownet"]);
+
+        model.SwitchNetwork(Network.Shadownet);                              // the saved node comes along
+        Assert.Equal("rpc.shadownet.example.org", model.Network.RpcURL.Host);
+
+        model.UseDefaultNode(Network.Shadownet);
+        Assert.Equal(Network.Shadownet.DefaultRPCURL, model.Network.RpcURL);
+        Assert.Null(state.Load().NodeURLs?.GetValueOrDefault("Shadownet"));
+
+        Assert.Contains(Network.All, n => n.Name == "Custom");
+        Assert.True(model.SetNode("node.mine.example:8732", Network.Custom));
+        Assert.Equal("https://node.mine.example:8732", model.NodeURL(Network.Custom).AbsoluteString());
+        Assert.False(model.SetNode("not a host", Network.Custom));
+    }
 }
 
 public class NewHeadRefreshTests
 {
-    [Fact(Skip = Pending.ViewModel)] public void MonitorReportsNewHeadsAfterTheFirst() { }
+    [Fact]
+    public async Task MonitorReportsNewHeadsAfterTheFirst()
+    {
+        var level = 100;
+        var monitor = new NodeMonitor(Network.Mainnet, _ =>
+        {
+            var stamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture);
+            return Task.FromResult(new NodeMonitor.ProbeReply(Encoding.UTF8.GetBytes($$"""{"level": {{level}}, "timestamp": "{{stamp}}"}"""), 200, 0.1));
+        });
+        var seen = new List<int>();
+        monitor.OnNewHead = seen.Add;
+        await monitor.CheckNow();          // first sighting: no callback
+        await monitor.CheckNow();          // same level: no callback
+        level = 101;
+        await monitor.CheckNow();
+        level = 103;
+        await monitor.CheckNow();
+        Assert.Equal([101, 103], seen);
+    }
 }

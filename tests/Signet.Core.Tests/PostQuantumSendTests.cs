@@ -56,7 +56,7 @@ internal static class PostQuantumSend
         var estimate = await chain.EstimateTransfer(wallet, destination, 0.5m);
         Assert.True(estimate.Fee > 0);
 
-        var hash = await chain.SendTransfer(wallet, new SigningKey.Secret(quantum.SecretKey, null), destination, 0.5m);
+        var hash = (await chain.SendTransfer(wallet, new SigningKey.Secret(quantum.SecretKey, null, wallet.Address), destination, 0.5m, estimate.Limits!)).Hash;
         Assert.StartsWith("o", hash);
         Assert.True(await chain.WaitForConfirmation(hash) > 0);
     }

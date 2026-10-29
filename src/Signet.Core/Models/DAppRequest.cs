@@ -74,8 +74,6 @@ public abstract record DAppRequest(string Id, DAppInfo App)
             var label = rpcURL.Host.Length > 0 ? rpcURL.Host : rpcURL.AbsoluteUri;
             return new Network($"Custom ({label})", "custom", rpcURL, tezosDomainsURL: null, tzktURL: null);
         }
-        // Currentnet is whatever proposal net is live; accept its current protocol name too.
-        if (lower == "ushuaianet") return Network.Currentnet;
         return null;
     }
 }

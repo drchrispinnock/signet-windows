@@ -80,9 +80,11 @@ public class NFTClassificationTests
 
         Assert.Equal(["United in Baking", "Captain Stake"], nfts.Select(n => n.Name));
         Assert.Equal("KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton:634799", nfts[0].Id);
-        // displayUri beats thumbnailUri and artifactUri.
+        // displayUri comes first, then thumbnailUri and the image artifact as fallbacks, one URL per gateway each.
         Assert.Equal("https://ipfs.filebase.io/ipfs/QmDisplay", nfts[0].ThumbnailURL?.AbsoluteString());
-        Assert.Equal(IPFS.Gateways.Count, nfts[0].ImageURLs.Count);
+        Assert.Equal(3 * IPFS.Gateways.Count, nfts[0].ImageURLs.Count);
+        Assert.Equal(new[] { "QmDisplay", "QmThumb", "QmArt" }.SelectMany(cid => Enumerable.Repeat(cid, IPFS.Gateways.Count)),
+                     nfts[0].ImageURLs.Select(IPFS.GatewayPath));
         // An image artifact is acceptable when there is nothing else.
         Assert.Equal("https://ipfs.filebase.io/ipfs/QmOnlyArt", nfts[1].ThumbnailURL?.AbsoluteString());
         Assert.Equal(20m, nfts[1].Balance);
