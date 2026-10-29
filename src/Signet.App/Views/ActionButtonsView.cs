@@ -49,10 +49,10 @@ public sealed partial class ActionButtonsView : UserControl
     /// <summary>Keys on disk (clear or encrypted) and on a Ledger can sign; remote signers cannot yet.</summary>
     private bool CanSign => model.SelectedWallet?.KeyKind.CanSign() == true;
 
-    // Windows: Send, Buy and Stake are not ported yet, so they stay off whatever the account.
+    // Windows: Buy and Stake are not ported yet, so they stay off whatever the account.
     private IReadOnlyList<Action> Actions =>
     [
-        new("Send", "", false, () => model.IsPresentingSend = true),
+        new("Send", "", CanSign && !model.AccountNotOnChain, () => model.IsPresentingSend = true),
         new("Receive", "", model.SelectedWallet is not null && !IsWatchOnly, () => model.IsPresentingReceive = true),
         model.Network.FaucetURL is not null
             ? new("Get", "", model.SelectedWallet is not null && !IsContract, () => model.IsPresentingFaucet = true)
@@ -63,7 +63,7 @@ public sealed partial class ActionButtonsView : UserControl
     private string HelpText(Action action)
     {
         if (action.Enabled) return action.Title;
-        if (action.Title is "Send" or "Buy" or "Stake" && SendUnavailableReason is null && !IsWatchOnly) return $"{action.Title} is not available on Windows yet";
+        if (action.Title is "Buy" or "Stake" && SendUnavailableReason is null && !IsWatchOnly) return $"{action.Title} is not available on Windows yet";
         if (action.Title == "Buy" && !model.Network.IsMainnet) return "Buying is only possible on Mainnet";
         if (action.Title == "Get" && IsContract) return "The faucet cannot fund a contract; send it tez from an account";
         if (IsWatchOnly) return "Not available for a watch-only address";

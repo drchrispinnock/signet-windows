@@ -15,7 +15,14 @@ public partial class App : Application
     }
 
     /// <summary>The app's model, on the wallet directory and the live chain.</summary>
-    public static WalletViewModel MakeModel() => new(
+    public static WalletViewModel MakeModel()
+    {
+        // Signed operations survive a restart, so a lost reply can be followed up (S15).
+        TaquitoBridge.Shared.OperationJournal = new OperationJournal(TezosClientStore.DefaultDirectory);
+        return MakeWalletModel();
+    }
+
+    private static WalletViewModel MakeWalletModel() => new(
         chainFactory: network => new TaquitoChainService(network),
         keyGenerator: new KeyGenerator(),
         keyImporter: new BridgeKeyImporter(),

@@ -66,6 +66,17 @@ public sealed class TaquitoBridge
     }
     private IBridgeStorage? storage;
 
+    /// <summary>
+    /// Where signed operations are recorded before they are injected (S15). In memory by default;
+    /// the app points it at the wallet folder so an unknown outcome survives a restart.
+    /// </summary>
+    public OperationJournal OperationJournal
+    {
+        get { lock (gate) return operationJournal; }
+        set { lock (gate) operationJournal = value; }
+    }
+    private OperationJournal operationJournal = new();
+
     /// <summary>Receives JSON events pushed from JavaScript (dApp requests). Called on the bridge thread.</summary>
     public Action<string>? EventHandler
     {
@@ -200,6 +211,9 @@ public sealed class TaquitoBridge
           storageSet: function (key, value) { __signet_host.storageSet(String(key), String(value)); },
           storageDelete: function (key) { __signet_host.storageDelete(String(key)); },
           octezConnectEvent: function (json) { __signet_host.octezConnectEvent(String(json)); },
+          operationRead: function () { return __signet_host.operationRead(); },
+          operationSave: function (json) { return __signet_host.operationSave(String(json)); },
+          operationRemove: function (hash) { return __signet_host.operationRemove(String(hash)); },
           ledgerDevices: function () { return __signet_host.ledgerDevices(); },
           ledgerExchange: function (id, deviceId, apduHex, timeoutMs) {
             __signet_host.ledgerExchange(Number(id), String(deviceId), String(apduHex), Number(timeoutMs));
@@ -268,6 +282,29 @@ public sealed class TaquitoBridge
 
         [ScriptMember("octezConnectEvent")]
         public void OctezConnectEvent(string json) => bridge.EventHandler?.Invoke(json);
+
+        // The operation journal (S15): read returns the records or an error object; save and
+        // remove return "" on success, else the message the bridge throws.
+        [ScriptMember("operationRead")]
+        public string OperationRead()
+        {
+            try { return bridge.OperationJournal.Read(); }
+            catch (Exception) { return "{\"error\":\"Operation recovery storage cannot be read\"}"; }
+        }
+
+        [ScriptMember("operationSave")]
+        public string OperationSave(string json)
+        {
+            try { bridge.OperationJournal.Save(json); return ""; }
+            catch (Exception) { return "Could not persist the signed operation; nothing was injected"; }
+        }
+
+        [ScriptMember("operationRemove")]
+        public string OperationRemove(string hash)
+        {
+            try { bridge.OperationJournal.Remove(hash); return ""; }
+            catch (Exception) { return "Could not update operation recovery storage"; }
+        }
 
         // Ledger: USB HID is native (LedgerHID); the bridge's Transport subclass calls these.
         [ScriptMember("ledgerDevices")]

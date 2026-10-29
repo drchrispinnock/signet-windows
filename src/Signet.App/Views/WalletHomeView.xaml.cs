@@ -111,6 +111,17 @@ public sealed partial class WalletHomeView : UserControl
         else if (model.IsPresentingRememberKey) { dialog = new RememberKeySheet(model); reset = () => model.IsPresentingRememberKey = false; }
         else if (model.IsPresentingReceive && model.SelectedWallet is { } wallet) { dialog = new ReceiveSheet(wallet, model.Domains); reset = () => model.IsPresentingReceive = false; }
         else if (model.IsPresentingFaucet) { dialog = new FaucetSheet(model); reset = () => model.IsPresentingFaucet = false; }
+        else if (model.IsPresentingSend && model.SelectedWallet is { } sender)
+        {
+            var sheet = new SendSheet(model, sender);
+            dialog = sheet;
+            reset = () =>
+            {
+                model.IsPresentingSend = false;
+                // Done (or closing after the operation went out) refreshes now and again shortly.
+                if (sheet.DidSend) _ = model.RefreshAfterOperation();
+            };
+        }
         else if (model.IsPresentingNetworks) { dialog = new NetworksSheet(model); reset = () => model.IsPresentingNetworks = false; }
         else if (settingsRequested) { dialog = new SettingsView(model); reset = () => settingsRequested = false; }
         else

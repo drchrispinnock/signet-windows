@@ -144,9 +144,13 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   faucet links; no Layer 2 fields) and `SettingsView` (appearance, launch disclaimer, wallet
   directory, backups; no Updates or Developer sections yet). Settings is a dialog opened from the
   burger menu or Ctrl+, rather than a separate window; `Appearance` is applied by `AppearanceApplier`.
+- Send: `SendViewModel` and `SendSheet` (compose, confirm, result; Tezos side only, no
+  `ChainSidePicker`), with `OperationJournal` behind the bridge's `operationRead`/`operationSave`/
+  `operationRemove` natives, stored in `%USERPROFILE%\.signet\pending_operations.json` (S15).
+  `QuantumnetSendTests` is a Windows-only live round trip through the journal.
 - `WalletBackup` is still the `3b33fe1` version (no manifest or locked snapshot, S05/S28).
 
-Not ported, shown disabled in the menus with "Not available on Windows yet": Send, Buy, Stake,
+Not ported, shown disabled in the menus with "Not available on Windows yet": Buy, Stake,
 Baking, Governance, Connect Ledger (and `LedgerHID`, still a placeholder), dApps, multisig.
 Shielded settings is left out of the menu altogether while TzEL is out of scope. Run `dotnet test` and read the skipped tests for the
 detailed backlog. The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
@@ -177,4 +181,7 @@ Windows-specific porting notes:
 This PC has Smart App Control enforced. It can block a freshly built, unsigned `Signet.exe` with
 "An Application Control policy has blocked this file" (Code Integrity event 3077). Starting it as
 `dotnet Signet.dll` doesn't help: WinUI resolves its XAML resources relative to `dotnet.exe` and
-crashes with 0xC000027B. The tests are unaffected.
+crashes with 0xC000027B. The tests are unaffected. Each build produces a different `Signet.exe`
+hash, so some builds are allowed and some are not, but `Signet.exe` is only .NET's launcher for
+`Signet.dll` and its code does not change: copying a `Signet.exe` that was already allowed over a
+new build's (as `scratch\Signet-x64` keeps) runs the new build.
