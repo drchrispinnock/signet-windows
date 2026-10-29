@@ -147,7 +147,7 @@ public sealed partial class NoWalletsView : UserControl
         {
             var count = model.ImportableWalletCount;
             options.Children.Add(StartOption("Import your octez-client wallet",
-                $"Found {count} {(count == 1 ? "account" : "accounts")} in %USERPROFILE%\\.tezos-client. Copies the files into .signet; octez-client keeps working.",
+                $"Found {count} {(count == 1 ? "account" : "accounts")} in {TezosClientStore.OctezClientDirectory}. Copies the files into {model.WalletDirectory ?? TezosClientStore.DefaultDirectory}; octez-client keeps working.",
                 "", false, ImportWallets));
         }
         stack.Children.Add(options);

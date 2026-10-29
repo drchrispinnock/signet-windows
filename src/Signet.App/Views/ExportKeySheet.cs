@@ -82,7 +82,7 @@ public sealed partial class ExportKeySheet : Sheet
             if (key.Encrypted is { } encrypted)
             {
                 keys.Children.Add(KeyRow("Encrypted form", encrypted, maskable: false));
-                keys.Children.Add(Note("The encrypted form is what %USERPROFILE%\\.signet holds; it still needs this account's password. octez-client accepts both."));
+                keys.Children.Add(Note($"The encrypted form is what {WalletFolder(model)} holds; it still needs this account's password. octez-client accepts both."));
             }
             PrimaryButtonText = "Done";
             CloseButtonText = "";

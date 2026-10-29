@@ -90,7 +90,7 @@ public sealed partial class ForgetAccountSheet : Sheet
                 return "This is a paper key held in memory for this session only; it was never written to disk. Forgetting wipes it now. Without the key or its recovery phrase elsewhere, the account and its tez are lost.";
             return wallet?.KeyKind switch
             {
-                KeyKind.Unencrypted or KeyKind.Encrypted => "Signet holds this account's secret key. Forgetting deletes that key from %USERPROFILE%\\.signet. Without another copy of the key or its recovery phrase, the account and its tez are lost.",
+                KeyKind.Unencrypted or KeyKind.Encrypted => $"Signet holds this account's secret key. Forgetting deletes that key from {WalletFolder(model)}. Without another copy of the key or its recovery phrase, the account and its tez are lost.",
                 KeyKind.Ledger => "This account's key stays on your Ledger; Signet will only forget how to reach it. You can connect it again later.",
                 KeyKind.Remote or KeyKind.Unknown => "Signet will forget this account's signer entry. The key itself lives elsewhere and is not touched.",
                 _ => "This is an address-book entry. Signet will forget the name and address; nothing else changes.",

@@ -32,7 +32,7 @@ public sealed partial class RenameWalletSheet : Sheet
         Form.Children.Add(row);
         if (model.SelectedWallet is { } wallet)
             Form.Children.Add(LabeledContent("Address", new TextBlock { Text = wallet.Address.Shortened(), Style = (Style)Application.Current.Resources["MonoText"] }));
-        Form.Children.Add(Note("The alias is renamed in %USERPROFILE%\\.signet."));
+        Form.Children.Add(Note($"The alias is renamed in {WalletFolder(model)}."));
 
         CloseButtonText = "Cancel";
         Primary("Rename", () => { model.RenameSelectedWallet(alias.Text.Trim()); return Task.CompletedTask; });

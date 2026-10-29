@@ -92,7 +92,7 @@ public sealed partial class ImportAccountSheet : Sheet
         encryptFields.Children.Add(password);
         encryptFields.Children.Add(confirmPassword);
         encryptFields.Children.Add(passwordProblem);
-        unprotected.Children.Add(Label("Unencrypted keys are stored on disk unprotected. Anyone who can read %USERPROFILE%\\.signet can spend from this account.", "", "SystemFillColorCautionBrush"));
+        unprotected.Children.Add(Label($"Unencrypted keys are stored on disk unprotected. Anyone who can read {WalletFolder(model)} can spend from this account.", "", "SystemFillColorCautionBrush"));
 
         Form.Children.Add(source);
         Form.Children.Add(alias);

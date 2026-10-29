@@ -35,7 +35,7 @@ public sealed partial class CreateWalletSheet : Sheet
         encrypted.Children.Add(confirmPassword);
         encrypted.Children.Add(passwordProblem);
         encrypted.Children.Add(Note("You will be asked for this password every time the key signs. It cannot be recovered; if you lose it the key is lost."));
-        unprotected.Children.Add(Label("Unencrypted keys are stored on disk unprotected. Anyone who can read %USERPROFILE%\\.signet can spend from this account.", "", "SystemFillColorCautionBrush"));
+        unprotected.Children.Add(Label($"Unencrypted keys are stored on disk unprotected. Anyone who can read {WalletFolder(model)} can spend from this account.", "", "SystemFillColorCautionBrush"));
 
         Form.Children.Add(alias);
         Form.Children.Add(scheme);
@@ -43,7 +43,7 @@ public sealed partial class CreateWalletSheet : Sheet
         Form.Children.Add(encrypt);
         Form.Children.Add(encrypted);
         Form.Children.Add(unprotected);
-        Form.Children.Add(Note("The key is saved to %USERPROFILE%\\.signet in octez-client's format, so octez-client can use it too."));
+        Form.Children.Add(Note($"The key is saved to {WalletFolder(model)} in octez-client's format, so octez-client can use it too."));
 
         CloseButtonText = "Cancel";
         Primary("Create", Create);

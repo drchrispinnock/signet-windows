@@ -81,6 +81,13 @@ public abstract partial class Sheet : ContentDialog
 
     // ---- Building blocks -------------------------------------------------------------------------
 
+    /// <summary>
+    /// The wallet directory as the user should see it, where upstream writes <c>~/.signet</c>: Windows
+    /// has no <c>~</c>, so the full path (<c>C:\Users\name\.signet</c>, or wherever it was moved).
+    /// </summary>
+    protected static string WalletFolder(ViewModels.WalletViewModel model) =>
+        model.WalletDirectory ?? Signet.Services.TezosClientStore.DefaultDirectory;
+
     protected static TextBlock Note(string text) => new() { Text = text, Style = (Style)Application.Current.Resources["NoteText"] };
 
     protected static TextBlock Caution(string text) => new() { Text = text, Style = (Style)Application.Current.Resources["CautionText"] };
