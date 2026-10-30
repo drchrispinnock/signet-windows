@@ -637,17 +637,21 @@ public sealed partial class WalletViewModel : ObservableObject
             ErrorMessage = error;
             return;
         }
+        // Windows-only: publish a list only when its contents changed. SwiftUI diffs what it is
+        // given, so upstream assigns freely; here every change notification rebuilds rows and
+        // reloads their pictures, and a refresh runs on every new block (the dashboard flickered).
+        // Records compare by content (NFT, AssetBalance and BakerRecord include their lists).
         TezBalance = snapshot.TezBalance;
-        Assets = snapshot.Assets;
+        if (!Assets.SequenceEqual(snapshot.Assets)) Assets = snapshot.Assets;
         PortfolioState = snapshot.Portfolio.State;
         // An unavailable indexer keeps the last known lists (they are from this same context).
         if (snapshot.Portfolio.State is not Portfolio.PortfolioState.Unavailable)
         {
-            Tokens = snapshot.Portfolio.Tokens;
-            Nfts = snapshot.Portfolio.Nfts;
+            if (!Tokens.SequenceEqual(snapshot.Portfolio.Tokens)) Tokens = snapshot.Portfolio.Tokens;
+            if (!Nfts.SequenceEqual(snapshot.Portfolio.Nfts)) Nfts = snapshot.Portfolio.Nfts;
         }
-        Domains = snapshot.Domains;
-        Transactions = snapshot.Transactions;
+        if (!Domains.SequenceEqual(snapshot.Domains)) Domains = snapshot.Domains;
+        if (!Transactions.SequenceEqual(snapshot.Transactions)) Transactions = snapshot.Transactions;
         DelegateInfo = snapshot.DelegateInfo;
         AccountNotOnChain = snapshot.NotOnChain;
     }

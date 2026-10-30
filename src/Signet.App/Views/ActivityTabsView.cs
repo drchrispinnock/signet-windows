@@ -47,10 +47,28 @@ public sealed partial class ActivityTabsView : UserControl
 
     private void Changed(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(WalletViewModel.IsLoading))
+        {
+            // Loading only changes the empty note ("Loading…"). Over rows already shown, a refresh
+            // (one per block) just brings their times up to date: rebuilding would blank every
+            // avatar and picture while it reloads, which is the flicker this avoids.
+            if (CurrentListIsEmpty) Update();
+            else foreach (var row in transactionRows) row.RefreshTime();
+            return;
+        }
         if (e.PropertyName is nameof(WalletViewModel.ActivityTabSelection) or nameof(WalletViewModel.Transactions) or nameof(WalletViewModel.Tokens)
-            or nameof(WalletViewModel.Nfts) or nameof(WalletViewModel.IsLoading) or nameof(WalletViewModel.PortfolioState) or nameof(WalletViewModel.Wallets))
+            or nameof(WalletViewModel.Nfts) or nameof(WalletViewModel.PortfolioState) or nameof(WalletViewModel.Wallets))
             Update();
     }
+
+    private bool CurrentListIsEmpty => model.ActivityTabSelection switch
+    {
+        WalletViewModel.ActivityTab.Transactions => model.Transactions.Count == 0,
+        WalletViewModel.ActivityTab.Assets => model.Tokens.Count == 0,
+        _ => model.Nfts.Count == 0,
+    };
+
+    private readonly List<TransactionRowView> transactionRows = [];
 
     private void Update()
     {
@@ -73,11 +91,14 @@ public sealed partial class ActivityTabsView : UserControl
     /// <summary>The last few operations, each with the counterparty's avatar and best-known name.</summary>
     private UIElement TransactionList()
     {
+        transactionRows.Clear();
         if (model.Transactions.Count == 0) return EmptyNote(model.IsLoading ? "Loading…" : "No transactions yet.");
         var list = new StackPanel();
         foreach (var tx in model.Transactions)
         {
-            list.Children.Add(new TransactionRowView(model, tx));
+            var row = new TransactionRowView(model, tx);
+            transactionRows.Add(row);
+            list.Children.Add(row);
             list.Children.Add(Divider(56));
         }
         return new ScrollViewer { Content = list };
@@ -266,6 +287,10 @@ public sealed partial class TransactionRowView : UserControl
 {
     private readonly WalletViewModel model;
     private readonly TezosTransaction transaction;
+    private readonly TextBlock subtitle;
+
+    /// <summary>Recomputes "3 min. ago" in place: the row itself is kept while the history is unchanged.</summary>
+    public void RefreshTime() => subtitle.Text = Subtitle;
 
     public TransactionRowView(WalletViewModel model, TezosTransaction transaction)
     {
@@ -304,7 +329,8 @@ public sealed partial class TransactionRowView : UserControl
                 Child = new TextBlock { Text = "Failed", FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["SystemFillColorCriticalBrush"] },
             });
         middle.Children.Add(line);
-        middle.Children.Add(new TextBlock { Text = Subtitle, Style = (Style)Application.Current.Resources["CaptionSecondaryText"], TextTrimming = TextTrimming.CharacterEllipsis });
+        subtitle = new TextBlock { Text = Subtitle, Style = (Style)Application.Current.Resources["CaptionSecondaryText"], TextTrimming = TextTrimming.CharacterEllipsis };
+        middle.Children.Add(subtitle);
         Grid.SetColumn(middle, 1);
         row.Children.Add(middle);
 

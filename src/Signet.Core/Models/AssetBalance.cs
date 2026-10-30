@@ -33,6 +33,12 @@ public sealed record AssetBalance(string Id, AssetBalance.AssetKind Kind, string
 
     public string FormattedAmount => Format(Amount, Symbol);
 
+    // The breakdown and logos are part of the value: an unchanged refresh must compare equal (no redraw).
+    public bool Equals(AssetBalance? other) =>
+        other is not null && Id == other.Id && Kind == other.Kind && Name == other.Name && Symbol == other.Symbol && Amount == other.Amount &&
+        Standard == other.Standard && Unavailable == other.Unavailable && Details.SequenceEqual(other.Details) && IconURLs.SequenceEqual(other.IconURLs);
+    public override int GetHashCode() => HashCode.Combine(Id, Kind, Amount);
+
     /// <summary>The Shielded row before the TzEL wallet exists: always 0 tz.</summary>
     public static readonly AssetBalance ShieldedPlaceholder = new("shielded", new AssetKind.Shielded(), "Shielded", "tz", 0);
 

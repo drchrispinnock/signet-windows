@@ -10,4 +10,10 @@ public sealed record NFT(string Id, string Contract, string TokenId, string Name
         : this(id, contract, tokenId, name, balance, thumbnailURL is null ? [] : [thumbnailURL]) { }
 
     public Uri? ThumbnailURL => ImageURLs.Count > 0 ? ImageURLs[0] : null;
+
+    // The image list is part of the value: an unchanged refresh must compare equal (no redraw).
+    public bool Equals(NFT? other) =>
+        other is not null && Id == other.Id && Contract == other.Contract && TokenId == other.TokenId && Name == other.Name &&
+        Balance == other.Balance && ImageURLs.SequenceEqual(other.ImageURLs);
+    public override int GetHashCode() => HashCode.Combine(Id, Name, Balance);
 }

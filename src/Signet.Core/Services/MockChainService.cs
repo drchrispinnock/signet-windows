@@ -32,9 +32,12 @@ public sealed class MockChainService : IChainService
         Task.FromResult<IReadOnlyList<NFT>>(Enumerable.Range(1, 6)
             .Select(i => new NFT($"mock:{i}", "KT1mock", $"{i}", $"NFT {i}", 1, thumbnailURL: null)).ToList());
 
+    /// <summary>The sample history is dated from when this mock was made, so reading it twice gives the same operations, as an indexer would.</summary>
+    private readonly DateTimeOffset createdAt = DateTimeOffset.Now;
+
     public Task<IReadOnlyList<TezosTransaction>> RecentTransactionsFor(Address address, int limit)
     {
-        var now = DateTimeOffset.Now;
+        var now = createdAt;
         return Task.FromResult<IReadOnlyList<TezosTransaction>>(
         [
             new("1", "ooAAA111", 9_000_010, now.AddSeconds(-3_600), TezosTransaction.TransactionKind.Transaction, TezosTransaction.TransactionDirection.Incoming,

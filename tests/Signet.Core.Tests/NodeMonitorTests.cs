@@ -173,6 +173,22 @@ public class NewHeadRefreshTests
         await monitor.CheckNow();
         Assert.Equal([101, 103], seen);
     }
+
+    /// <summary>
+    /// Windows-only: a refresh that finds nothing new (the one each block triggers) announces no
+    /// change to the dashboard's data, so the views keep their rows and pictures (no flicker).
+    /// </summary>
+    [Fact]
+    public async Task AnUnchangedRefreshAnnouncesNothing()
+    {
+        var model = new Signet.ViewModels.WalletViewModel(Signet.ViewModels.WalletViewModel.SampleWallets, new MockChainService());
+        await model.Refresh();
+        Assert.NotEmpty(model.Transactions);
+        var changed = new List<string>();
+        model.PropertyChanged += (_, e) => changed.Add(e.PropertyName!);
+        await model.Refresh();
+        Assert.Empty(changed.Except([nameof(model.IsLoading), nameof(model.ErrorMessage)]));
+    }
 }
 
 /// <summary>A node typed into Networks is asked which chain it serves before it is adopted.</summary>

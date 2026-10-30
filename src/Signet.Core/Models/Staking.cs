@@ -14,6 +14,14 @@ public sealed record DelegateInfo(Address? Delegate, DelegateInfo.BakerRecord? B
     {
         public StakingParameters? StakingParameters { get; init; }
         public IReadOnlyList<StakingParameters> PendingStakingParameters { get; init; } = [];
+
+        // The key and parameter lists are part of the value: an unchanged refresh must compare equal (no redraw).
+        public bool Equals(BakerRecord? other) =>
+            other is not null && Deactivated == other.Deactivated && GracePeriod == other.GracePeriod &&
+            ConsensusKey == other.ConsensusKey && PendingConsensusKeys.SequenceEqual(other.PendingConsensusKeys) &&
+            CompanionKey == other.CompanionKey && PendingCompanionKeys.SequenceEqual(other.PendingCompanionKeys) &&
+            StakingParameters == other.StakingParameters && PendingStakingParameters.SequenceEqual(other.PendingStakingParameters);
+        public override int GetHashCode() => HashCode.Combine(Deactivated, GracePeriod, ConsensusKey, CompanionKey, StakingParameters);
     }
 
     public bool IsBaker => Baker is not null;
