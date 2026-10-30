@@ -393,6 +393,5 @@ public sealed partial class SendSheet : Sheet
         }
     }
 
-    private static Brush Secondary => (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
     private static Brush Tertiary => (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
 }

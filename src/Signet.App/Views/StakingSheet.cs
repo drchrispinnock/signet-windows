@@ -384,22 +384,6 @@ public sealed partial class StakingSheet : Sheet
 
     // ---- Building blocks -------------------------------------------------------------------------
 
-    private static Brush Secondary => (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
-
-    private static Button MakeButton(string text, Action action, bool enabled)
-    {
-        var button = new Button { Content = text, IsEnabled = enabled };
-        button.Click += (_, _) => action();
-        return button;
-    }
-
-    private static StackPanel Row(params Button[] buttons)
-    {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        foreach (var button in buttons) row.Children.Add(button);
-        return row;
-    }
-
     private static Button ListButton(UIElement content, Action action)
     {
         var button = new Button

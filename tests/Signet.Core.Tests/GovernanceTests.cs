@@ -56,8 +56,24 @@ public class GovernanceTests
         Assert.Equal("Vote Nay", vote.Title);
     }
 
-    [Fact(Skip = Pending.ViewModel)]
-    public void GovernanceMenuNeedsABakerWeCanSignFor() { }
+    [Fact]
+    public async Task GovernanceMenuNeedsABakerWeCanSignFor()
+    {
+        var model = new Signet.ViewModels.WalletViewModel(Signet.ViewModels.WalletViewModel.SampleWallets, new MockChainService());
+        await model.Refresh();
+        Assert.False(model.CanGovern);   // sample wallet delegates to Captain Stake, it is not a baker itself
+        var baker = new Wallet("captain", MockChainService.CaptainStake, publicKey: "edpkX", keyKind: KeyKind.Unencrypted);
+        var store = new InMemoryWalletStore();
+        store.AddWithSecretKey(baker, "edskX");
+        var bakerModel = new Signet.ViewModels.WalletViewModel(chain: new MockChainService(), walletStore: store);
+        await bakerModel.Refresh();
+        Assert.True(bakerModel.CanGovern);
+        var watch = new Signet.ViewModels.WalletViewModel([new Wallet("captain", MockChainService.CaptainStake, keyKind: KeyKind.None)], new MockChainService());
+        await watch.Refresh();
+        Assert.False(watch.CanGovern);
+        var result = await bakerModel.PerformGovernance(new GovernanceOperation.Ballot("PtA", BallotVote.Yay), null);
+        Assert.Equal("ooMockGovernanceballot", result.Hash);
+    }
 
     [Fact, Trait(Category.Name, Category.Network)]
     public async Task ReadsTheLivePeriodOnShadownet()

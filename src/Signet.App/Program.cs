@@ -25,6 +25,17 @@ public static partial class Program
     private static int Main(string[] args)
     {
         WinRT.ComWrappersSupport.InitializeComWrappers();
+        if (args.Contains("--preview"))
+        {
+            // A second, throwaway window on mock data (upstream's #Preview and test-host model): it
+            // neither claims the single instance nor the signet:// scheme, and touches no files.
+            Application.Start(callback =>
+            {
+                SynchronizationContext.SetSynchronizationContext(new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread()));
+                _ = new App(preview: true);
+            });
+            return 0;
+        }
         var activation = AppInstance.GetCurrent().GetActivatedEventArgs();
         var main = AppInstance.FindOrRegisterForKey(InstanceKey);
         if (!main.IsCurrent)

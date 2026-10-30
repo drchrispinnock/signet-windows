@@ -150,6 +150,12 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   `QuantumnetSendTests` is a Windows-only live round trip through the journal.
 - Staking: `StakingSheet` (delegate, change or remove the delegate, stake, unstake, finalize),
   opened from the Stake tile and the delegate row (a contract's delegate row opens Sign multisig).
+- Baking and governance: `BakingSheet` (register, consensus and companion keys with BLS proof of
+  possession, staking parameters; no companion section on Quantumnet) and `GovernanceSheet`
+  (upvotes in a proposal period, ballots in the votes), from the burger menu ("Governance…"
+  only when `CanGovern`). Their text fields are made fresh for each step and bound to strings
+  (`Sheet.BoundTextBox`); never move one control between parents, which is what crashed Sign
+  multisig (0x800F1000 from `UIElementCollection.Add`).
 - dApps (Octez Connect / TZIP-10): `DAppRequest` at HEAD (sender id from the message only,
   `SameEndpoint`, `EndpointDescription`, `DAppPreparedBatch`), `DAppConnectionManager` (grants
   rechecked before signing, S08; undelivered replies, S17; shared start/stop, S18; 16 pending,
@@ -181,8 +187,8 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   signers are tz5 keys and a tz1 pays; a multisig there needs tz5 signers.
 - `WalletBackup` is still the `3b33fe1` version (no manifest or locked snapshot, S05/S28).
 
-Not ported, shown disabled in the menus with "Not available on Windows yet": Buy,
-Baking, Governance, Connect Ledger (and `LedgerHID`, still a placeholder).
+Not ported, shown disabled in the menus with "Not available on Windows yet": Buy and
+Connect Ledger (and `LedgerHID`, still a placeholder).
 Shielded settings is left out of the menu altogether while TzEL is out of scope. Run `dotnet test` and read the skipped tests for the
 detailed backlog. The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
 
@@ -208,6 +214,13 @@ Windows-specific porting notes:
 - `dotnet publish` of the app drops `Signet.pri` and the `.xbf` files and the result crashes with
   0xC000027B. A runnable folder is the Release build output (`bin\x64\Release\…\win-x64`).
 - The Mac's chmod 600 assertions are dropped (see `TestSupport.cs`).
+
+- `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock
+  chain, in-memory accounts (Captain Stake held with a placeholder key, so Baking and Governance
+  show a baker) and mock multisig. It claims neither the single instance nor `signet://`, shows
+  no disclaimer and touches no wallet folder or preferences, so UI checks need not repoint the
+  user's preferences (upstream's `#Preview` and test-host model). An exception escaping a UI
+  event is written to `%LOCALAPPDATA%\Signet\Logs\crash.log` (the app still exits).
 
 This PC has Smart App Control enforced. It can block a freshly built, unsigned `Signet.exe` with
 "An Application Control policy has blocked this file" (Code Integrity event 3077). Starting it as

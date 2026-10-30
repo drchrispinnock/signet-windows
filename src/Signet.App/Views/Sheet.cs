@@ -159,6 +159,69 @@ public abstract partial class Sheet : ContentDialog
         return row;
     }
 
+    protected static Brush Secondary => (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+
+    protected static Button MakeButton(string text, Action action, bool enabled = true)
+    {
+        var button = new Button { Content = text, IsEnabled = enabled };
+        button.Click += (_, _) => action();
+        return button;
+    }
+
+    protected static StackPanel Row(params Button[] buttons)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        foreach (var button in buttons) row.Children.Add(button);
+        return row;
+    }
+
+    /// <summary>An operation's done step: "Included in block N" and its hash with an explorer link.</summary>
+    protected void AddIncludedInBlock(Models.Network network, string hash, int level)
+    {
+        Form.Children.Add(Label($"Included in block {level.ToString("N0", System.Globalization.CultureInfo.CurrentCulture)}", "", "SystemFillColorSuccessBrush"));
+        var row = new Grid { ColumnSpacing = 8 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.Children.Add(new TextBlock { Text = hash, Style = (Style)Application.Current.Resources["MonoText"], IsTextSelectionEnabled = true, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
+        if (network.ExplorerURLForOperation(hash) is { } url)
+        {
+            var link = new HyperlinkButton { Content = "View in explorer", NavigateUri = url };
+            Grid.SetColumn(link, 1);
+            row.Children.Add(link);
+        }
+        Form.Children.Add(row);
+    }
+
+    /// <summary>"Signing and waiting" with a spinner; on a Ledger, the prompt to confirm on the device.</summary>
+    protected void AddWorkingRow(string title, bool onLedger)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        row.Children.Add(new ProgressRing { Width = 16, Height = 16, IsActive = true });
+        row.Children.Add(new TextBlock
+        {
+            Text = onLedger ? $"{title}: confirm on your Ledger, then we wait for the next block…" : $"{title}… waiting for the next block",
+            Foreground = Secondary, TextWrapping = TextWrapping.Wrap,
+        });
+        Form.Children.Add(row);
+    }
+
+    /// <summary>A text field made fresh for one step and bound to a string the sheet keeps across steps.</summary>
+    protected static TextBox BoundTextBox(Func<string> get, Action<string> set, string placeholder = "", bool monospaced = false, Action? changed = null)
+    {
+        var box = new TextBox { Text = get(), PlaceholderText = placeholder, IsSpellCheckEnabled = false };
+        if (monospaced) box.FontFamily = new FontFamily("Cascadia Mono, Consolas");
+        box.TextChanged += (_, _) => { set(box.Text); changed?.Invoke(); };
+        return box;
+    }
+
+    /// <summary>A password field made fresh for one step and bound to a string the sheet keeps.</summary>
+    protected static PasswordBox BoundPasswordBox(Func<string> get, Action<string> set, Action? changed = null)
+    {
+        var box = new PasswordBox { Password = get() };
+        box.PasswordChanged += (_, _) => { set(box.Password); changed?.Invoke(); };
+        return box;
+    }
+
     /// <summary>Upstream's <c>Label(…, systemImage: "checkmark.seal.fill").foregroundStyle(.green)</c>.</summary>
     protected static Grid Success(string text) => Label(text, "", "SystemFillColorSuccessBrush");
 

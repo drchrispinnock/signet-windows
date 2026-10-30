@@ -153,6 +153,17 @@ public sealed partial class WalletHomeView : UserControl
                 if (sheet.DidSend) _ = model.RefreshAfterOperation();
             };
         }
+        else if (model.IsPresentingBaking && model.SelectedWallet is not null)
+        {
+            var sheet = new BakingSheet(model);
+            dialog = sheet;
+            reset = () =>
+            {
+                model.IsPresentingBaking = false;
+                if (sheet.DidOperate) _ = model.RefreshAfterOperation();
+            };
+        }
+        else if (model.IsPresentingGovernance && model.SelectedWallet is not null) { dialog = new GovernanceSheet(model); reset = () => model.IsPresentingGovernance = false; }
         else if (model.IsPresentingCreateMultisig) { dialog = new CreateMultisigSheet(model); reset = () => model.IsPresentingCreateMultisig = false; }
         else if (model.IsPresentingAddMultisig) { dialog = new AddMultisigSheet(model); reset = () => model.IsPresentingAddMultisig = false; }
         else if (model.IsPresentingSignMultisig)
@@ -271,9 +282,13 @@ public static class Disclaimer
     public const string Title = "⚠️ Signet - Warning";
     public const string Message = "Signet is very new software and should be used with care. Make sure you protect your keys with a password or use a Ledger.\n\nYou can turn off this warning in the Settings.";
 
+    /// <summary>Off for the <c>--preview</c> window, as upstream suppresses it under the test host.</summary>
+    public static bool Suppressed { get; set; }
+
     /// <summary>OK carries on; Exit quits the app.</summary>
     public static async Task ShowIfNeeded(XamlRoot root)
     {
+        if (Suppressed) return;
         // On unless turned off, like `@AppStorage(Disclaimer.key) var showsDisclaimer = true`.
         if (UserDefaults.Standard.Object(Key) is not null && !UserDefaults.Standard.Bool(Key)) return;
         var dialog = new ContentDialog

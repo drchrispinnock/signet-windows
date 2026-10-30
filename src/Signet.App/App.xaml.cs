@@ -12,9 +12,13 @@ public partial class App : Application
     /// <summary>A <c>signet://</c> link this launch was started with, handed to the model once it exists.</summary>
     private readonly Uri? launchURL;
 
-    public App(Uri? launchURL = null)
+    /// <summary>Started with <c>--preview</c>: mock chain and in-memory accounts (<c>MakePreviewModel</c>).</summary>
+    private readonly bool preview;
+
+    public App(Uri? launchURL = null, bool preview = false)
     {
         this.launchURL = launchURL;
+        this.preview = preview;
         InitializeComponent();
         UnhandledException += (_, e) =>
         {
@@ -61,9 +65,24 @@ public partial class App : Application
         startDApps: true,
         multisig: new BridgeMultisigService());
 
+    /// <summary>
+    /// Windows-only: the <c>--preview</c> model, upstream's test-host model and <c>#Preview</c> data in a
+    /// real window. Mock chain, in-memory accounts and proposals, no wallet directory, no dApp client.
+    /// Captain Stake is held with a placeholder key, so the baker-only screens (Baking, Governance)
+    /// show their full state; the mock chain accepts any signature.
+    /// </summary>
+    public static WalletViewModel MakePreviewModel()
+    {
+        var store = new InMemoryWalletStore();
+        store.AddWithSecretKey(new Models.Wallet("Captain Stake", MockChainService.CaptainStake, publicKey: "edpkPreviewCaptainStake", keyKind: Models.KeyKind.Unencrypted), "edskPreview");
+        foreach (var wallet in WalletViewModel.SampleWallets) store.AddWithSecretKey(wallet with { PublicKey = "edpkPreview" + wallet.Alias.Replace(" ", "") }, "edskPreview");
+        return new WalletViewModel(chain: new MockChainService(), walletStore: store, multisig: new MockMultisigService(["edpkPreviewCaptainStake", "edpkPreviewMyAccount"], 2));
+    }
+
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        model = MakeModel();
+        Views.Disclaimer.Suppressed = preview;
+        model = preview ? MakePreviewModel() : MakeModel();
         window = new MainWindow(model);
         if (launchURL is not null) model.HandleIncomingURL(launchURL);
         window.Activate();

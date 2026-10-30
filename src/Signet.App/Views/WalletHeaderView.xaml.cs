@@ -177,8 +177,8 @@ public static class OperationsMenuItems
         menu.Items.Add(Item("Sign multisig transaction…", () => model.IsPresentingSignMultisig = true));
         menu.Items.Add(Item("Submit multisig transaction…", () => model.IsPresentingSubmitMultisig = true));
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(Item("Baking…", null, help: NotYet));
-        if (model.CanGovern) menu.Items.Add(Item("Governance…", null, help: NotYet));
+        menu.Items.Add(Item("Baking…", () => model.IsPresentingBaking = true, enabled: hasWallet));
+        if (model.CanGovern) menu.Items.Add(Item("Governance…", () => model.IsPresentingGovernance = true));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Networks…", () => model.IsPresentingNetworks = true));
         // Upstream's "Shielded settings…" belongs with TzEL, which this port leaves out.
