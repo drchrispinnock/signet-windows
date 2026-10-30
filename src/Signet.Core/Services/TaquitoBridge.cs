@@ -58,13 +58,22 @@ public sealed class TaquitoBridge
     private int nextCallID;
     private readonly Lock gate = new();
 
-    /// <summary>Backing store for the Octez Connect SDK. Set before the first call that loads the bundle.</summary>
+    /// <summary>
+    /// Backing store for the Octez Connect SDK. In memory unless the app sets one: only the
+    /// production composition picks the wallet directory's file (upstream's audit repair).
+    /// </summary>
     public IBridgeStorage Storage
     {
-        get { lock (gate) return storage ??= new OctezConnectStorage(); }
+        get { lock (gate) return storage; }
         set { lock (gate) storage = value; }
     }
-    private IBridgeStorage? storage;
+    private IBridgeStorage storage = new InMemoryBridgeStorage();
+
+    /// <summary>The most a single HTTP reply may carry into JavaScript (S19).</summary>
+    public const int MaxResponseBytes = 32 * 1024 * 1024;
+
+    /// <summary>Every fetch goes to public HTTPS only, through <see cref="PublicHTTPClient"/> (the dApp bridge, S12).</summary>
+    public bool RequirePublicEndpoints { get; }
 
     /// <summary>
     /// Where signed operations are recorded before they are injected (S15). In memory by default;
@@ -85,10 +94,11 @@ public sealed class TaquitoBridge
     }
     private Action<string>? eventHandler;
 
-    public TaquitoBridge(HttpClient? http = null)
+    public TaquitoBridge(HttpClient? http = null, bool requirePublicEndpoints = false)
     {
-        // URLSession's default request timeout, so a node that never answers still settles the promise.
-        this.http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+        RequirePublicEndpoints = requirePublicEndpoints;
+        // Each fetch has URLSession's default 60 s timeout, so a node that never answers still settles the promise.
+        this.http = http ?? (requirePublicEndpoints ? PublicHTTPClient.Shared : new HttpClient { Timeout = Timeout.InfiniteTimeSpan });
         var thread = new Thread(() => { foreach (var work in queue.GetConsumingEnumerable()) work(); })
         {
             IsBackground = true,
@@ -340,10 +350,20 @@ public sealed class TaquitoBridge
 
     private void StartFetch(int id, string urlString, string method, string headersJSON, string? body)
     {
-        Trace($"fetch #{id} {method} {urlString}");
+        Trace($"fetch #{id} {method} {Redacted(urlString)}");
         if (!Uri.TryCreate(urlString, UriKind.Absolute, out var url))
         {
-            FinishFetch(id, error: $"Invalid URL: {urlString}");
+            FinishFetch(id, error: "Invalid URL");
+            return;
+        }
+        if (RequirePublicEndpoints)
+        {
+            try { PublicHTTPClient.Check(url); }
+            catch (PublicHTTPClient.PublicEndpointError e) { FinishFetch(id, error: e.Message); return; }
+        }
+        if (fetches.Count >= 32)
+        {
+            FinishFetch(id, error: "Too many active bridge HTTP requests");
             return;
         }
         var request = new HttpRequestMessage(new HttpMethod(method), url);
@@ -365,8 +385,10 @@ public sealed class TaquitoBridge
         {
             try
             {
-                using var response = await http.SendAsync(request, cancel.Token);
-                var text = await response.Content.ReadAsStringAsync(cancel.Token);
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token);
+                timeout.CancelAfter(TimeSpan.FromSeconds(60));
+                using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                var text = await ReadLimited(response.Content, timeout.Token);
                 var responseHeaders = response.Headers.Concat(response.Content.Headers)
                     .GroupBy(h => h.Key.ToLowerInvariant())
                     .ToDictionary(g => g.Key, g => string.Join(", ", g.SelectMany(h => h.Value)));
@@ -393,6 +415,24 @@ public sealed class TaquitoBridge
         });
     }
 
+    /// <summary>The reply body, refused once it passes <c>MaxResponseBytes</c> (S19) so an endless body never reaches JavaScript.</summary>
+    private static async Task<string> ReadLimited(HttpContent content, CancellationToken cancel)
+    {
+        if (content.Headers.ContentLength is > MaxResponseBytes) throw new HttpRequestException(TooLarge);
+        await using var stream = await content.ReadAsStreamAsync(cancel);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[64 * 1024];
+        int read;
+        while ((read = await stream.ReadAsync(chunk, cancel)) > 0)
+        {
+            if (buffer.Length + read > MaxResponseBytes) throw new HttpRequestException(TooLarge);
+            buffer.Write(chunk, 0, read);
+        }
+        return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
+    }
+
+    private const string TooLarge = "The server's reply was larger than 32 MB and was dropped.";
+
     private static Dictionary<string, string> TryParseHeaders(string json)
     {
         try { return JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? []; }
@@ -401,9 +441,8 @@ public sealed class TaquitoBridge
 
     private void FinishFetch(int id, int status = 0, string statusText = "", string headersJSON = "{}", string body = "", string? error = null)
     {
-        var limit = body.Contains("next_batch") ? 3000 : 160;
-        var preview = (body.Length > limit ? body[..limit] : body).TrimEnd();
-        Trace($"fetch #{id} ← {error ?? $"{status} {preview}"}");
+        // Status and size only: bodies can hold relay traffic and account data (S11).
+        Trace($"fetch #{id} ← {error ?? $"{status} {Encoding.UTF8.GetByteCount(body)} bytes"}");
         Invoke("__signet_fetchDone", id, status, statusText, headersJSON, body, error);
     }
 
@@ -411,7 +450,7 @@ public sealed class TaquitoBridge
 
     private void LedgerExchange(int id, string deviceID, string apduHex, double timeoutMs)
     {
-        Trace($"ledger #{id} → {apduHex[..Math.Min(24, apduHex.Length)]}…");
+        Trace($"ledger #{id} → {apduHex[..Math.Min(8, apduHex.Length)]} {apduHex.Length / 2} bytes");
         var apdu = Convert.FromHexString(apduHex.Length % 2 == 0 ? apduHex : apduHex[..^1]);
         LedgerHID.Shared.Exchange(deviceID, apdu, TimeSpan.FromMilliseconds(timeoutMs), (response, error) => Post(() =>
         {
@@ -452,8 +491,41 @@ public sealed class TaquitoBridge
     /// <summary>Lets app code leave a line in the bridge log next to the JavaScript traffic.</summary>
     public void Note(string line) => Record($"[app] {line}");
 
-    private void Record(string line)
+    /// <summary>
+    /// A URL as it may appear in the log: scheme, host and path only. Query strings and
+    /// fragments can carry tokens (the relay's sync endpoint does) and are dropped (S11).
+    /// </summary>
+    public static string Redacted(string urlString)
     {
+        if (!Uri.TryCreate(urlString, UriKind.Absolute, out var url) || url.Host.Length == 0) return "<url>";
+        var path = url.AbsolutePath == "/" ? "" : url.AbsolutePath;
+        if (path.Length > 80) path = path[..80] + "…";
+        return $"{url.Scheme}://{url.Host}{path}";
+    }
+
+    public const int MaxLineLength = 1024;
+
+    private static readonly System.Text.RegularExpressions.Regex LongHex = new("[0-9a-fA-F]{48,}");
+    private static readonly System.Text.RegularExpressions.Regex Secrets =
+        new(@"\b(edsk|edesk|spsk|spesk|p2sk|p2esk|BLsk|BLesk|mdsk|mdesk|edsig|spsig1|p2sig|BLsig|mdsig|sig)[1-9A-HJ-NP-Za-km-z]{20,}");
+
+    /// <summary>
+    /// A log line with anything that could be a secret or private content kept out: at most
+    /// <c>MaxLineLength</c> characters, and hex or base58 runs long enough to be keys, signatures or
+    /// payloads replaced by their length (S11).
+    /// </summary>
+    public static string RedactedLine(string line)
+    {
+        var text = LongHex.Replace(line, m => $"<{m.Length} hex chars>");
+        text = Secrets.Replace(text, m => $"{m.Groups[1].Value}<redacted>");
+        if (text.Length > MaxLineLength) text = text[..MaxLineLength] + "…";
+        return text;
+    }
+
+    /// <summary>The one way a line reaches any sink: <c>ConsoleLines</c> and the log file get the same redacted, capped text (S11).</summary>
+    private void Record(string rawLine)
+    {
+        var line = RedactedLine(rawLine);
         lock (gate)
         {
             consoleLines.Add(line);

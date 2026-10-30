@@ -30,12 +30,16 @@ public sealed partial class WalletHomeView : UserControl
         OperationsMenu.Opening += (_, _) => OperationsMenuItems.Fill(OperationsMenu, model, OpenSettings);
         OperationsMenuItems.InstallShortcuts(this, model, OpenSettings);
         model.PropertyChanged += Changed;
+        dapps = model.Dapps;
+        dapps.PropertyChanged += DAppsChanged;
         Update();
         UpdateBalances();
         Loaded += async (_, _) =>
         {
             model.NodeMonitor.Start();
             await Disclaimer.ShowIfNeeded(XamlRoot);
+            // A sheet asked for before the window was up (a signet:// link at launch) opens now.
+            _ = PresentSheets();
             await model.Refresh();
         };
     }
@@ -58,7 +62,22 @@ public sealed partial class WalletHomeView : UserControl
             case { } name when name.StartsWith("IsPresenting", StringComparison.Ordinal):
                 _ = PresentSheets();
                 break;
+            case nameof(WalletViewModel.Dapps):
+                // A directory change brings a new manager; follow its queue instead of the old one's.
+                dapps.PropertyChanged -= DAppsChanged;
+                dapps = model.Dapps;
+                dapps.PropertyChanged += DAppsChanged;
+                _ = PresentSheets();
+                break;
         }
+    }
+
+    private DAppConnectionManager dapps;
+
+    /// <summary>The front of the dApp queue changed: show its request as soon as no other sheet is up (upstream's <c>.sheet(item:)</c>).</summary>
+    private void DAppsChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(DAppConnectionManager.Current)) _ = PresentSheets();
     }
 
     private void Update()
@@ -102,7 +121,9 @@ public sealed partial class WalletHomeView : UserControl
         if (dialogOpen || XamlRoot is null) return;
         ContentDialog? dialog = null;
         Action? reset = null;
-        if (model.IsPresentingCreateWallet) { dialog = new CreateWalletSheet(model); reset = () => model.IsPresentingCreateWallet = false; }
+        if (model.Dapps.Current is { } request) { dialog = new DAppRequestSheet(model, request); reset = () => { }; }
+        else if (model.IsPresentingConnectDApp) { dialog = new ConnectDAppSheet(model); reset = () => model.IsPresentingConnectDApp = false; }
+        else if (model.IsPresentingCreateWallet) { dialog = new CreateWalletSheet(model); reset = () => model.IsPresentingCreateWallet = false; }
         else if (model.IsPresentingImportAccount) { dialog = new ImportAccountSheet(model); reset = () => model.IsPresentingImportAccount = false; }
         else if (model.IsPresentingRenameWallet) { dialog = new RenameWalletSheet(model); reset = () => model.IsPresentingRenameWallet = false; }
         else if (model.IsPresentingAddAddress) { dialog = new AddAddressSheet(model); reset = () => model.IsPresentingAddAddress = false; }

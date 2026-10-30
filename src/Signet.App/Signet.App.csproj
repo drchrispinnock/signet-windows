@@ -16,6 +16,8 @@
     <!-- Unpackaged (no MSIX), like the unsandboxed Mac app: it must reach %USERPROFILE%\.signet. -->
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- Program.cs is the entry point: single instance and the signet:// scheme. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" />

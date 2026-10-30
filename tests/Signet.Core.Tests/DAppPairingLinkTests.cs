@@ -19,6 +19,14 @@ public class DAppPairingLinkTests
         Assert.Equal("xyz+1", DAppPairingLink.Code(roundTrip));
     }
 
-    [Fact(Skip = Pending.ViewModel)]
-    public void IncomingLinkOpensTheConnectSheetWithTheCode() { }
+    [Fact]
+    public void IncomingLinkOpensTheConnectSheetWithTheCode()
+    {
+        var model = new Signet.ViewModels.WalletViewModel(Signet.ViewModels.WalletViewModel.SampleWallets, new Signet.Services.MockChainService());
+        model.HandleIncomingURL(new Uri("signet://?type=tzip10&data=CODE123"));
+        Assert.True(model.IsPresentingConnectDApp);
+        Assert.Equal("CODE123", model.PendingPairingCode);
+        model.HandleIncomingURL(new Uri("signet://?nope=1"));
+        Assert.Contains("understand", model.ErrorMessage);
+    }
 }

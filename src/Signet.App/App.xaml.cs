@@ -8,11 +8,25 @@ namespace Signet.App;
 public partial class App : Application
 {
     private Window? window;
+    private WalletViewModel? model;
+    /// <summary>A <c>signet://</c> link this launch was started with, handed to the model once it exists.</summary>
+    private readonly Uri? launchURL;
 
-    public App()
+    public App(Uri? launchURL = null)
     {
+        this.launchURL = launchURL;
         InitializeComponent();
     }
+
+    /// <summary>
+    /// Another launch was redirected here (<c>Program</c>), on a background thread: a link goes to the
+    /// model like upstream's <c>onOpenURL</c>, and the window comes forward either way.
+    /// </summary>
+    public void Activated(Uri? url) => window?.DispatcherQueue.TryEnqueue(() =>
+    {
+        if (url is not null) model?.HandleIncomingURL(url);
+        window.Activate();
+    });
 
     /// <summary>The app's model, on the wallet directory and the live chain.</summary>
     public static WalletViewModel MakeModel()
@@ -29,11 +43,15 @@ public partial class App : Application
         importSource: TezosClientStore.OctezClientDirectory,
         directorySettings: new WalletDirectorySettings(),
         storeFactory: directory => (new TezosClientStore(directory), new FileAppStateStore(directory)),
-        backupSettings: new BackupSettings());
+        backupSettings: new BackupSettings(),
+        dappStorageFactory: directory => new OctezConnectStorage(directory),
+        startDApps: true);
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        window = new MainWindow(MakeModel());
+        model = MakeModel();
+        window = new MainWindow(model);
+        if (launchURL is not null) model.HandleIncomingURL(launchURL);
         window.Activate();
     }
 }

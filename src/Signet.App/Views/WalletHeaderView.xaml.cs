@@ -170,7 +170,7 @@ public static class OperationsMenuItems
         if (model.CanRememberSelectedKey) menu.Items.Add(Item("Remember key…", () => model.IsPresentingRememberKey = true));
         menu.Items.Add(Item("Forget account…", () => model.IsPresentingForget = true, enabled: hasWallet));
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(Item("dApps…", null, help: NotYet));
+        menu.Items.Add(Item("dApps…", () => model.IsPresentingConnectDApp = true, VirtualKey.D, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Create multisig…", null, help: NotYet));
         menu.Items.Add(Item("Add multisig…", null, help: NotYet));
@@ -220,6 +220,7 @@ public static class OperationsMenuItems
         Add(VirtualKey.N, VirtualKeyModifiers.Control, () => model.IsPresentingCreateWallet = true);
         Add(VirtualKey.I, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => model.IsPresentingImportAccount = true);
         Add(VirtualKey.N, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => model.IsPresentingAddAddress = true);
+        Add(VirtualKey.D, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => model.IsPresentingConnectDApp = true);
         Add(VirtualKey.R, VirtualKeyModifiers.Control, () => _ = model.Refresh(), () => model.SelectedWallet is not null);
         Add((VirtualKey)188, VirtualKeyModifiers.Control, openSettings);  // Ctrl+, (VK_OEM_COMMA), as on the Mac
         root.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;

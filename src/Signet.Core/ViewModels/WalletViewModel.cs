@@ -88,6 +88,28 @@ public sealed partial class WalletViewModel : ObservableObject
     [ObservableProperty] private bool isPresentingGovernance;
     [ObservableProperty] private bool isPresentingNetworks;
     [ObservableProperty] private bool isPresentingBuy;
+    [ObservableProperty] private bool isPresentingConnectDApp;
+
+    /// <summary>A pairing code that arrived by URL, waiting for the Connect dApp sheet to pick it up.</summary>
+    [ObservableProperty] private string? pendingPairingCode;
+
+    /// <summary>
+    /// Handles a <c>signet://</c> link. Only TZIP-10 pairing links are understood; the code is handed
+    /// to the Connect dApp sheet, which pairs and reports as if it had been pasted.
+    /// </summary>
+    public void HandleIncomingURL(Uri url)
+    {
+        if (DAppPairingLink.Code(url) is not { } code)
+        {
+            ErrorMessage = "Signet does not understand that link.";
+            return;
+        }
+        PendingPairingCode = code;
+        IsPresentingConnectDApp = true;
+    }
+
+    /// <summary>dApp connections over Octez Connect (TZIP-10).</summary>
+    [ObservableProperty] private DAppConnectionManager dapps;
 
     /// <summary>Export shows keys Signet holds on disk; Ledger and watch-only entries have nothing to show.</summary>
     public bool CanExportSelectedKey => SelectedWallet?.KeyKind is KeyKind.Unencrypted or KeyKind.Encrypted;
@@ -329,7 +351,10 @@ public sealed partial class WalletViewModel : ObservableObject
         WalletDirectorySettings? directorySettings = null,
         Func<string, (IWalletStore Wallets, IAppStateStore State)>? storeFactory = null,
         BackupSettings? backupSettings = null,
-        NodeMonitor.Probe? nodeProbe = null)
+        NodeMonitor.Probe? nodeProbe = null,
+        IBridgeStorage? dappStorage = null,
+        Func<string, IBridgeStorage>? dappStorageFactory = null,
+        bool startDApps = false)
     {
         this.backupSettings = backupSettings;
         var factory = chainFactory ?? (_ => chain ?? new MockChainService());
@@ -382,6 +407,11 @@ public sealed partial class WalletViewModel : ObservableObject
         // Startup backup of the key files.
         _ = BackUp();
 
+        this.dappStorageFactory = dappStorageFactory;
+        startsDApps = startDApps;
+        dapps = MakeDApps(dappStorage ?? (directory is not null ? dappStorageFactory?.Invoke(directory) : null) ?? new InMemoryBridgeStorage());
+        if (startDApps && Wallets.Count > 0) _ = dapps.Start();
+
         // A new head means balances or history may have moved; refresh (not while one is running).
         NodeMonitor.OnNewHead = level =>
         {
@@ -429,6 +459,41 @@ public sealed partial class WalletViewModel : ObservableObject
     public Wallet? SelectedWallet => Wallets.FirstOrDefault(w => w.Id == SelectedWalletID) ?? Wallets.FirstOrDefault();
 
     /// <summary>
+    /// Builds the Octez Connect storage for a wallet directory: each directory is its own dApp
+    /// session (S08).
+    /// </summary>
+    private readonly Func<string, IBridgeStorage>? dappStorageFactory;
+    private readonly bool startsDApps;
+
+    private DAppConnectionManager MakeDApps(IBridgeStorage storage)
+    {
+        // Its own bridge, reaching public endpoints only (S12), sharing the operation journal.
+        var bridge = new TaquitoBridge(requirePublicEndpoints: true) { OperationJournal = TaquitoBridge.Shared.OperationJournal };
+        return new DAppConnectionManager(storage, () => Wallets, SigningKeyFor, bridge);
+    }
+
+    /// <summary>
+    /// A directory change ends the dApp session: the old client is stopped (its waiting requests
+    /// aborted) and a new manager is built on the new directory's storage, so sessions paired
+    /// under one wallet can never ask about another's accounts (S08).
+    /// </summary>
+    private void ReplaceDApps(string directory)
+    {
+        var old = Dapps;
+        old.Invalidate();
+        var fresh = MakeDApps(dappStorageFactory?.Invoke(directory) ?? new InMemoryBridgeStorage());
+        Dapps = fresh;
+        var start = startsDApps && Wallets.Count > 0;
+        _ = Swap();
+
+        async Task Swap()
+        {
+            await old.Stop();
+            if (start && ReferenceEquals(Dapps, fresh)) await fresh.Start();
+        }
+    }
+
+    /// <summary>
     /// Points the app at a different wallet directory: rebuilds the stores, reloads the wallets and
     /// restores whatever that directory remembers. The choice is kept in preferences.
     /// </summary>
@@ -457,6 +522,7 @@ public sealed partial class WalletViewModel : ObservableObject
         if (Network.Named(state.NetworkName) is { } remembered) SwitchNetwork(remembered);
         ImportableWalletCount = CountImportable(importSource, Wallets);
         OnPropertyChanged(nameof(IsUsingDefaultWalletDirectory));
+        ReplaceDApps(directory);
         ClearChainData();
         _ = Refresh();
         _ = BackUp();

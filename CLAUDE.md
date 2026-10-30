@@ -124,16 +124,16 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   `Multisig` (only `MultisigContract`). `AppState` carries the Layer 2 and shielded maps through unread.
 - The `TaquitoBridge` host (`JSONValue` with `IntValue`, `BridgeError.Typed`). Not yet: the
   call policy (S30: signing calls, read deadlines, context discard), `OperationJournal` (the
-  bundle falls back to its in-memory journal), `LedgerSessions`, log redaction and rotation (S11).
+  bundle falls back to its in-memory journal), `LedgerSessions`, log rotation during writes (S11).
 - `KeyGenerator`, `KeyImporter`, `SessionKeys`, `TezosClientStore` (journal, `contracts`, removal
   snapshots, address-checked secrets), `WalletStore`, `AppStateStore` (nodes and service links),
   `WalletDirectorySettings`, `EndpointPolicy` (host classification only), `QRCode`.
 - The chain layer with approved limits (S14), `SentOperation`, `Portfolio` (S26) and chain pinning
   (S12): `ChainService`, `MockChainService`, `TaquitoChainService`, `TzKTService`, `NodeMonitor`
-  and the rest as before. Not yet: `BoundedHTTP`/`JSONBudget` (S19), `PublicHTTPClient`, `ArtworkCache`.
+  and the rest as before. Not yet: `BoundedHTTP`/`JSONBudget` (S19), `ArtworkCache`.
 - `WalletViewModel`: accounts (create, import, session keys, remember, rename, forget, export,
   address book, octez-client import), refresh, networks and nodes, backups, faucet, staking and
-  governance pass-throughs. Not yet: TzEL, Etherlink, multisig, dApps, Ledger, Buy.
+  governance pass-throughs, dApps. Not yet: TzEL, Etherlink, multisig, Ledger, Buy.
   `SendViewModel` exists only for its `SendError`.
 - Views: `WalletHomeView` (with `NoWalletsView` and the disclaimer), the header
   (`WalletIdentityView`, `OperationsMenuItems`), `NetworkBadgeMenu`, `ActionButtonsView`,
@@ -151,10 +151,29 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
 - Staking: `StakingSheet` (delegate, change or remove the delegate, stake, unstake, finalize),
   opened from the Stake tile and the delegate row. A contract's delegate row does nothing yet
   (upstream opens Sign multisig there).
+- dApps (Octez Connect / TZIP-10): `DAppRequest` at HEAD (sender id from the message only,
+  `SameEndpoint`, `EndpointDescription`, `DAppPreparedBatch`), `DAppConnectionManager` (grants
+  rechecked before signing, S08; undelivered replies, S17; shared start/stop, S18; 16 pending,
+  S19), `ConnectDAppSheet` (with `DAppIconView`) and `DAppRequestSheet`; "dApps…" and
+  Ctrl+Shift+D. `WalletViewModel` builds one manager per wallet directory on
+  `<wallet dir>\octez-connect.json` and replaces it on a directory change. Bridge events arrive
+  on the bridge thread and are posted to the UI thread through the `SynchronizationContext` the
+  manager was built on. The manager's bridge is `new TaquitoBridge(requirePublicEndpoints: true)`:
+  every fetch goes through `PublicHTTPClient`, which on Windows is a `SocketsHttpHandler` whose
+  `ConnectCallback` resolves the host itself, refuses any local or private answer and connects to
+  the checked address (upstream runs curl with `--resolve`); no proxy, no redirects. Every bridge
+  fetch is capped at 32 MB and 60 s, and the log is redacted (`Redacted`, `RedactedLine`, S11).
+  Upstream's read deadlines are approximated by `WaitAsync` on the manager's own calls. The pairing
+  code field is a `PasswordBox`, from upstream `6c1b7d3` (after the pin, ported early). `Program.cs`
+  replaces the generated `Main` (`DISABLE_XAML_GENERATED_MAIN`): it registers `signet://` with
+  `ActivationRegistrationManager.RegisterForProtocolActivation` at every launch (so the scheme
+  points at whichever copy ran last), and a second launch redirects its activation to the running
+  instance through `AppInstance` and exits, as `LSMultipleInstancesProhibited` does on the Mac.
+  Not yet: the live `ShadownetDAppPrepareTests` (the Shadownet faucet needs proof of work).
 - `WalletBackup` is still the `3b33fe1` version (no manifest or locked snapshot, S05/S28).
 
 Not ported, shown disabled in the menus with "Not available on Windows yet": Buy,
-Baking, Governance, Connect Ledger (and `LedgerHID`, still a placeholder), dApps, multisig.
+Baking, Governance, Connect Ledger (and `LedgerHID`, still a placeholder), multisig.
 Shielded settings is left out of the menu altogether while TzEL is out of scope. Run `dotnet test` and read the skipped tests for the
 detailed backlog. The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
 
