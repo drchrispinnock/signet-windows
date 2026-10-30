@@ -1,13 +1,13 @@
 # Releasing Signet for Windows
 
-From 0.9 a release is made with Velopack. For each architecture (`win-x64`, `win-arm64`) the
+From 0.8.1 a release is made with Velopack. For each architecture (`win-x64`, `win-arm64`) the
 GitHub release holds:
 
 - `SignetWallet-win-x64-Setup.exe`: the installer most people want. It installs for the current
   user (no administrator rights) into `%LOCALAPPDATA%\SignetWallet`, adds a Start-menu entry and
   an entry in Settings → Apps for uninstalling.
 - `SignetWallet-win-x64-Portable.zip`: the same app to unzip anywhere; it updates itself too.
-- `SignetWallet-0.9.0-win-x64-full.nupkg` and, from the second Velopack release on,
+- `SignetWallet-0.8.1-win-x64-full.nupkg` and, from the second Velopack release on,
   `…-delta.nupkg`: the update packages.
 - `releases.win-x64.json`, `assets.win-x64.json`, `RELEASES-win-x64`: the update feed. Installed
   copies of Signet read it from the **latest published** release once a day (Settings →
@@ -17,7 +17,7 @@ plus `SHA256SUMS.txt`. The .NET runtime travels inside, so nothing else needs in
 id `SignetWallet` keeps the install apart from Signet's own settings in `%LOCALAPPDATA%\Signet`,
 so uninstalling never removes them (and the wallet in `%USERPROFILE%\.signet` is never touched).
 
-0.8.0 was a plain zip without the updater: its users install 0.9 once by hand, and are updated
+0.8.0 was a plain zip without the updater: its users install 0.8.1 once by hand, and are updated
 automatically from then on.
 
 The build is done by GitHub Actions (`.github/workflows/release.yml`), never on a laptop: pushing a
@@ -25,7 +25,7 @@ The build is done by GitHub Actions (`.github/workflows/release.yml`), never on 
 published.
 
 The version is `<Version>` in `src/Signet.App/Signet.App.csproj`. A tag build overrides it with
-the tag (`v0.8.0` → `0.8.0`), so keep the two in step.
+the tag (`v0.8.1` → `0.8.1`), so keep the two in step.
 
 ## Releasing a version
 
@@ -37,19 +37,19 @@ In PowerShell, in the repository folder (`C:\Users\chris\signet-windows`):
    and push it.
 3. Tag the release:
    ```powershell
-   git tag -a v0.8.0 -m "Signet for Windows 0.8.0"
-   git push origin v0.8.0
+   git tag -a v0.8.1 -m "Signet for Windows 0.8.1"
+   git push origin v0.8.1
    ```
 4. Open https://github.com/drchrispinnock/signet-windows/actions and wait for the **Release** run
-   for `v0.8.0` to turn green (about ten minutes). If it goes red, open it and read the step that
+   for `v0.8.1` to turn green (about ten minutes). If it goes red, open it and read the step that
    failed.
 5. Open https://github.com/drchrispinnock/signet-windows/releases. There is a draft called
-   **Signet for Windows 0.9.0** with the files above. Click the pencil (Edit), check the notes, and
+   **Signet for Windows 0.8.1** with the files above. Click the pencil (Edit), check the notes, and
    press **Publish release**. From that moment installed copies are offered the update.
 
 To try a build without releasing: Actions → **Release** → **Run workflow** → branch `main` →
 **Run workflow**. The installers appear under **Artifacts** at the bottom of the run (versioned
-like `0.9.0-ci.12`); no release is made and no one is offered anything.
+like `0.8.1-ci.12`); no release is made and no one is offered anything.
 
 To test the updater on a PC without publishing anything, pack two versions into a folder with
 `vpk pack` (as the workflow does, `-o` the same folder for both), install the older one with its
@@ -58,8 +58,8 @@ then updates from the folder instead of GitHub.
 
 To undo a tag pushed by mistake (before publishing):
 ```powershell
-git push origin --delete v0.8.0
-git tag -d v0.8.0
+git push origin --delete v0.8.1
+git tag -d v0.8.1
 ```
 and delete the draft on the Releases page.
 
