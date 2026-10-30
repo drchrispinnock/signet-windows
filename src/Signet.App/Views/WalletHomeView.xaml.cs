@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Signet.App.Services;
 using Signet.Services;
 using Signet.ViewModels;
 
@@ -27,9 +28,10 @@ public sealed partial class WalletHomeView : UserControl
         ActionsHost.Content = new ActionButtonsView(model);
         ActivityHost.Content = new ActivityTabsView(model);
         StatusHost.Content = new NodeStatusBar(model.NodeMonitor);
-        OperationsMenu.Opening += (_, _) => OperationsMenuItems.Fill(OperationsMenu, model, OpenSettings);
+        OperationsMenu.Opening += (_, _) => OperationsMenuItems.Fill(OperationsMenu, model, OpenSettings, CheckForUpdates);
         OperationsMenuItems.InstallShortcuts(this, model, OpenSettings);
         model.PropertyChanged += Changed;
+        UpdaterService.Shared.PropertyChanged += UpdaterChanged;
         dapps = model.Dapps;
         dapps.PropertyChanged += DAppsChanged;
         Update();
@@ -115,6 +117,30 @@ public sealed partial class WalletHomeView : UserControl
         _ = PresentSheets();
     }
 
+    /// <summary>"Check for Updates…", or an update the daily check found: the update sheet, queued like the others.</summary>
+    private bool updateRequested;
+    /// <summary>The version already offered this session, so a background check offers each one once.</summary>
+    private string? offeredVersion;
+
+    public void CheckForUpdates()
+    {
+        updateRequested = true;
+        _ = PresentSheets();
+    }
+
+    private void UpdaterChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(UpdaterService.State)) return;
+        // Offer what the background check found (with automatic downloads on, the update is staged
+        // silently and installed at the next launch, as Sparkle does).
+        if (UpdaterService.Shared.State is UpdaterService.UpdateState.Available available && available.Version != offeredVersion
+            && !UpdaterService.Shared.AutomaticallyDownloadsUpdates)
+        {
+            offeredVersion = available.Version;
+            DispatcherQueue.TryEnqueue(CheckForUpdates);
+        }
+    }
+
     /// <summary>Opens the sheet the model asks for. Only one ContentDialog can be open at a time, like a Mac sheet.</summary>
     private async Task PresentSheets()
     {
@@ -176,6 +202,7 @@ public sealed partial class WalletHomeView : UserControl
         else if (model.IsPresentingSubmitMultisig) { dialog = new SubmitMultisigSheet(model); reset = () => model.IsPresentingSubmitMultisig = false; }
         else if (model.IsPresentingNetworks){ dialog = new NetworksSheet(model); reset = () => model.IsPresentingNetworks = false; }
         else if (settingsRequested) { dialog = new SettingsView(model); reset = () => settingsRequested = false; }
+        else if (updateRequested) { dialog = new UpdateSheet(); reset = () => updateRequested = false; }
         else
         {
             // Sheets not ported yet: drop the request rather than leave the flag set.

@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
+using Velopack;
 
 namespace Signet.App;
 
@@ -24,6 +25,15 @@ public static partial class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // Velopack's install, update and uninstall hooks run (and exit) here, before anything else.
+        // Uninstalling also takes back the signet:// scheme this copy registered.
+        VelopackApp.Build()
+            .OnBeforeUninstallFastCallback(_ =>
+            {
+                try { ActivationRegistrationManager.UnregisterForProtocolActivation(Models.DAppPairingLink.Scheme, Environment.ProcessPath ?? ""); }
+                catch (Exception) { }
+            })
+            .Run();
         WinRT.ComWrappersSupport.InitializeComWrappers();
         if (args.Contains("--preview"))
         {

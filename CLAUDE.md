@@ -142,7 +142,7 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   Add address, Export, Forget, Remember key, Receive (Tezos side only) and Faucet.
 - `NetworksSheet` (node per network with the chain check, `NodeIdentity`; TzKT, explorer and
   faucet links; no Layer 2 fields) and `SettingsView` (appearance, launch disclaimer, wallet
-  directory, backups; no Updates or Developer sections yet). Settings is a dialog opened from the
+  directory, backups, updates; no Developer section yet). Settings is a dialog opened from the
   burger menu or Ctrl+, rather than a separate window; `Appearance` is applied by `AppearanceApplier`.
 - Send: `SendViewModel` and `SendSheet` (compose, confirm, result; Tezos side only, no
   `ChainSidePicker`), with `OperationJournal` behind the bridge's `operationRead`/`operationSave`/
@@ -229,7 +229,17 @@ Windows-specific porting notes:
 - The token, Etherlink and shield logos are linked from `upstream/Signet/Resources/Assets.xcassets`
   in `Signet.App.csproj`, never copied.
 - `dotnet publish` of the app drops `Signet.pri` and the `.xbf` files and the result crashes with
-  0xC000027B. A runnable folder is the Release build output (`bin\x64\Release\…\win-x64`).
+  0xC000027B. A runnable folder is the Release build output (`bin\x64\Release\…\win-x64`), which
+  carries the .NET runtime (`SelfContained` in Release).
+- Releases and updates: `.github/workflows/release.yml` packs that output with Velopack (`vpk`,
+  app id `SignetWallet`, one channel per architecture) into a Setup, a portable zip and the update
+  feed on a draft GitHub release; `docs/RELEASING.md` is the procedure. `VelopackApp` runs first
+  in `Program.Main` (its uninstall hook takes back `signet://`). `UpdaterService` (app) is
+  upstream's Sparkle `UpdaterService`: a daily check (on by default), automatic download (off by
+  default: Velopack has no EdDSA check like Sparkle's, so nothing is installed unseen), last
+  checked, Check Now; "Check for Updates…" sits in the burger menu (Windows has no app menu) and
+  opens `UpdateSheet`, which also offers what the daily check finds. Only an installed copy
+  updates; `SIGNET_UPDATE_SOURCE` points it at a local `vpk pack` folder for testing.
 - The Mac's chmod 600 assertions are dropped (see `TestSupport.cs`).
 
 - `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock

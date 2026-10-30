@@ -155,7 +155,7 @@ public static class OperationsMenuItems
 {
 
     /// <param name="openSettings">Upstream opens the Settings scene with <c>SettingsLink</c>; here the home view shows the dialog.</param>
-    public static void Fill(MenuFlyout menu, WalletViewModel model, Action openSettings)
+    public static void Fill(MenuFlyout menu, WalletViewModel model, Action openSettings, Action checkForUpdates)
     {
         menu.Items.Clear();
         var hasWallet = model.SelectedWallet is not null;
@@ -184,6 +184,8 @@ public static class OperationsMenuItems
         var settings = Item("Settings…", openSettings);
         settings.KeyboardAcceleratorTextOverride = "Ctrl+,";
         menu.Items.Add(settings);
+        // Upstream has "Check for Updates…" in the app menu; Windows has none, so it sits here.
+        menu.Items.Add(Item("Check for Updates…", checkForUpdates));
         menu.Items.Add(Item("Refresh", () => _ = model.Refresh(), VirtualKey.R, VirtualKeyModifiers.Control, hasWallet));
     }
 

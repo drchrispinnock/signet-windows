@@ -1,8 +1,11 @@
 # Builds the Windows release when a version tag is pushed (git tag v0.8.0; git push origin v0.8.0),
 # or by hand from the Actions tab (Run workflow) to try a build without releasing it.
 #
-# A tag build makes a DRAFT GitHub release with one zip per architecture and their SHA-256 sums.
-# Nothing is public until the draft is published on GitHub.
+# A tag build makes a DRAFT GitHub release. For each architecture (win-x64, win-arm64) it holds
+# Velopack's installer (SignetWallet-<rid>-Setup.exe), a portable zip, the full and delta update
+# packages and the update feed (releases.<rid>.json) that installed copies of Signet check daily,
+# plus SHA256SUMS.txt. Nothing is public, and no installed copy is offered the update, until the
+# draft is published on GitHub.
 #
 # Signing: not yet. Once the SignPath Foundation accepts the project, a signing step goes
 # between "Build" and "Package" (SignPath's GitHub action uploads the unsigned folder and
@@ -53,26 +56,42 @@ jobs:
 
       - name: Package
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # `dotnet publish` drops Signet.pri and the .xbf files (see CLAUDE.md), so the release is
-          # the Release build output itself, in a folder named Signet inside the zip.
+          # Velopack packs the Release build output (`dotnet publish` drops Signet.pri and the .xbf
+          # files, see CLAUDE.md) into an installer, a portable zip and the update feed Signet's
+          # updater reads from the latest GitHub release. The app id is SignetWallet, so the install
+          # (%LOCALAPPDATA%\SignetWallet) never overlaps Signet's settings (%LOCALAPPDATA%\Signet).
+          dotnet tool install -g vpk --version 1.2.161
+          $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
           $rid = if ('${{ matrix.platform }}' -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
           $out = "src/Signet.App/bin/${{ matrix.platform }}/Release/net10.0-windows10.0.22621.0/$rid"
           $version = '${{ steps.version.outputs.version }}'
-          if (-not $version) { $version = 'test' }
-          New-Item -ItemType Directory -Force dist/Signet | Out-Null
-          Copy-Item "$out/*" dist/Signet -Recurse
-          $zip = "dist/Signet-$version-$rid.zip"
-          Compress-Archive -Path dist/Signet -DestinationPath $zip
-          (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + (Split-Path $zip -Leaf) | Out-File "$zip.sha256" -Encoding ascii
-          "ZIP=$zip" >> $env:GITHUB_ENV
+          if (-not $version) {
+            # A manual run: the project's version as a pre-release, so vpk accepts it.
+            $version = ([xml](Get-Content src/Signet.App/Signet.App.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+            $version = "$version-ci.${{ github.run_number }}"
+          }
+          # The previous published release, so this one carries a small delta update for it.
+          # The first Velopack release has nothing to download; that is fine.
+          vpk download github --repoUrl "https://github.com/${{ github.repository }}" --channel $rid --token $env:GH_TOKEN -o releases
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No earlier release to make a delta from.'; $global:LASTEXITCODE = 0 }
+          vpk pack -u SignetWallet -v $version -p $out -e Signet.exe `
+            --packTitle Signet --packAuthors 'Chris Pinnock' -i src/Signet.App/Assets/Signet.ico `
+            -c $rid -r $rid -o releases
+          # Only this version's files go into the release (not the earlier package used for the delta).
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Get-ChildItem releases | Where-Object {
+            $_.Name -like "*-$version-*" -or $_.Name -like '*-Setup.exe' -or $_.Name -like '*-Portable.zip' -or
+            $_.Name -like "releases.$rid.json" -or $_.Name -like "assets.$rid.json" -or $_.Name -like "RELEASES-$rid"
+          } | Copy-Item -Destination dist
+          Get-ChildItem dist | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
           name: Signet-${{ matrix.platform }}
-          path: |
-            ${{ env.ZIP }}
-            ${{ env.ZIP }}.sha256
+          path: dist/*
 
   release:
     if: github.ref_type == 'tag'
@@ -87,6 +106,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          (cd dist && sha256sum * > SHA256SUMS.txt)
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --draft \

@@ -1,9 +1,24 @@
 # Releasing Signet for Windows
 
-A release is a GitHub release with two zips, one per architecture (`Signet-0.8.0-win-x64.zip`,
-`Signet-0.8.0-win-arm64.zip`), each with a `.sha256` file. Each zip holds a folder `Signet`;
-users unzip it anywhere and run `Signet.exe`. The .NET runtime travels inside, so nothing else
-needs installing.
+From 0.9 a release is made with Velopack. For each architecture (`win-x64`, `win-arm64`) the
+GitHub release holds:
+
+- `SignetWallet-win-x64-Setup.exe`: the installer most people want. It installs for the current
+  user (no administrator rights) into `%LOCALAPPDATA%\SignetWallet`, adds a Start-menu entry and
+  an entry in Settings → Apps for uninstalling.
+- `SignetWallet-win-x64-Portable.zip`: the same app to unzip anywhere; it updates itself too.
+- `SignetWallet-0.9.0-win-x64-full.nupkg` and, from the second Velopack release on,
+  `…-delta.nupkg`: the update packages.
+- `releases.win-x64.json`, `assets.win-x64.json`, `RELEASES-win-x64`: the update feed. Installed
+  copies of Signet read it from the **latest published** release once a day (Settings →
+  Updates), so publishing the draft is what offers the update to everyone.
+
+plus `SHA256SUMS.txt`. The .NET runtime travels inside, so nothing else needs installing. The app
+id `SignetWallet` keeps the install apart from Signet's own settings in `%LOCALAPPDATA%\Signet`,
+so uninstalling never removes them (and the wallet in `%USERPROFILE%\.signet` is never touched).
+
+0.8.0 was a plain zip without the updater: its users install 0.9 once by hand, and are updated
+automatically from then on.
 
 The build is done by GitHub Actions (`.github/workflows/release.yml`), never on a laptop: pushing a
 `v…` tag builds both zips and makes a **draft** release. Nothing is public until the draft is
@@ -29,11 +44,17 @@ In PowerShell, in the repository folder (`C:\Users\chris\signet-windows`):
    for `v0.8.0` to turn green (about ten minutes). If it goes red, open it and read the step that
    failed.
 5. Open https://github.com/drchrispinnock/signet-windows/releases. There is a draft called
-   **Signet for Windows 0.8.0** with four files. Click the pencil (Edit), check the notes, and
-   press **Publish release**.
+   **Signet for Windows 0.9.0** with the files above. Click the pencil (Edit), check the notes, and
+   press **Publish release**. From that moment installed copies are offered the update.
 
 To try a build without releasing: Actions → **Release** → **Run workflow** → branch `main` →
-**Run workflow**. The zips appear under **Artifacts** at the bottom of the run; no release is made.
+**Run workflow**. The installers appear under **Artifacts** at the bottom of the run (versioned
+like `0.9.0-ci.12`); no release is made and no one is offered anything.
+
+To test the updater on a PC without publishing anything, pack two versions into a folder with
+`vpk pack` (as the workflow does, `-o` the same folder for both), install the older one with its
+Setup, and start it with the environment variable `SIGNET_UPDATE_SOURCE` set to that folder: it
+then updates from the folder instead of GitHub.
 
 To undo a tag pushed by mistake (before publishing):
 ```powershell
@@ -65,4 +86,9 @@ SignPath signs open-source projects for free. The project qualifies: it is publi
    **New repository secret**, name `SIGNPATH_API_TOKEN`. The ids are not secret.
 5. Then a signing step goes into the workflow between **Build** and **Package**: SignPath's GitHub
    action uploads the unsigned build, signs `Signet.exe` and `Signet.dll` (and the other files of
-   ours), and hands the folder back to be zipped.
+   ours), and hands the folder back to Velopack. The Setup and Update executables Velopack makes
+   need signing too (its `--signTemplate` option can call the same signing step).
+
+Until then, updates are trusted on HTTPS from GitHub alone (Velopack has no signature check like
+Sparkle's EdDSA one on the Mac), which is why automatic download is off by default: users see each
+update offered and choose to install it.

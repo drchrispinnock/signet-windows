@@ -88,5 +88,9 @@ public partial class App : Application
         window = new MainWindow(model);
         if (launchURL is not null) model.HandleIncomingURL(launchURL);
         window.Activate();
+        // The daily update check (upstream starts Sparkle except under the test host). The preview
+        // window leaves it alone unless it is pointed at a local test feed.
+        if (!preview || Environment.GetEnvironmentVariable(Services.UpdaterService.SourceOverrideVariable) is { Length: > 0 })
+            Services.UpdaterService.Shared.Start(window.DispatcherQueue);
     }
 }
