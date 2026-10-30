@@ -60,8 +60,13 @@ public sealed record WalletBackup(string WalletDirectory, string BackupDirectory
     public static string Stamp(DateTimeOffset date) =>
         date.UtcDateTime.ToString("yyyy-MM-dd'T'HHmmss'Z'", CultureInfo.InvariantCulture);
 
-    /// <summary>Files worth saving: the three octez-client wallet files plus Signet's state.</summary>
-    public static readonly IReadOnlyList<string> Files = [.. TezosClientStore.WalletFiles, "state"];
+    /// <summary>
+    /// Files worth saving: the three octez-client wallet files, the contract aliases, Signet's state,
+    /// the multisig proposals and the operation journal. This list is HEAD's (without the shielded
+    /// files); the rest of this class is still the <c>3b33fe1</c> version.
+    /// </summary>
+    public static readonly IReadOnlyList<string> Files =
+        [.. TezosClientStore.WalletFiles, TezosClientStore.ContractsFile, "state", FileMultisigProposalStore.FileName, OperationJournal.FileName];
 
     /// <param name="force">Write a generation even if the latest one already matches (explicit user action).</param>
     public Outcome Run(DateTimeOffset? now = null, bool force = false)

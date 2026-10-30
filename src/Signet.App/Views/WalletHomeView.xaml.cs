@@ -153,7 +153,15 @@ public sealed partial class WalletHomeView : UserControl
                 if (sheet.DidSend) _ = model.RefreshAfterOperation();
             };
         }
-        else if (model.IsPresentingNetworks) { dialog = new NetworksSheet(model); reset = () => model.IsPresentingNetworks = false; }
+        else if (model.IsPresentingCreateMultisig) { dialog = new CreateMultisigSheet(model); reset = () => model.IsPresentingCreateMultisig = false; }
+        else if (model.IsPresentingAddMultisig) { dialog = new AddMultisigSheet(model); reset = () => model.IsPresentingAddMultisig = false; }
+        else if (model.IsPresentingSignMultisig)
+        {
+            dialog = new SignMultisigSheet(model);
+            reset = () => { model.IsPresentingSignMultisig = false; model.SignMultisigPreset = null; };
+        }
+        else if (model.IsPresentingSubmitMultisig) { dialog = new SubmitMultisigSheet(model); reset = () => model.IsPresentingSubmitMultisig = false; }
+        else if (model.IsPresentingNetworks){ dialog = new NetworksSheet(model); reset = () => model.IsPresentingNetworks = false; }
         else if (settingsRequested) { dialog = new SettingsView(model); reset = () => settingsRequested = false; }
         else
         {

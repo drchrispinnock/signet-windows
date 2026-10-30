@@ -249,7 +249,8 @@ public class CheckedNumberTests
             JSONValue.Parse("""{"feeMutez":"500","burnMutez":"0","gasLimit":1500,"storageLimit":0,"limits":{"feeMutez":"500","gasLimit":1e20,"storageLimit":0}}"""),
         };
         foreach (var value in bad) Assert.ThrowsAny<Exception>(() => TaquitoChainService.EstimateFrom(value));
-        // Upstream also checks BridgeMultisigService.info here; multisig is not ported yet.
+        var info = JSONValue.Parse("""{"address":"KT1BEqzn5Wx8uJrZNvuS9DVHmLvG9td3fDLi","isGenericMultisig":true,"scriptHash":"expr","counter":"nope","threshold":"2","keys":[]}""");
+        Assert.ThrowsAny<Exception>(() => BridgeMultisigService.InfoFrom(info));
     }
 }
 

@@ -9,8 +9,8 @@ using Signet.ViewModels;
 namespace Signet.App.Views;
 
 /// <summary>
-/// One line under the balances: who the wallet delegates to (or that it is a baker). Upstream opens
-/// Staking on a click; that sheet is not ported yet, so the row only informs for now.
+/// One line under the balances: who the wallet delegates to (or that it is a baker). A click opens
+/// Staking, or Sign multisig for a contract, as upstream does.
 /// </summary>
 public sealed partial class DelegateRowView : UserControl
 {
@@ -37,14 +37,24 @@ public sealed partial class DelegateRowView : UserControl
         row.Children.Add(icon);
         row.Children.Add(text);
         row.Children.Add(chevron);
-        // Click → Staking. A contract delegates through its signers (upstream opens Sign multisig
-        // there); multisig is not ported, so a contract's row only informs.
+        // Click → Staking, or for a contract Sign multisig on it: a contract delegates through its signers.
         var button = new Button
         {
             Content = row, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0), Padding = new Thickness(0, 4, 0, 4),
         };
-        button.Click += (_, _) => { if (model.SelectedWallet?.Address.IsContract != true) model.IsPresentingStaking = true; };
+        button.Click += (_, _) =>
+        {
+            if (model.SelectedWallet is { Address.IsContract: true } wallet)
+            {
+                model.SignMultisigPreset = new WalletViewModel.MultisigSheetPreset(new MultisigContract(wallet.Alias, wallet.Address), Delegating: true);
+                model.IsPresentingSignMultisig = true;
+            }
+            else
+            {
+                model.IsPresentingStaking = true;
+            }
+        };
         ToolTipService.SetToolTip(button, "Delegation and staking");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, "Delegation and staking");
         Content = button;

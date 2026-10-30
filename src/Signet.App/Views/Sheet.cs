@@ -119,6 +119,53 @@ public abstract partial class Sheet : ContentDialog
         return grid;
     }
 
+    /// <summary>
+    /// Upstream's <c>Menu("Choose…") { Section("My accounts") { … } … }</c>: a drop-down button whose
+    /// flyout lists accounts under section headings. Each entry is a label, what it does, and
+    /// whether it can be picked.
+    /// </summary>
+    protected static DropDownButton ChooseMenu(string text, params (string Section, IEnumerable<(string Label, Action Pick, bool Enabled)> Items)[] sections)
+    {
+        var flyout = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight };
+        foreach (var (section, items) in sections)
+        {
+            var list = items.ToList();
+            if (list.Count == 0) continue;
+            if (flyout.Items.Count > 0) flyout.Items.Add(new MenuFlyoutSeparator());
+            flyout.Items.Add(new MenuFlyoutItem { Text = section, IsEnabled = false });
+            foreach (var (label, pick, enabled) in list)
+            {
+                var item = new MenuFlyoutItem { Text = label, IsEnabled = enabled };
+                item.Click += (_, _) => pick();
+                flyout.Items.Add(item);
+            }
+        }
+        return new DropDownButton { Content = text, Flyout = flyout, IsEnabled = flyout.Items.Count > 0 };
+    }
+
+    /// <summary>A line of monospaced text the user can select and copy, with a copy button.</summary>
+    protected static Grid CopyableLine(string text, string what)
+    {
+        var row = new Grid { ColumnSpacing = 8 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.Children.Add(new TextBlock { Text = text, Style = (Style)Application.Current.Resources["MonoText"], IsTextSelectionEnabled = true, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
+        var copy = new Button { Content = new FontIcon { Glyph = "", FontSize = 14 }, Padding = new Thickness(6), VerticalAlignment = VerticalAlignment.Top };
+        ToolTipService.SetToolTip(copy, $"Copy {what}");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(copy, $"Copy {what}");
+        copy.Click += (_, _) => Services.Pasteboard.SetString(text);
+        Grid.SetColumn(copy, 1);
+        row.Children.Add(copy);
+        return row;
+    }
+
+    /// <summary>Upstream's <c>Label(…, systemImage: "checkmark.seal.fill").foregroundStyle(.green)</c>.</summary>
+    protected static Grid Success(string text) => Label(text, "", "SystemFillColorSuccessBrush");
+
+    /// <summary>A number of tez typed by the user (comma or point), or <c>null</c> when it is not one.</summary>
+    protected static decimal? ParseTez(string text) =>
+        decimal.TryParse(text.Trim().Replace(',', '.'), System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var value) ? value : null;
+
     /// <summary>The avatar, the sheet's own title and the account under it, as Forget and Export show them.</summary>
     protected static StackPanel AccountHeading(Models.Wallet wallet)
     {

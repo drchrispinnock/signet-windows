@@ -172,10 +172,10 @@ public static class OperationsMenuItems
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("dApps…", () => model.IsPresentingConnectDApp = true, VirtualKey.D, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift));
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(Item("Create multisig…", null, help: NotYet));
-        menu.Items.Add(Item("Add multisig…", null, help: NotYet));
-        menu.Items.Add(Item("Sign multisig transaction…", null, help: NotYet));
-        menu.Items.Add(Item("Submit multisig transaction…", null, help: NotYet));
+        menu.Items.Add(Item("Create multisig…", () => model.IsPresentingCreateMultisig = true));
+        menu.Items.Add(Item("Add multisig…", () => model.IsPresentingAddMultisig = true));
+        menu.Items.Add(Item("Sign multisig transaction…", () => model.IsPresentingSignMultisig = true));
+        menu.Items.Add(Item("Submit multisig transaction…", () => model.IsPresentingSubmitMultisig = true));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Baking…", null, help: NotYet));
         if (model.CanGovern) menu.Items.Add(Item("Governance…", null, help: NotYet));

@@ -48,6 +48,7 @@ public sealed partial class WalletViewModel : ObservableObject
             storedWallets = value.Where(w => !w.IsSessionOnly).ToList();
             OnPropertyChanged();
             OnPropertyChanged(nameof(SelectedWallet));
+            OnPropertyChanged(nameof(MultisigContracts));
         }
     }
     private IReadOnlyList<Wallet> storedWallets;
@@ -89,6 +90,23 @@ public sealed partial class WalletViewModel : ObservableObject
     [ObservableProperty] private bool isPresentingNetworks;
     [ObservableProperty] private bool isPresentingBuy;
     [ObservableProperty] private bool isPresentingConnectDApp;
+    [ObservableProperty] private bool isPresentingCreateMultisig;
+    [ObservableProperty] private bool isPresentingAddMultisig;
+    [ObservableProperty] private bool isPresentingSignMultisig;
+    /// <summary>What the Sign multisig sheet opens on when something else (the delegate row) asks for it.</summary>
+    [ObservableProperty] private MultisigSheetPreset? signMultisigPreset;
+    [ObservableProperty] private bool isPresentingSubmitMultisig;
+
+    /// <summary>
+    /// Named multisig contracts: the KT1 entries of the address book (octez-client's <c>contracts</c>),
+    /// which is where created and added multisigs go.
+    /// </summary>
+    public IReadOnlyList<MultisigContract> MultisigContracts =>
+        Wallets.Where(w => w.Address.IsContract).Select(w => new MultisigContract(w.Alias, w.Address)).ToList();
+
+    /// <summary>Multisig actions proposed here, with the signatures gathered so far (all networks).</summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CurrentMultisigProposals))]
+    private IReadOnlyList<MultisigProposal> multisigProposals = [];
 
     /// <summary>A pairing code that arrived by URL, waiting for the Connect dApp sheet to pick it up.</summary>
     [ObservableProperty] private string? pendingPairingCode;
@@ -166,6 +184,7 @@ public sealed partial class WalletViewModel : ObservableObject
             if (value == network) return;
             network = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(CurrentMultisigProposals));
             NodeMonitor.Network = value;
             chain = chainFactory(value);
             state = state.Remember(value) with { NetworkName = value.Name };
@@ -179,6 +198,7 @@ public sealed partial class WalletViewModel : ObservableObject
     /// <summary>Everything on the dashboard that came from the chain for the previous context (S16).</summary>
     private void ClearChainData()
     {
+        operationGeneration = Guid.NewGuid();
         refreshGeneration++;
         IsLoading = false;
         Assets = [];
@@ -197,6 +217,7 @@ public sealed partial class WalletViewModel : ObservableObject
     /// Which load is current. Every refresh captures the generation, the account, the network and
     /// the directory it started under and publishes nothing unless all four still hold (S16).
     /// </summary>
+    private Guid operationGeneration = Guid.NewGuid();
     private int refreshGeneration;
     private sealed record RefreshContext(int Generation, Address Address, Network Network, Guid Revision);
     private RefreshContext? CurrentContext =>
@@ -354,7 +375,9 @@ public sealed partial class WalletViewModel : ObservableObject
         NodeMonitor.Probe? nodeProbe = null,
         IBridgeStorage? dappStorage = null,
         Func<string, IBridgeStorage>? dappStorageFactory = null,
-        bool startDApps = false)
+        bool startDApps = false,
+        IMultisigService? multisig = null,
+        IMultisigProposalStore? proposalStore = null)
     {
         this.backupSettings = backupSettings;
         var factory = chainFactory ?? (_ => chain ?? new MockChainService());
@@ -381,6 +404,9 @@ public sealed partial class WalletViewModel : ObservableObject
         KeyImporter = keyImporter ?? new MockKeyImporter();
         this.walletStore = walletStore;
         this.importSource = importSource;
+        multisigService = multisig ?? new MockMultisigService();
+        this.proposalStore = proposalStore ?? (directory is not null ? new FileMultisigProposalStore(directory) : new InMemoryMultisigProposalStore());
+        multisigProposals = this.proposalStore.Load();
 
         string? loadError = null;
         IReadOnlyList<Wallet> loaded;
@@ -507,6 +533,8 @@ public sealed partial class WalletViewModel : ObservableObject
         (walletStore, stateStore) = storeFactory(directory);
         WalletDirectory = directory;
         state = stateStore.Load();
+        proposalStore = new FileMultisigProposalStore(directory);
+        MultisigProposals = proposalStore.Load();
 
         try
         {
@@ -1126,6 +1154,247 @@ public sealed partial class WalletViewModel : ObservableObject
     {
         try { stateStore.Save(state); }
         catch (Exception e) { Trace.WriteLine($"Signet: could not save state: {e.Message}"); }
+    }
+
+    // ---- Multisig --------------------------------------------------------------------------------
+
+    private readonly IMultisigService multisigService;
+    public IMultisigService Multisig => multisigService.ForNetwork(Network);
+    private IMultisigProposalStore proposalStore;
+
+    /// <summary>Where the Sign multisig sheet should start.</summary>
+    public sealed record MultisigSheetPreset(MultisigContract Contract, bool Delegating = false);
+
+    public abstract class MultisigError(string message) : Exception(message)
+    {
+        public sealed class InvalidAddress() : MultisigError("That is not a contract address (KT1…).");
+        public sealed class NotAMultisig(string hash)
+            : MultisigError($"That contract is not an octez-client multisig (its script hash is {hash[..Math.Min(16, hash.Length)]}…), so Signet cannot sign for it.");
+        public sealed class NotAMember() : MultisigError("None of your accounts is a signer of that multisig.");
+        public sealed class InvalidKey(string key) : MultisigError($"“{key[..Math.Min(16, key.Length)]}…” is not a public key (edpk, sppk, p2pk, BLpk or mdpk).");
+        public sealed class ThresholdOutOfRange(int threshold, int keys)
+            : MultisigError($"The threshold must be between 1 and the number of keys ({keys}), not {threshold}.");
+        public sealed class CannotSign(string alias) : MultisigError($"Signet cannot sign with “{alias}”.");
+        public sealed class AlreadySigned(string alias) : MultisigError($"“{alias}” has already signed this proposal.");
+        public sealed class Stale() : MultisigError("The multisig has moved on since this was proposed; the signatures no longer apply.");
+        public sealed class NotRevealed(Address address)
+            : MultisigError($"{address.Shortened()} has not revealed its public key on this network yet (it has never sent an operation). Ask its owner for the public key instead.");
+        public sealed class NotASignerCandidate(string text) : MultisigError($"“{text[..Math.Min(20, text.Length)]}…” is neither a public key nor a tz address.");
+        public sealed class KeyAddressMismatch(Address wanted, Address got)
+            : MultisigError($"The node answered with a key for {got.Shortened()}, not {wanted.Shortened()}. Nothing was added; check the node or paste the public key.");
+        public sealed class WrongNetwork(string name) : MultisigError($"This proposal was made on {name}; switch to that network to sign it.");
+        public sealed class Tampered()
+            : MultisigError("This proposal does not match what the multisig would sign for it now. Nothing was signed; discard it and propose it again.");
+        public sealed class AwaitingConfirmation(string hash, Address address)
+            : MultisigError($"Operation {hash} has not been confirmed. Its contract address is {address.Value}. Open Send from the paying account to recover this operation; do not create another contract.");
+        public sealed class InvalidAmount() : MultisigError("The initial balance must be a number of tez, zero or more.");
+        public sealed class ContextChanged(Address address)
+            : MultisigError($"The wallet directory or network changed while the multisig {address.Shortened()} was being set up. It exists on chain but was not recorded here; add it with Add multisig… where it belongs.");
+    }
+
+    /// <summary>Proposals for the network in use, newest first.</summary>
+    public IReadOnlyList<MultisigProposal> CurrentMultisigProposals =>
+        MultisigProposals.Where(p => p.NetworkName == Network.Name).OrderByDescending(p => p.Created).ToList();
+
+    /// <summary>Accounts whose public key we know, so they can be put on a multisig.</summary>
+    public IReadOnlyList<Wallet> MultisigKeyCandidates => Wallets.Where(w => w.PublicKey is not null).ToList();
+
+    public static bool IsPublicKey(string key) =>
+        // The node checks the key properly at origination; this only keeps obvious garbage out of the list.
+        new[] { "edpk", "sppk", "p2pk", "BLpk", "mdpk" }.Any(p => key.StartsWith(p, StringComparison.Ordinal)) && key.Length > 6 && key.All(char.IsLetterOrDigit);
+
+    /// <summary>
+    /// A signer for a new multisig from what the user gave: a public key as is, or a tz address
+    /// (pasted, from the address book or one of ours) resolved to the key it has revealed on chain.
+    /// </summary>
+    public async Task<string> MultisigSignerKey(string text)
+    {
+        var trimmed = text.Trim();
+        if (IsPublicKey(trimmed)) return trimmed;
+        var address = new Address(trimmed);
+        if (!address.IsValidAccount || address.IsContract) throw new MultisigError.NotASignerCandidate(trimmed);
+        if (Wallets.FirstOrDefault(w => w.Address == address) is { PublicKey: { } mine }) return mine;
+        var key = await Multisig.RevealedPublicKey(Network.RpcURL, address) ?? throw new MultisigError.NotRevealed(address);
+        // The node is not trusted to say whose key that is: it must hash to the address asked for.
+        if (!IsPublicKey(key)) throw new MultisigError.InvalidKey(key);
+        var derived = await Multisig.AddressForPublicKey(key);
+        if (derived != address) throw new MultisigError.KeyAddressMismatch(address, derived);
+        return key;
+    }
+
+    public Task<MultisigInfo> MultisigInfo(MultisigContract contract) => Multisig.Info(Network.RpcURL, contract.Address);
+
+    /// <summary>Fee and burn for deploying the multisig, with <c>amount</c> tez moved into it on creation.</summary>
+    public async Task<TransferEstimate> EstimateCreateMultisig(int threshold, IReadOnlyList<string> keys, decimal amount = 0)
+    {
+        var wallet = SelectedWallet ?? throw new WalletError.EmptyAlias();
+        CheckMultisig(threshold, keys, amount);
+        return await Multisig.EstimateOriginate(Network.RpcURL, wallet, threshold, keys, amount);
+    }
+
+    private static void CheckMultisig(int threshold, IReadOnlyList<string> keys, decimal amount)
+    {
+        if (keys.FirstOrDefault(k => !IsPublicKey(k)) is { } bad) throw new MultisigError.InvalidKey(bad);
+        if (threshold < 1 || threshold > keys.Count) throw new MultisigError.ThresholdOutOfRange(threshold, keys.Count);
+        if (amount < 0 || !Mutez.IsValid(Mutez.FromTez(amount))) throw new MultisigError.InvalidAmount();
+    }
+
+    /// <summary>
+    /// Deploys a multisig from the selected account with the approved estimate's limits (S14),
+    /// waits for its block and records it under <c>alias</c>.
+    /// </summary>
+    public async Task<MultisigContract> CreateMultisig(string alias, int threshold, IReadOnlyList<string> keys, decimal amount, OperationLimits? limits, string? passphrase)
+    {
+        if (limits is null) throw new WalletError.NotEstimated();
+        var wallet = SelectedWallet ?? throw new WalletError.EmptyAlias();
+        var name = alias.Trim();
+        if (name.Length == 0) throw new WalletError.EmptyAlias();
+        if (Wallets.Any(w => w.Alias == name)) throw new WalletError.AliasExists(name);
+        CheckMultisig(threshold, keys, amount);
+        var signer = SigningKeyFor(wallet, passphrase) ?? throw new MultisigError.CannotSign(wallet.Alias);
+        var chain = this.chain;
+        var context = (walletDirectoryRevision, Network, operationGeneration);
+        var (hash, address) = await Multisig.Originate(Network.RpcURL, signer, threshold, keys, amount, limits);
+        try { await chain.WaitForConfirmation(hash); }
+        catch (Exception) { throw new MultisigError.AwaitingConfirmation(hash, address); }
+        return await RecordContract(new MultisigContract(name, address), context);
+    }
+
+    /// <summary>
+    /// Writes the contract alias, puts it in the address book and shows it. The alias goes to the
+    /// directory the operation started in: after a directory or network switch it is refused,
+    /// and the address is reported so the user can add it where it belongs (S16).
+    /// </summary>
+    private async Task<MultisigContract> RecordContract(MultisigContract contract, (Guid Revision, Network Network, Guid Generation) context)
+    {
+        if (walletDirectoryRevision != context.Revision || Network != context.Network || operationGeneration != context.Generation)
+            throw new MultisigError.ContextChanged(contract.Address);
+        walletStore.AddContract(contract);
+        var entry = new Wallet(contract.Alias, contract.Address, keyKind: KeyKind.None);
+        try { Wallets = walletStore.Load(); }
+        catch (Exception) { Wallets = [.. Wallets, entry]; }
+        Select(Wallets.FirstOrDefault(w => w.Alias == contract.Alias) ?? entry);
+        await BackUp();
+        return contract;
+    }
+
+    /// <summary>
+    /// Records an existing multisig under <c>alias</c>, after checking it is the generic multisig and
+    /// one of our accounts is among its keys.
+    /// </summary>
+    public async Task<MultisigContract> AddMultisig(string alias, string rawAddress)
+    {
+        var name = alias.Trim();
+        var address = new Address(rawAddress.Trim());
+        if (name.Length == 0) throw new WalletError.EmptyAlias();
+        if (!address.IsContract || !address.IsValidAccount) throw new MultisigError.InvalidAddress();
+        if (Wallets.Any(w => w.Alias == name)) throw new WalletError.AliasExists(name);
+        if (Wallets.FirstOrDefault(w => w.Address == address) is { } existing) throw new WalletError.AddressExists(existing.Alias);
+        var context = (walletDirectoryRevision, Network, operationGeneration);
+        var info = await Multisig.Info(Network.RpcURL, address);
+        if (!info.IsGenericMultisig) throw new MultisigError.NotAMultisig(info.ScriptHash);
+        if (info.Members(Wallets).Count == 0) throw new MultisigError.NotAMember();
+        return await RecordContract(new MultisigContract(name, address), context);
+    }
+
+    /// <summary>Fetches the contract's state and makes an unsigned proposal for this transfer at its current counter.</summary>
+    public Task<MultisigProposal> ProposeMultisigTransfer(MultisigContract contract, decimal amount, Address destination) =>
+        ProposeMultisig(new MultisigAction.Transfer(Mutez.FromTez(amount), destination.Value), contract);
+
+    /// <summary>Fetches the contract's state and makes an unsigned proposal for this action at its current counter.</summary>
+    public async Task<MultisigProposal> ProposeMultisig(MultisigAction action, MultisigContract contract)
+    {
+        var context = (walletDirectoryRevision, Network, operationGeneration);
+        var (info, chainID, bytes) = await Multisig.Prepare(Network.RpcURL, contract.Address, action);
+        if (walletDirectoryRevision != context.walletDirectoryRevision || Network != context.Network || operationGeneration != context.operationGeneration)
+            throw new WalletError.DirectoryChanged();
+        if (!info.IsGenericMultisig) throw new MultisigError.NotAMultisig(info.ScriptHash);
+        // The same action proposed twice is the same proposal: reuse it so signatures accumulate.
+        if (MultisigProposals.FirstOrDefault(p => p.ContractAddress == contract.Address.Value && p.NetworkName == Network.Name && p.Bytes == bytes) is { } existing)
+            return existing;
+        var proposal = new MultisigProposal(contract.Alias, contract.Address.Value, Network.Name, chainID, info.Counter, info.Threshold, info.Keys, action, bytes);
+        bool Same(MultisigProposal p) => p.ContractAddress == proposal.ContractAddress && p.NetworkName == proposal.NetworkName && p.Bytes == proposal.Bytes;
+        MultisigProposals = proposalStore.Update(stored => { if (!stored.Any(Same)) stored.Add(proposal); });
+        return MultisigProposals.FirstOrDefault(Same) ?? proposal;
+    }
+
+    /// <summary>
+    /// Signs a proposal with one of our accounts (a key of the multisig) and keeps the signature with it.
+    ///
+    /// The proposal file is not trusted. What gets signed is rebuilt by the bridge from the
+    /// proposal's chain, contract, counter and action (the fields the sheet displays), never its
+    /// stored bytes, and the chain must agree: the contract is the generic multisig, at that
+    /// counter, with those keys, and packs those same bytes. Any difference means nothing is signed.
+    /// </summary>
+    public async Task<MultisigSignature> SignMultisigProposal(MultisigProposal proposal, Wallet wallet, string? passphrase)
+    {
+        if (wallet.PublicKey is not { } publicKey || !proposal.Keys.Contains(publicKey)) throw new MultisigError.NotAMember();
+        if (proposal.HasSignature(publicKey)) throw new MultisigError.AlreadySigned(wallet.Alias);
+        if (proposal.NetworkName != Network.Name) throw new MultisigError.WrongNetwork(proposal.NetworkName);
+        var revision = walletDirectoryRevision;
+        var rpcURL = Network.RpcURL;
+        var generation = operationGeneration;
+        var service = Multisig;
+
+        var live = await service.Prepare(rpcURL, proposal.Contract.Address, proposal.Action);
+        if (!live.Info.IsGenericMultisig) throw new MultisigError.NotAMultisig(live.Info.ScriptHash);
+        if (live.ChainID != proposal.ChainID || live.Info.Counter != proposal.Counter) throw new MultisigError.Stale();
+        if (!live.Info.Keys.SequenceEqual(proposal.Keys) || live.Info.Threshold != proposal.Threshold || !live.Info.Keys.Contains(publicKey)) throw new MultisigError.Stale();
+        if (live.Bytes != proposal.Bytes) throw new MultisigError.Tampered();
+
+        if (walletDirectoryRevision != revision || operationGeneration != generation) throw new WalletError.DirectoryChanged();
+        var signer = SigningKeyFor(wallet, passphrase) ?? throw new MultisigError.CannotSign(wallet.Alias);
+        var signed = await service.Sign(signer, proposal);
+        if (signed.Bytes != proposal.Bytes) throw new MultisigError.Tampered();
+        if (walletDirectoryRevision != revision || operationGeneration != generation || Network.RpcURL != rpcURL) throw new WalletError.DirectoryChanged();
+
+        var signature = new MultisigSignature(publicKey, signed.Signature);
+        UpdateProposal(proposal.Id, p => p with { Signatures = [.. p.Signatures, signature] });
+        return signature;
+    }
+
+    /// <summary>Keeps a signature another signer sent us (verified against the keys when submitting).</summary>
+    public void AddMultisigSignature(string signature, MultisigProposal proposal)
+    {
+        var trimmed = signature.Trim();
+        if (trimmed.Length == 0) return;
+        // Check against what is stored, not the caller's copy, so repeated pastes do not pile up.
+        UpdateProposal(proposal.Id, stored => stored.Signatures.Any(s => s.Signature == trimmed)
+            ? stored
+            : stored with { Signatures = [.. stored.Signatures, new MultisigSignature(null, trimmed)] });
+    }
+
+    public void RemoveMultisigProposal(MultisigProposal proposal) =>
+        MultisigProposals = proposalStore.Update(stored => stored.RemoveAll(p => p.Id == proposal.Id));
+
+    /// <summary>Changes one stored proposal; the change is applied to the copy on disk, not the one in memory.</summary>
+    private void UpdateProposal(Guid id, Func<MultisigProposal, MultisigProposal> change) =>
+        MultisigProposals = proposalStore.Update(stored =>
+        {
+            var index = stored.FindIndex(p => p.Id == id);
+            if (index >= 0) stored[index] = change(stored[index]);
+        });
+
+    public Task<TransferEstimate> EstimateSubmitMultisig(MultisigProposal proposal, Wallet wallet) =>
+        Multisig.EstimateSubmit(Network.RpcURL, wallet, proposal, proposal.Signatures.Select(s => s.Signature).ToList());
+
+    /// <summary>
+    /// Submits the proposal with its signatures from <c>wallet</c> (which pays the fee), waits one block
+    /// and forgets the proposal. Returns the operation hash.
+    /// </summary>
+    public async Task<string> SubmitMultisig(MultisigProposal proposal, Wallet wallet, OperationLimits? limits, string? passphrase)
+    {
+        if (limits is null) throw new WalletError.NotEstimated();
+        var signer = SigningKeyFor(wallet, passphrase) ?? throw new MultisigError.CannotSign(wallet.Alias);
+        var chain = this.chain;
+        var revision = walletDirectoryRevision;
+        var generation = operationGeneration;
+        var hash = await Multisig.Submit(Network.RpcURL, signer, proposal, proposal.Signatures.Select(s => s.Signature).ToList(), limits);
+        await chain.WaitForConfirmation(hash);
+        // The proposal file belongs to the directory the submission started in.
+        if (walletDirectoryRevision == revision && operationGeneration == generation) RemoveMultisigProposal(proposal);
+        await RefreshAfterOperation();
+        return hash;
     }
 
     public static readonly IReadOnlyList<Wallet> SampleWallets =
