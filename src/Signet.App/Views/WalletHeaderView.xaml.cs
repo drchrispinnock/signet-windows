@@ -153,7 +153,6 @@ public sealed partial class WalletIdentityView : UserControl
 /// </summary>
 public static class OperationsMenuItems
 {
-    private const string NotYet = "Not available on Windows yet";
 
     /// <param name="openSettings">Upstream opens the Settings scene with <c>SettingsLink</c>; here the home view shows the dialog.</param>
     public static void Fill(MenuFlyout menu, WalletViewModel model, Action openSettings)
@@ -162,7 +161,7 @@ public static class OperationsMenuItems
         var hasWallet = model.SelectedWallet is not null;
         menu.Items.Add(Item("Create account…", () => model.IsPresentingCreateWallet = true, VirtualKey.N, VirtualKeyModifiers.Control));
         menu.Items.Add(Item("Import account…", () => model.IsPresentingImportAccount = true, VirtualKey.I, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift));
-        menu.Items.Add(Item("Connect Ledger…", null, help: NotYet));
+        menu.Items.Add(Item("Connect Ledger…", () => model.IsPresentingConnectLedger = true, VirtualKey.L, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift));
         menu.Items.Add(Item("Rename account…", () => model.IsPresentingRenameWallet = true, enabled: hasWallet));
         menu.Items.Add(Item("Export secret key…", () => model.IsPresentingExportKey = true, enabled: model.CanExportSelectedKey));
         menu.Items.Add(new MenuFlyoutSeparator());
@@ -221,6 +220,7 @@ public static class OperationsMenuItems
         Add(VirtualKey.I, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => model.IsPresentingImportAccount = true);
         Add(VirtualKey.N, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => model.IsPresentingAddAddress = true);
         Add(VirtualKey.D, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => model.IsPresentingConnectDApp = true);
+        Add(VirtualKey.L, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => model.IsPresentingConnectLedger = true);
         Add(VirtualKey.R, VirtualKeyModifiers.Control, () => _ = model.Refresh(), () => model.SelectedWallet is not null);
         Add((VirtualKey)188, VirtualKeyModifiers.Control, openSettings);  // Ctrl+, (VK_OEM_COMMA), as on the Mac
         root.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;

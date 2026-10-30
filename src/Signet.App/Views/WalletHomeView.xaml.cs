@@ -164,6 +164,7 @@ public sealed partial class WalletHomeView : UserControl
             };
         }
         else if (model.IsPresentingGovernance && model.SelectedWallet is not null) { dialog = new GovernanceSheet(model); reset = () => model.IsPresentingGovernance = false; }
+        else if (model.IsPresentingConnectLedger) { dialog = new ConnectLedgerSheet(model); reset = () => model.IsPresentingConnectLedger = false; }
         else if (model.IsPresentingBuy && model.SelectedWallet is not null) { dialog = new BuySheet(model); reset = () => model.IsPresentingBuy = false; }
         else if (model.IsPresentingCreateMultisig) { dialog = new CreateMultisigSheet(model); reset = () => model.IsPresentingCreateMultisig = false; }
         else if (model.IsPresentingAddMultisig) { dialog = new AddMultisigSheet(model); reset = () => model.IsPresentingAddMultisig = false; }
@@ -219,7 +220,8 @@ public sealed partial class NoWalletsView : UserControl
                                          () => model.IsPresentingCreateWallet = true));
         options.Children.Add(StartOption("Import an existing account", "From a secret key or a recovery phrase of 12 to 24 words.", "", false,
                                          () => model.IsPresentingImportAccount = true));
-        options.Children.Add(StartOption("Connect a Ledger", "Use a key that stays on your hardware wallet. Not available on Windows yet.", "", false, null));
+        options.Children.Add(StartOption("Connect a Ledger", "Use a key that stays on your hardware wallet.", "", false,
+            () => model.IsPresentingConnectLedger = true));
         if (model.ImportableWalletCount > 0)
         {
             var count = model.ImportableWalletCount;

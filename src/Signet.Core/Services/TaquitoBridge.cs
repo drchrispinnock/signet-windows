@@ -228,6 +228,8 @@ public sealed class TaquitoBridge
           ledgerExchange: function (id, deviceId, apduHex, timeoutMs) {
             __signet_host.ledgerExchange(Number(id), String(deviceId), String(apduHex), Number(timeoutMs));
           },
+          ledgerSessionBegin: function (id, deviceId) { __signet_host.ledgerSessionBegin(Number(id), String(deviceId)); },
+          ledgerSessionEnd: function (id) { __signet_host.ledgerSessionEnd(Number(id)); },
         };
 
         globalThis.__signet_call = function (id, name, argsJSON) {
@@ -319,11 +321,17 @@ public sealed class TaquitoBridge
         // Ledger: USB HID is native (LedgerHID); the bridge's Transport subclass calls these.
         [ScriptMember("ledgerDevices")]
         public string LedgerDevices() => JsonSerializer.Serialize(
-            LedgerHID.Shared.Devices().Select(d => new { id = d.Id, name = d.Name, model = d.Model, productID = d.ProductID }));
+            LedgerHID.Shared.Devices().Select(d => new { id = d.Id, name = d.Name, productID = d.ProductID }));
 
         [ScriptMember("ledgerExchange")]
         public void LedgerExchange(double id, string deviceID, string apduHex, double timeoutMs) =>
             bridge.LedgerExchange((int)id, deviceID, apduHex, timeoutMs);
+
+        [ScriptMember("ledgerSessionBegin")]
+        public void LedgerSessionBegin(double id, string deviceID) => bridge.LedgerSessionBegin((int)id, deviceID);
+
+        [ScriptMember("ledgerSessionEnd")]
+        public void LedgerSessionEnd(double id) => bridge.LedgerSessionEnd((int)id);
     }
 
     // ---- Timers ----------------------------------------------------------------------------------
@@ -466,6 +474,38 @@ public sealed class TaquitoBridge
                 Invoke("__signet_ledgerDone", id, "", error ?? "Ledger exchange failed");
             }
         }));
+    }
+
+    /// <summary>Leases held by this context's Ledger sessions: JavaScript session id → (lease, device). Bridge thread only.</summary>
+    private readonly Dictionary<int, (Guid Lease, string Device)> ledgerLeases = [];
+
+    /// <summary>
+    /// A Ledger session (one whole signing or derivation, many APDUs) waits for the process-wide
+    /// device lease, so another bridge context cannot interleave its own APDUs (<c>LedgerSessions</c>).
+    /// </summary>
+    private void LedgerSessionBegin(int id, string deviceID)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var lease = await LedgerSessions.Shared.Acquire(deviceID);
+                Post(() =>
+                {
+                    ledgerLeases[id] = (lease, deviceID);
+                    Invoke("__signet_ledgerSessionReady", id, null);
+                });
+            }
+            catch (Exception e)
+            {
+                Post(() => Invoke("__signet_ledgerSessionReady", id, e.Message));
+            }
+        });
+    }
+
+    private void LedgerSessionEnd(int id)
+    {
+        if (ledgerLeases.Remove(id, out var lease)) LedgerSessions.Shared.Release(lease.Lease, lease.Device);
     }
 
     // ---- Log -------------------------------------------------------------------------------------

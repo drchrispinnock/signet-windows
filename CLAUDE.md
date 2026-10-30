@@ -122,9 +122,9 @@ The pin is upstream `9b9fa4e`, but that commit was **not ported in full**: the j
 brought the account-management UI up to date and skipped whole subsystems. Ported as of `9b9fa4e`:
 - Models, except the Etherlink and shielded parts of `Network` (`l2…`, `shielded…`).
   `AppState` carries the Layer 2 and shielded maps through unread.
-- The `TaquitoBridge` host (`JSONValue` with `IntValue`, `BridgeError.Typed`). Not yet: the
-  call policy (S30: signing calls, read deadlines, context discard), `OperationJournal` (the
-  bundle falls back to its in-memory journal), `LedgerSessions`, log rotation during writes (S11).
+- The `TaquitoBridge` host (`JSONValue` with `IntValue`, `BridgeError.Typed`, the journal and
+  Ledger session natives). Not yet: the call policy (S30: signing calls, read deadlines, context
+  discard) and log rotation during writes (S11).
 - `KeyGenerator`, `KeyImporter`, `SessionKeys`, `TezosClientStore` (journal, `contracts`, removal
   snapshots, address-checked secrets), `WalletStore`, `AppStateStore` (nodes and service links),
   `WalletDirectorySettings`, `EndpointPolicy` (host classification only), `QRCode`.
@@ -133,7 +133,7 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   and the rest as before. Not yet: `BoundedHTTP`/`JSONBudget` (S19), `ArtworkCache`.
 - `WalletViewModel`: accounts (create, import, session keys, remember, rename, forget, export,
   address book, octez-client import), refresh, networks and nodes, backups, faucet, staking and
-  governance pass-throughs, dApps, multisig. Not yet: TzEL, Etherlink, Ledger, Buy.
+  governance pass-throughs, dApps, multisig, Buy, Ledger. Not yet: TzEL, Etherlink.
   `SendViewModel` exists only for its `SendError`.
 - Views: `WalletHomeView` (with `NoWalletsView` and the disclaimer), the header
   (`WalletIdentityView`, `OperationsMenuItems`), `NetworkBadgeMenu`, `ActionButtonsView`,
@@ -195,10 +195,17 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   `QuantumnetMultisigTests` here (the Shadownet faucet needs proof of work). Quantumnet refuses
   classic keys inside a contract (`non_quantum_resistant_signature_algorithm`), so that test's
   signers are tz5 keys and a tz1 pays; a multisig there needs tz5 signers.
+- Ledger: `LedgerHID` (`LedgerFraming`, its S22 `ExchangeTracker`, `LedgerDevice`) over HidSharp,
+  `LedgerSessions` (the process-wide device lease, behind the bridge's `ledgerSessionBegin`/
+  `ledgerSessionEnd` natives: the dApp manager's bridge is a second context on the same device),
+  `LedgerService` (`BridgeLedgerService`, `MockLedgerService`), `WalletViewModel.ConnectLedger` and
+  `ConnectLedgerSheet` (burger menu, Ctrl+Shift+L, the welcome screen). Windows differences: a
+  device's id is its HID path (upstream: the IOKit registry id); reports carry a leading report-id
+  byte, added and stripped in `LedgerHID`; the vendor interface is found by its report
+  descriptor's usage page, or by `&mi_00` in the path when the descriptor cannot be read.
 - `WalletBackup` is still the `3b33fe1` version (no manifest or locked snapshot, S05/S28).
 
-Not ported, shown disabled in the menus with "Not available on Windows yet": Connect Ledger
-(and `LedgerHID`, still a placeholder).
+Every menu item is ported except the TzEL and Etherlink ones, which are left out of the menus.
 Shielded settings is left out of the menu altogether while TzEL is out of scope. Run `dotnet test` and read the skipped tests for the
 detailed backlog. The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
 

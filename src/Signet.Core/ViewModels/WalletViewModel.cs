@@ -166,6 +166,7 @@ public sealed partial class WalletViewModel : ObservableObject
     private CancellationTokenSource? faucetTask;
     public const double FaucetAmountTez = 100;
     [ObservableProperty] private bool isCreatingWallet;
+    [ObservableProperty] private bool isConnectingLedger;
     [ObservableProperty] private string? errorMessage;
 
     /// <summary>Watches the configured node for the status bar.</summary>
@@ -377,7 +378,8 @@ public sealed partial class WalletViewModel : ObservableObject
         Func<string, IBridgeStorage>? dappStorageFactory = null,
         bool startDApps = false,
         IMultisigService? multisig = null,
-        IMultisigProposalStore? proposalStore = null)
+        IMultisigProposalStore? proposalStore = null,
+        ILedgerService? ledger = null)
     {
         this.backupSettings = backupSettings;
         var factory = chainFactory ?? (_ => chain ?? new MockChainService());
@@ -405,6 +407,7 @@ public sealed partial class WalletViewModel : ObservableObject
         this.walletStore = walletStore;
         this.importSource = importSource;
         multisigService = multisig ?? new MockMultisigService();
+        Ledger = ledger ?? new MockLedgerService();
         this.proposalStore = proposalStore ?? (directory is not null ? new FileMultisigProposalStore(directory) : new InMemoryMultisigProposalStore());
         multisigProposals = this.proposalStore.Load();
 
@@ -1101,6 +1104,44 @@ public sealed partial class WalletViewModel : ObservableObject
     /// What signs for one of our wallets: its secret key from the store (with <c>passphrase</c> if
     /// encrypted) or its Ledger key. <c>null</c> for watch-only and remote-signer aliases.
     /// </summary>
+    /// <summary>Ledger discovery and key derivation.</summary>
+    public ILedgerService Ledger { get; }
+
+    /// <summary>
+    /// Adds the key at <c>curve</c>/<c>account</c> on the Ledger: derives it with a prompt, so the user
+    /// approves the address on the device before anything is written; the entry is an octez-client
+    /// <c>ledger://</c> alias, so octez-client can use it too.
+    /// </summary>
+    public async Task ConnectLedger(string alias, string deviceID, LedgerCurve curve, int account)
+    {
+        var name = alias.Trim();
+        if (name.Length == 0) throw new WalletError.EmptyAlias();
+        if (Wallets.Any(w => w.Alias == name)) throw new WalletError.AliasExists(name);
+        IsConnectingLedger = true;
+        try
+        {
+            var key = new LedgerKey("", curve, account);
+            var derived = await Ledger.AddressFor(deviceID, key, prompt: true);
+            if (Wallets.FirstOrDefault(w => w.Address == derived.Address) is { } existing) throw new WalletError.AddressExists(existing.Alias);
+            // octez names the device by its root key; fall back to the key's own address if the app refuses that path.
+            Address root;
+            try { root = await Ledger.RootAddress(deviceID); }
+            catch (Exception) { root = derived.Address; }
+            key = new LedgerKey(root.Value, key.Curve, key.RelativePath);
+
+            var wallet = new Wallet(name, derived.Address, curve.Scheme(), derived.PublicKey, KeyKind.Ledger, key);
+            walletStore.Add(wallet, key.Locator);
+            try { Wallets = walletStore.Load(); }
+            catch (Exception) { Wallets = [.. Wallets, wallet]; }
+            Select(Wallets.FirstOrDefault(w => w.Alias == name) ?? wallet);
+            await BackUp();
+        }
+        finally
+        {
+            IsConnectingLedger = false;
+        }
+    }
+
     public SigningKey? SigningKeyFor(Wallet wallet, string? passphrase) => wallet.KeyKind switch
     {
         KeyKind.Unencrypted or KeyKind.Encrypted => SoftwareSecret(wallet) is { } secretKey

@@ -63,7 +63,8 @@ public partial class App : Application
         backupSettings: new BackupSettings(),
         dappStorageFactory: directory => new OctezConnectStorage(directory),
         startDApps: true,
-        multisig: new BridgeMultisigService());
+        multisig: new BridgeMultisigService(),
+        ledger: new BridgeLedgerService());
 
     /// <summary>
     /// Windows-only: the <c>--preview</c> model, upstream's test-host model and <c>#Preview</c> data in a
@@ -76,7 +77,8 @@ public partial class App : Application
         var store = new InMemoryWalletStore();
         store.AddWithSecretKey(new Models.Wallet("Captain Stake", MockChainService.CaptainStake, publicKey: "edpkPreviewCaptainStake", keyKind: Models.KeyKind.Unencrypted), "edskPreview");
         foreach (var wallet in WalletViewModel.SampleWallets) store.AddWithSecretKey(wallet with { PublicKey = "edpkPreview" + wallet.Alias.Replace(" ", "") }, "edskPreview");
-        return new WalletViewModel(chain: new MockChainService(), walletStore: store, multisig: new MockMultisigService(["edpkPreviewCaptainStake", "edpkPreviewMyAccount"], 2));
+        return new WalletViewModel(chain: new MockChainService(), walletStore: store, multisig: new MockMultisigService(["edpkPreviewCaptainStake", "edpkPreviewMyAccount"], 2),
+            ledger: new MockLedgerService([MockLedgerService.SampleDevice]));
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
