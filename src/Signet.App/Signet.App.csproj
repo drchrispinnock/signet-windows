@@ -16,6 +16,13 @@
     <!-- Unpackaged (no MSIX), like the unsandboxed Mac app: it must reach %USERPROFILE%\.signet. -->
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- Release builds carry the .NET runtime too, so a downloaded zip runs without installing .NET. -->
+    <SelfContained Condition="'$(Configuration)' == 'Release'">true</SelfContained>
+    <!-- The release version, shown in the file's properties. A tag build passes its own (-p:Version=…). -->
+    <Version>0.8.0</Version>
+    <Product>Signet</Product>
+    <Company>Chris Pinnock</Company>
+    <Copyright>Copyright © 2026 Chris Pinnock</Copyright>
     <!-- Program.cs is the entry point: single instance and the signet:// scheme. -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>

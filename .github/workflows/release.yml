@@ -1,0 +1,94 @@
+# Builds the Windows release when a version tag is pushed (git tag v0.8.0; git push origin v0.8.0),
+# or by hand from the Actions tab (Run workflow) to try a build without releasing it.
+#
+# A tag build makes a DRAFT GitHub release with one zip per architecture and their SHA-256 sums.
+# Nothing is public until the draft is published on GitHub.
+#
+# Signing: not yet. Once the SignPath Foundation accepts the project, a signing step goes
+# between "Build" and "Package" (SignPath's GitHub action uploads the unsigned folder and
+# returns it signed); see docs/RELEASING.md.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        platform: [x64, ARM64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          # v0.8.0 → 0.8.0 on a tag; a manual run builds the version in the project file.
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { '' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Test
+        if: matrix.platform == 'x64'
+        run: dotnet test --project tests/Signet.Core.Tests --filter-not-trait "Category=Network"
+
+      - name: Build
+        shell: pwsh
+        run: |
+          $buildArgs = @('build', 'src/Signet.App/Signet.App.csproj', '-c', 'Release', "-p:Platform=${{ matrix.platform }}")
+          if ('${{ steps.version.outputs.version }}') { $buildArgs += "-p:Version=${{ steps.version.outputs.version }}" }
+          dotnet @buildArgs
+
+      - name: Package
+        shell: pwsh
+        run: |
+          # `dotnet publish` drops Signet.pri and the .xbf files (see CLAUDE.md), so the release is
+          # the Release build output itself, in a folder named Signet inside the zip.
+          $rid = if ('${{ matrix.platform }}' -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
+          $out = "src/Signet.App/bin/${{ matrix.platform }}/Release/net10.0-windows10.0.22621.0/$rid"
+          $version = '${{ steps.version.outputs.version }}'
+          if (-not $version) { $version = 'test' }
+          New-Item -ItemType Directory -Force dist/Signet | Out-Null
+          Copy-Item "$out/*" dist/Signet -Recurse
+          $zip = "dist/Signet-$version-$rid.zip"
+          Compress-Archive -Path dist/Signet -DestinationPath $zip
+          (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + (Split-Path $zip -Leaf) | Out-File "$zip.sha256" -Encoding ascii
+          "ZIP=$zip" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Signet-${{ matrix.platform }}
+          path: |
+            ${{ env.ZIP }}
+            ${{ env.ZIP }}.sha256
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --title "Signet for Windows ${GITHUB_REF_NAME#v}" \
+            --generate-notes
