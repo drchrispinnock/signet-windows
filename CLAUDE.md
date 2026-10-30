@@ -150,6 +150,16 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   `QuantumnetSendTests` is a Windows-only live round trip through the journal.
 - Staking: `StakingSheet` (delegate, change or remove the delegate, stake, unstake, finalize),
   opened from the Stake tile and the delegate row (a contract's delegate row opens Sign multisig).
+- Buy: `BuyProvider` (Mt Pelerin's widget; Coinbase, Kraken and Transak as browser hand-offs with
+  the address and a QR code), `MtPelerin` (URL, packed message, armored proof), the view model's
+  `BuyURL` and `BuySheet`, from the Buy tile on mainnet and "Buy tez…" on an empty account. The
+  widget runs in WebView2 (`BuyWebView`, browsing data in `%LOCALAPPDATA%\Signet\WebView2`) under
+  upstream's S23 policy. That policy is pure code in Core as `BuyWebViewPolicy` (upstream keeps it
+  on the view), so the headless tests reach it. WebView2 has no `WKNavigationType`: a
+  user-initiated navigation that is not a redirect counts as `LinkActivated`, anything else as
+  `Other`. Permissions other than camera and microphone are refused rather than prompted, and a
+  frame's own permission requests are refused. The provider choice is saved only when the user
+  picks one in the open drop-down.
 - Baking and governance: `BakingSheet` (register, consensus and companion keys with BLS proof of
   possession, staking parameters; no companion section on Quantumnet) and `GovernanceSheet`
   (upvotes in a proposal period, ballots in the votes), from the burger menu ("Governance…"
@@ -187,8 +197,8 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   signers are tz5 keys and a tz1 pays; a multisig there needs tz5 signers.
 - `WalletBackup` is still the `3b33fe1` version (no manifest or locked snapshot, S05/S28).
 
-Not ported, shown disabled in the menus with "Not available on Windows yet": Buy and
-Connect Ledger (and `LedgerHID`, still a placeholder).
+Not ported, shown disabled in the menus with "Not available on Windows yet": Connect Ledger
+(and `LedgerHID`, still a placeholder).
 Shielded settings is left out of the menu altogether while TzEL is out of scope. Run `dotnet test` and read the skipped tests for the
 detailed backlog. The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
 
@@ -218,8 +228,8 @@ Windows-specific porting notes:
 - `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock
   chain, in-memory accounts (Captain Stake held with a placeholder key, so Baking and Governance
   show a baker) and mock multisig. It claims neither the single instance nor `signet://`, shows
-  no disclaimer and touches no wallet folder or preferences, so UI checks need not repoint the
-  user's preferences (upstream's `#Preview` and test-host model). An exception escaping a UI
+  no disclaimer and touches no wallet folder (preferences only if a setting is changed in it),
+  so UI checks need not repoint the user's preferences (upstream's `#Preview` and test-host model). An exception escaping a UI
   event is written to `%LOCALAPPDATA%\Signet\Logs\crash.log` (the app still exits).
 
 This PC has Smart App Control enforced. It can block a freshly built, unsigned `Signet.exe` with

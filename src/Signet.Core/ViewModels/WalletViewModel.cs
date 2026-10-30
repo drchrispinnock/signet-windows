@@ -1045,6 +1045,21 @@ public sealed partial class WalletViewModel : ObservableObject
     public Task<TransferEstimate> EstimateStaking(StakingOperation operation) =>
         SelectedWallet is { } wallet ? chain.EstimateStaking(operation, wallet) : throw new WalletError.EmptyAlias();
 
+    /// <summary>
+    /// The buy widget for the selected account at <c>provider</c>. With a key we can sign for, the
+    /// address is pre-validated (a signed per-provider message) so the user has nothing to prove in
+    /// the widget; otherwise the address is only pre-filled.
+    /// </summary>
+    public async Task<Uri> BuyURL(BuyProvider provider, string fiat, string? passphrase, bool embedded = true, bool dark = false)
+    {
+        var wallet = SelectedWallet ?? throw new WalletError.EmptyAlias();
+        var code = MtPelerin.RandomCode();
+        SignedPayload? proof = null;
+        if (provider.OwnershipPayload(code) is { } payload && SigningKeyFor(wallet, passphrase) is { } signer)
+            proof = await chain.SignPayload(signer, payload);
+        return provider.BuyURL(wallet.Address, fiat, code, proof, embedded, dark);
+    }
+
     public Task<GovernanceInfo> GovernanceInfoForSelected() =>
         SelectedWallet is { } wallet ? chain.GovernanceInfoFor(wallet.Address) : throw new WalletError.EmptyAlias();
 

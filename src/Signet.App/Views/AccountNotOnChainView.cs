@@ -50,10 +50,10 @@ public sealed partial class AccountNotOnChainView : UserControl
             var receive = new Button { Content = "Show address to receive tez…", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
             receive.Click += (_, _) => model.IsPresentingReceive = true;
             buttons.Children.Add(receive);
-            var buy = new Button { Content = "Buy tez…", IsEnabled = false };
-            var wrapper = new Border { Child = buy, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
-            ToolTipService.SetToolTip(wrapper, "Buying is not available on Windows yet");
-            buttons.Children.Add(wrapper);
+            var buy = new Button { Content = "Buy tez…" };
+            buy.Click += (_, _) => model.IsPresentingBuy = true;
+            ToolTipService.SetToolTip(buy, $"Buy tez through {Signet.Services.BuyProviderExtensions.Choices}, delivered to this address");
+            buttons.Children.Add(buy);
         }
 
         var stack = new StackPanel { Spacing = 12 };
