@@ -120,32 +120,32 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 The pin is upstream `9b9fa4e`, but that commit was **not ported in full**: the jump from `3b33fe1`
 brought the account-management UI up to date and skipped whole subsystems. Ported as of `9b9fa4e`:
-- Models, except the Etherlink and shielded parts of `Network` (`l2…`, `shielded…`).
-  `AppState` carries the Layer 2 and shielded maps through unread.
+- Models, except the shielded parts of `Network` (`shielded…`). `AppState` carries the
+  shielded maps through unread.
 - The `TaquitoBridge` host (`JSONValue` with `IntValue`, `BridgeError.Typed`, the journal and
   Ledger session natives). Not yet: the call policy (S30: signing calls, read deadlines, context
   discard) and log rotation during writes (S11).
 - `KeyGenerator`, `KeyImporter`, `SessionKeys`, `TezosClientStore` (journal, `contracts`, removal
-  snapshots, address-checked secrets), `WalletStore`, `AppStateStore` (nodes and service links),
+  snapshots, address-checked secrets), `WalletStore`, `AppStateStore` (nodes, Layer 2 and service links),
   `WalletDirectorySettings`, `EndpointPolicy` (host classification only), `QRCode`.
 - The chain layer with approved limits (S14), `SentOperation`, `Portfolio` (S26) and chain pinning
   (S12): `ChainService`, `MockChainService`, `TaquitoChainService`, `TzKTService`, `NodeMonitor`
   and the rest as before. Not yet: `BoundedHTTP`/`JSONBudget` (S19), `ArtworkCache`.
 - `WalletViewModel`: accounts (create, import, session keys, remember, rename, forget, export,
   address book, octez-client import), refresh, networks and nodes, backups, faucet, staking and
-  governance pass-throughs, dApps, multisig, Buy, Ledger. Not yet: TzEL, Etherlink.
+  governance pass-throughs, dApps, multisig, Buy, Ledger, Etherlink. Not yet: TzEL.
   `SendViewModel` exists only for its `SendError`.
 - Views: `WalletHomeView` (with `NoWalletsView` and the disclaimer), the header
   (`WalletIdentityView`, `OperationsMenuItems`), `NetworkBadgeMenu`, `ActionButtonsView`,
   `AssetListView`, `DelegateRowView`, `AccountNotOnChainView`, `ActivityTabsView` (transactions,
   tokens, NFTs), `NodeStatusBar`, `AccountAvatarView`, and the sheets Create, Import, Rename,
-  Add address, Export, Forget, Remember key, Receive (Tezos side only) and Faucet.
+  Add address, Export, Forget, Remember key, Receive and Faucet.
 - `NetworksSheet` (node per network with the chain check, `NodeIdentity`; TzKT, explorer and
-  faucet links; no Layer 2 fields) and `SettingsView` (appearance, launch disclaimer, wallet
+  faucet links; Enable Layer 2 and the Layer 2 Michelson node) and `SettingsView` (appearance, launch disclaimer, wallet
   directory, backups, updates; no Developer section yet). Settings is a dialog opened from the
   burger menu or Ctrl+, rather than a separate window; `Appearance` is applied by `AppearanceApplier`.
-- Send: `SendViewModel` and `SendSheet` (compose, confirm, result; Tezos side only, no
-  `ChainSidePicker`), with `OperationJournal` behind the bridge's `operationRead`/`operationSave`/
+- Send: `SendViewModel` and `SendSheet` (compose, confirm, result; Tezos and Etherlink sides),
+  with `OperationJournal` behind the bridge's `operationRead`/`operationSave`/
   `operationRemove` natives, stored in `%USERPROFILE%\.signet\pending_operations.json` (S15).
   `QuantumnetSendTests` is a Windows-only live round trip through the journal.
 - Staking: `StakingSheet` (delegate, change or remove the delegate, stake, unstake, finalize),
@@ -203,9 +203,23 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   device's id is its HID path (upstream: the IOKit registry id); reports carry a leading report-id
   byte, added and stripped in `LedgerHID`; the vendor interface is found by its report
   descriptor's usage page, or by `&mi_00` in the path when the descriptor cannot be read.
+- Etherlink (0.9 to 0.9.3): `Network`'s Layer 2 members (`L2RPCURL`, `L2Enabled`, `Layer2`,
+  `CanDepositToL2`, bridge helper and rollup, `EtherlinkGateway`), `AppState.L2Enabled`/`L2NodeURLs`,
+  `Keccak` and `EtherlinkAlias`, the chain calls (`EtherlinkBalanceFor`, deposit, alias status and
+  link; a Layer 2 service reads `balance` alone for tez), the Etherlink row (S31-bound
+  `BridgeContextInfo`/`BridgeEstimate`), `L2Monitor` (the status bar's Layer 2 line), and the
+  sheets: `BridgeSheet` ("Bridge…" when `CanBridge`), Receive's Etherlink side with alias linking,
+  Send's Etherlink side, and the Networks sheet's Layer 2 switch and node. `ChainSidePicker`
+  (with the `ChainSide` enum) is in the app. Naming differences: `NodeMonitor.LayerValue`
+  (the property `Layer` takes the name, as with `Network.FaucetKindValue`),
+  `WalletViewModel.BridgeContextInfo` (the property is `BridgeContext`) and
+  `EtherlinkAliasStatusForSelected()` (upstream `etherlinkAliasStatus()`, which would clash with
+  its return type). Upstream's `SendSheet.SideContext`/`capture` is `SendSideContext.Capture`
+  in Core, so `SendSideContextTests` runs headless. The live tests (`ShadownetBridgeTests`,
+  `EtherlinkLiveTests`) fund through the Shadownet faucet's proof of work and pass, about 40 s each.
 - `WalletBackup` is still the `3b33fe1` version (no manifest or locked snapshot, S05/S28).
 
-Every menu item is ported except the TzEL and Etherlink ones, which are left out of the menus.
+Every menu item is ported except the TzEL ones, which are left out of the menus.
 Shielded settings is left out of the menu altogether while TzEL is out of scope. Run `dotnet test` and read the skipped tests for the
 detailed backlog. The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
 

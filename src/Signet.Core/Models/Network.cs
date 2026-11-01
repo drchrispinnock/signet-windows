@@ -9,8 +9,7 @@ namespace Signet.Models;
 /// public testnet. <c>RpcURL</c> is the node in use; <c>DefaultRPCURL</c> is the one we ship, which the
 /// user can override per network in the Networks sheet.
 ///
-/// Not ported yet: Etherlink (the <c>l2…</c> members, <c>Layer2</c>, <c>HasL2</c>) and shielded
-/// transactions (<c>shielded…</c>, <c>CanShield</c>).
+/// Not ported: shielded transactions (<c>shielded…</c>, <c>CanShield</c>).
 /// </summary>
 public sealed record Network
 {
@@ -23,7 +22,9 @@ public sealed record Network
     }
 
     public Network(string name, string chain, Uri rpcURL, Uri? tezosDomainsURL, Uri? tzktURL, Uri? faucetURL = null,
-                   FaucetKindValue faucetKind = FaucetKindValue.Teztnets, Uri? explorerURL = null, string? expectedChainID = null)
+                   FaucetKindValue faucetKind = FaucetKindValue.Teztnets, Uri? explorerURL = null, string? expectedChainID = null,
+                   Uri? l2RPCURL = null, string? expectedL2ChainID = null, string? l2BridgeHelper = null, string? l2Rollup = null,
+                   Uri? l2TzKTURL = null, Uri? l2ExplorerURL = null)
     {
         Name = name;
         Chain = chain;
@@ -38,6 +39,14 @@ public sealed record Network
         ExplorerURL = explorerURL;
         DefaultExplorerURL = explorerURL;
         ExpectedChainID = expectedChainID;
+        L2DefaultRPCURL = l2RPCURL;
+        L2RPCURL = l2RPCURL;
+        L2Enabled = false;   // off until the user turns Layer 2 on in the Networks sheet
+        ExpectedL2ChainID = expectedL2ChainID;
+        L2BridgeHelper = l2BridgeHelper is null ? null : new Address(l2BridgeHelper);
+        L2Rollup = l2Rollup;
+        L2TzKTURL = l2TzKTURL;
+        L2ExplorerURL = l2ExplorerURL;
     }
 
     public string Id => Name;
@@ -72,9 +81,56 @@ public sealed record Network
     /// another chain in red, and nothing is estimated or signed through it.
     /// </summary>
     public string? ExpectedChainID { get; init; }
+    /// <summary>
+    /// Etherlink, the layer 2 rollup, through its Tezos-style ("michelson") RPC, where tz1 to
+    /// tz3 keys are used directly. <c>L2DefaultRPCURL</c> is the endpoint we ship (mainnet and
+    /// Shadownet), <c>L2RPCURL</c> the one in use, and <c>L2Enabled</c> whether Layer 2 features (the
+    /// Etherlink balance, Bridge, Receive and Send on Etherlink) are on at all; off by default.
+    /// </summary>
+    public Uri? L2DefaultRPCURL { get; init; }
+    public Uri? L2RPCURL { get; init; }
+    public bool L2Enabled { get; init; }
+    /// <summary>The chain id the Etherlink RPC must report (<c>/chains/main/chain_id</c>), when pinned (S12).</summary>
+    public string? ExpectedL2ChainID { get; init; }
+    /// <summary>
+    /// Etherlink's bridge helper contract on layer 1 (<c>deposit %evm_address %l2_address</c>) and the
+    /// Smart Rollup it feeds, for depositing tez to a Michelson-interface account. Shipped for
+    /// mainnet and Shadownet; a user-supplied Layer 2 node does not come with a bridge.
+    /// </summary>
+    public Address? L2BridgeHelper { get; init; }
+    public string? L2Rollup { get; init; }
+    /// <summary>TzKT for the Michelson interface and its explorer, where TzKT indexes it.</summary>
+    public Uri? L2TzKTURL { get; init; }
+    public Uri? L2ExplorerURL { get; init; }
 
-    /// <summary>1 for a Tezos network, 2 for its Etherlink counterpart (not ported yet).</summary>
+    /// <summary>
+    /// Etherlink's Michelson interface as a network of its own, for operations between tz
+    /// accounts on the rollup: the Layer 2 node is its node, its chain id is pinned, and its
+    /// TzKT and explorer are Etherlink's. <c>null</c> unless Layer 2 is on with a node.
+    /// </summary>
+    public Network? Layer2 => HasL2 && L2RPCURL is { } node
+        ? new Network($"{Name} · Etherlink", $"etherlink-{Chain}", node, tezosDomainsURL: null, tzktURL: L2TzKTURL,
+                      explorerURL: L2ExplorerURL, expectedChainID: ExpectedL2ChainID) { LayerNumber = 2 }
+        : null;
+
+    /// <summary>1 for a Tezos network, 2 for its <c>Layer2</c> counterpart.</summary>
     public int LayerNumber { get; init; } = 1;
+
+    /// <summary>Etherlink is on and has a node to ask.</summary>
+    public bool HasL2 => L2Enabled && L2RPCURL is not null;
+    /// <summary>Tez can be moved from layer 1 to Etherlink here: Layer 2 is on and the bridge is known.</summary>
+    public bool CanDepositToL2 => HasL2 && L2BridgeHelper is not null && L2Rollup is not null;
+
+    /// <summary>
+    /// Etherlink's Michelson gateway (the same address on every Etherlink network): the
+    /// contract a tz account calls to reach the EVM runtime, and whose <c>resolveAddress</c> view
+    /// says whether the account's EVM alias exists yet.
+    /// </summary>
+    public static readonly Address EtherlinkGateway = new("KT18oDJJKXMKhfE1bSuAPGp92pYcwVDiqsPw");
+    public bool IsUsingDefaultL2Node => L2RPCURL == L2DefaultRPCURL;
+
+    /// <summary>The same network with Etherlink switched on or off and pointed at <c>node</c>.</summary>
+    public Network UsingL2(bool enabled, Uri? node) => this with { L2Enabled = enabled, L2RPCURL = node };
 
     /// <summary>
     /// The links a network uses besides its node: the TzKT API, the block explorer and the
@@ -185,7 +241,13 @@ public sealed record Network
         tezosDomainsURL: new Uri("https://api.tezos.domains/graphql"),
         tzktURL: new Uri("https://api.tzkt.io"),
         explorerURL: new Uri("https://tzkt.io"),
-        expectedChainID: "NetXdQprcVkpaWU");
+        expectedChainID: "NetXdQprcVkpaWU",
+        l2RPCURL: new Uri("https://michelson.etherlink.mainnet.octez.io"),
+        expectedL2ChainID: "NetXohUVN5QWR4f",
+        l2BridgeHelper: "KT1Wj8SUGmnEPFqyahHAcjcNQwe6YGhEXJb5",
+        l2Rollup: "sr1Ghq66tYK9y3r8CC1Tf8i8m5nxh8nTvZEf",
+        l2TzKTURL: new Uri("https://api.etherlink.tzkt.io"),
+        l2ExplorerURL: new Uri("https://etherlink.tzkt.io"));
 
     public static readonly Network Shadownet = new(
         name: "Shadownet",
@@ -195,7 +257,13 @@ public sealed record Network
         tzktURL: new Uri("https://api.shadownet.tzkt.io"),
         faucetURL: new Uri("https://faucet.shadownet.teztnets.com"),
         explorerURL: new Uri("https://shadownet.tzkt.io"),
-        expectedChainID: "NetXsqzbfFenSTS");
+        expectedChainID: "NetXsqzbfFenSTS",
+        l2RPCURL: new Uri("https://michelson.etherlink.shadownet.octez.io"),
+        expectedL2ChainID: "NetXtLrzvQDobza",
+        l2BridgeHelper: "KT19aBsSWvWtvEkbiqReJnD8UzQMWcD8SHUD",
+        l2Rollup: "sr19fMYrr5C4qqvQqQrDSjtP31GcrWjodzvg",
+        l2TzKTURL: new Uri("https://api.shadownet.etherlink.tzkt.io"),
+        l2ExplorerURL: new Uri("https://shadownet.etherlink.tzkt.io"));
 
     public static readonly Network Bakingnet = new(
         name: "Bakingnet",

@@ -116,6 +116,36 @@ public sealed class MockChainService : IChainService
 
     public Task<string> ProofOfPossession(SigningKey signer) => Task.FromResult("BLsigMockProof");
 
+    public Task<TransferEstimate> EstimateEtherlinkDeposit(Wallet wallet, decimal amount) =>
+        Task.FromResult(new TransferEstimate(0.001234m, 0, amount + 0.001234m, 3000, 0, new OperationLimits("1234", 3000, 0)));
+
+    public Task<SentOperation> SendEtherlinkDeposit(Wallet wallet, SigningKey signer, decimal amount, OperationLimits limits)
+    {
+        CheckPassphrase(wallet, signer);
+        return Task.FromResult(new SentOperation("ooMockDeposit"));
+    }
+
+    /// <summary>Accounts whose EVM alias the mock has linked; tests reset it.</summary>
+    public static readonly HashSet<Address> LinkedAliases = [];
+
+    public Task<EtherlinkAliasStatus> EtherlinkAliasStatusFor(Address address)
+    {
+        var alias = EtherlinkAlias.AddressFor(address);
+        lock (LinkedAliases)
+            return Task.FromResult<EtherlinkAliasStatus>(LinkedAliases.Contains(address)
+                ? new EtherlinkAliasStatus.Linked(alias) : new EtherlinkAliasStatus.Unlinked(alias));
+    }
+
+    public Task<TransferEstimate> EstimateEtherlinkLink(Wallet wallet) =>
+        Task.FromResult(new TransferEstimate(0.001291m, 0, 0.001291m, 2000, 0, new OperationLimits("1291", 2000, 0)));
+
+    public Task<SentOperation> SendEtherlinkLink(Wallet wallet, SigningKey signer, OperationLimits limits)
+    {
+        CheckPassphrase(wallet, signer);
+        lock (LinkedAliases) LinkedAliases.Add(wallet.Address);
+        return Task.FromResult(new SentOperation("ooMockLink"));
+    }
+
     public Task<SignedPayload> SignPayload(SigningKey signer, string payloadHex)
     {
         if (signer is SigningKey.Secret { Passphrase: "wrong" }) throw new ChainError.WrongPassphrase();

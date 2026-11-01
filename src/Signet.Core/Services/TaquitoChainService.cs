@@ -18,6 +18,11 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
 
     public async Task<TezBalance> TezBalanceFor(Address address)
     {
+        // The Michelson interface has no staking and no full_balance: `balance` is the whole story,
+        // and an account the rollup has never seen is simply 0.
+        if (Network.LayerNumber == 2)
+            return TezBalance.FromMutez(await RpcMutez("balance", address), "0", "0", "0")
+                ?? throw new FormatException("The node's balance reply could not be parsed.");
         // Taquito rejects tz5/tz6 addresses, so ask the node directly for those.
         if (address.Scheme is { } scheme && !scheme.IsSupported()) return await DirectTezBalanceFor(address);
         var result = await bridge.Call("getTezBalances", Rpc, address.Value);
@@ -46,23 +51,48 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
             ?? throw new FormatException("The node's balance reply could not be parsed.");
     }
 
-    /// <summary><c>GET /chains/main/blocks/head/context/contracts/&lt;pkh&gt;/&lt;field&gt;</c> → <c>"&lt;mutez&gt;"</c>.</summary>
-    private async Task<string> RpcMutez(string field, Address address)
+    /// <summary>
+    /// <c>GET /chains/main/blocks/head/context/contracts/&lt;pkh&gt;/&lt;field&gt;</c> → <c>"&lt;mutez&gt;"</c>, from the
+    /// network's node or the node at <c>at</c> (the Etherlink one).
+    /// </summary>
+    private async Task<string> RpcMutez(string field, Address address, Uri? at = null)
     {
-        var url = Network.RpcURL.AppendingPathComponent($"chains/main/blocks/head/context/contracts/{address.Value}/{field}");
+        var url = (at ?? Network.RpcURL).AppendingPathComponent($"chains/main/blocks/head/context/contracts/{address.Value}/{field}");
         var reply = await Http.Get(http, url);
         if (!reply.IsSuccess) throw new RPCError(reply.Status, field, address, reply.Text);
-        try
-        {
-            return JsonNode.Parse(reply.Body) is JsonValue v && v.TryGetValue<string>(out var text)
-                ? text
-                : throw new FormatException("The node's balance reply could not be parsed.");
-        }
-        catch (JsonException) { throw new FormatException("The node's balance reply could not be parsed."); }
+        return JSONString(reply.Body) ?? throw new FormatException("The node's balance reply could not be parsed.");
     }
 
-    /// <summary>Etherlink is not ported yet, so no network has a Layer 2 node to ask.</summary>
-    public Task<decimal> EtherlinkBalanceFor(Address address) => throw new ChainError.NoEtherlinkNode();
+    /// <summary><c>GET &lt;node&gt;/&lt;path&gt;</c> → a JSON string, such as <c>chains/main/chain_id</c>.</summary>
+    private async Task<string> RpcString(string path, Uri node)
+    {
+        var reply = await Http.Get(http, node.AppendingPathComponent(path));
+        if (!reply.IsSuccess) throw new HttpRequestException($"The node returned HTTP {reply.Status} for {path}.");
+        return JSONString(reply.Body) ?? throw new FormatException("The node's reply could not be parsed.");
+    }
+
+    private static string? JSONString(byte[] body)
+    {
+        try { return JsonNode.Parse(body) is JsonValue v && v.TryGetValue<string>(out var text) ? text : null; }
+        catch (JsonException) { return null; }
+    }
+
+    /// <summary>
+    /// The account's tez on Etherlink, through the rollup's Tezos-style RPC (<c>Network.L2RPCURL</c>):
+    /// the same <c>…/contracts/&lt;pkh&gt;/balance</c> call as a layer 1 node answers. An account the
+    /// rollup has never seen is simply 0. The node must report the pinned Etherlink chain id.
+    /// </summary>
+    public async Task<decimal> EtherlinkBalanceFor(Address address)
+    {
+        if (!Network.HasL2 || Network.L2RPCURL is not { } l2) throw new ChainError.NoEtherlinkNode();
+        if (Network.ExpectedL2ChainID is { } expected)
+        {
+            var found = await RpcString("chains/main/chain_id", l2);
+            if (found != expected) throw new ChainError.WrongChain(expected, found);
+        }
+        var mutez = await RpcMutez("balance", address, l2);
+        return Mutez.ToTez(mutez) ?? throw new FormatException("The node's balance reply could not be parsed.");
+    }
 
     public async Task<IReadOnlyList<TezosTransaction>> RecentTransactionsFor(Address address, int limit)
     {
@@ -114,6 +144,98 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
         await VerifyChain();
         var result = await Signing(() => bridge.Call("sendTransfer", Rpc, signer.BridgeSpec, destination.Value, Mutez.FromTez(amount), limits.Json));
         return SentOperation.From(result) ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected send payload: {result}");
+    }
+
+    public async Task<TransferEstimate> EstimateEtherlinkDeposit(Wallet wallet, decimal amount)
+    {
+        if (wallet.PublicKey is not { } publicKey)
+            throw new TaquitoBridge.BridgeError.JavaScript($"Account “{wallet.Alias}” has no public key, so its fees cannot be estimated.");
+        if (!Network.CanDepositToL2 || Network.L2BridgeHelper is not { } helper || Network.L2Rollup is not { } rollup) throw new ChainError.NoEtherlinkBridge();
+        await VerifyChain();
+        var result = await bridge.Call("estimateEtherlinkDeposit", Rpc, wallet.Address.Value, publicKey, helper.Value, rollup, wallet.Address.Value, Mutez.FromTez(amount));
+        return EstimateFrom(result, amount);
+    }
+
+    public async Task<SentOperation> SendEtherlinkDeposit(Wallet wallet, SigningKey signer, decimal amount, OperationLimits limits)
+    {
+        if (!Network.CanDepositToL2 || Network.L2BridgeHelper is not { } helper || Network.L2Rollup is not { } rollup) throw new ChainError.NoEtherlinkBridge();
+        await VerifyChain();
+        var result = await Signing(() => bridge.Call("sendEtherlinkDeposit", Rpc, signer.BridgeSpec, helper.Value, rollup, wallet.Address.Value, Mutez.FromTez(amount), limits.Json));
+        return SentOperation.From(result) ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected deposit payload: {result}");
+    }
+
+    // Etherlink alias (0.9.3), on the Layer 2 service
+
+    /// <summary>
+    /// Asks the gateway's <c>resolveAddress</c> view (Tezos runtime 0 → Ethereum runtime 1) on the
+    /// Layer 2 node: <c>Some (Pair 0 addr)</c> is recorded, <c>Some (Pair 1 addr)</c> only derived.
+    /// </summary>
+    public async Task<EtherlinkAliasStatus> EtherlinkAliasStatusFor(Address address)
+    {
+        if (Network.LayerNumber != 2) throw new ChainError.NotALayer2Service();
+        await VerifyChain();
+        var body = new JsonObject
+        {
+            ["contract"] = Network.EtherlinkGateway.Value,
+            ["view"] = "resolveAddress",
+            ["input"] = new JsonObject
+            {
+                ["prim"] = "Pair",
+                ["args"] = new JsonArray(new JsonObject { ["string"] = address.Value }, new JsonObject { ["int"] = "0" }, new JsonObject { ["int"] = "1" }),
+            },
+            ["chain_id"] = Network.ExpectedChainID ?? "",
+            ["unparsing_mode"] = "Readable",
+        };
+        var reply = await Http.PostJSON(http, Network.RpcURL.AppendingPathComponent("chains/main/blocks/head/helpers/scripts/run_script_view"),
+                                        body.ToJsonString(), TimeSpan.FromSeconds(20));
+        if (!reply.IsSuccess) throw new HttpRequestException($"The node returned HTTP {reply.Status} for the alias view.");
+        return AliasStatus(reply.Body, address);
+    }
+
+    /// <summary>Pure parser for the view's reply; the address it names must be the one we derive.</summary>
+    public static EtherlinkAliasStatus AliasStatus(byte[] data, Address address)
+    {
+        string? kind = null, named = null;
+        try
+        {
+            if (JsonNode.Parse(data) is JsonObject root && root["data"] is JsonObject some && Str(some["prim"]) == "Some" &&
+                some["args"] is JsonArray { Count: > 0 } outer && outer[0] is JsonObject pair && Str(pair["prim"]) == "Pair" &&
+                pair["args"] is JsonArray { Count: 2 } args)
+            {
+                kind = Str(args[0]?["int"]);
+                named = Str(args[1]?["string"]);
+            }
+        }
+        catch (JsonException) { }
+        if (kind is null || named is null) throw new FormatException("The alias view's reply could not be parsed.");
+        var expected = EtherlinkAlias.AddressFor(address);
+        if (named.ToLowerInvariant() != expected) throw new FormatException("The alias view named another address.");
+        return kind switch
+        {
+            "0" => new EtherlinkAliasStatus.Linked(expected),
+            "1" => new EtherlinkAliasStatus.Unlinked(expected),
+            _ => throw new FormatException("The alias view's reply could not be parsed."),
+        };
+
+        static string? Str(JsonNode? node) => node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+    }
+
+    public async Task<TransferEstimate> EstimateEtherlinkLink(Wallet wallet)
+    {
+        if (Network.LayerNumber != 2) throw new ChainError.NotALayer2Service();
+        if (wallet.PublicKey is not { } publicKey)
+            throw new TaquitoBridge.BridgeError.JavaScript($"Account “{wallet.Alias}” has no public key, so its fees cannot be estimated.");
+        await VerifyChain();
+        var result = await bridge.Call("estimateEtherlinkLink", Rpc, wallet.Address.Value, publicKey, Network.EtherlinkGateway.Value);
+        return EstimateFrom(result);
+    }
+
+    public async Task<SentOperation> SendEtherlinkLink(Wallet wallet, SigningKey signer, OperationLimits limits)
+    {
+        if (Network.LayerNumber != 2) throw new ChainError.NotALayer2Service();
+        await VerifyChain();
+        var result = await Signing(() => bridge.Call("sendEtherlinkLink", Rpc, signer.BridgeSpec, Network.EtherlinkGateway.Value, limits.Json));
+        return SentOperation.From(result) ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected link payload: {result}");
     }
 
     public async Task<SentOperation?> PendingOperationFor(Address address)

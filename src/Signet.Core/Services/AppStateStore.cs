@@ -10,17 +10,18 @@ namespace Signet.Services;
 /// and any custom nodes. Serialised exactly as upstream's <c>Codable</c> struct: camelCase keys,
 /// sorted, absent values omitted.
 ///
-/// Etherlink and shielded transactions are not ported yet; their maps (<c>l2Enabled</c>,
-/// <c>l2NodeURLs</c>, <c>shieldedEnabled</c>, <c>shieldedSettings</c>) are carried through unread, so a
-/// wallet directory shared with the Mac app keeps them.
+/// Shielded transactions are not ported; their maps (<c>shieldedEnabled</c>, <c>shieldedSettings</c>)
+/// are carried through unread, so a wallet directory shared with the Mac app keeps them.
 /// </summary>
 public sealed record AppState
 {
+    /// <summary>Etherlink on or off by network name, only where the user turned it on (or saved off on the Mac).</summary>
     [JsonPropertyName("l2Enabled"), JsonPropertyOrder(1)]
-    public JsonNode? L2Enabled { get; init; }
+    public IReadOnlyDictionary<string, bool>? L2Enabled { get; init; }
 
+    /// <summary>Etherlink RPC nodes by network name, where the user replaced (or supplied) one.</summary>
     [JsonPropertyName("l2NodeURLs"), JsonPropertyOrder(2)]
-    public JsonNode? L2NodeURLs { get; init; }
+    public IReadOnlyDictionary<string, string>? L2NodeURLs { get; init; }
 
     [JsonPropertyName("networkName"), JsonPropertyOrder(3)]
     public string? NetworkName { get; init; }
@@ -46,13 +47,15 @@ public sealed record AppState
     public JsonNode? ShieldedSettings { get; init; }
 
     /// <summary>
-    /// <c>base</c> with everything saved for it applied: its node and its links. Saved text that is
-    /// not a URL is ignored.
+    /// <c>base</c> with everything saved for it applied: its node, its Layer 2 switch and node, and
+    /// its links. Saved text that is not a URL is ignored; Layer 2 is off unless saved on.
     /// </summary>
     public Network Resolved(Network @base)
     {
         var network = @base;
         if (NodeURLs?.GetValueOrDefault(@base.Name) is { } saved && Network.NodeURL(saved) is { } url) network = network.UsingNode(url);
+        var l2Node = (L2NodeURLs?.GetValueOrDefault(@base.Name) is { } l2Saved ? Network.NodeURL(l2Saved) : null) ?? @base.L2DefaultRPCURL;
+        network = network.UsingL2(L2Enabled?.GetValueOrDefault(@base.Name) ?? false, l2Node);
         foreach (var service in Enum.GetValues<Network.Service>())
         {
             if (ServiceURLs?.GetValueOrDefault(@base.Name)?.GetValueOrDefault(service.RawValue()) is not { } link) continue;
@@ -64,10 +67,10 @@ public sealed record AppState
     }
 
     /// <summary>
-    /// Records <c>net</c>'s node and links, each only where it differs from the defaults, so the
-    /// maps stay sparse and <c>null</c> when nothing is custom.
+    /// Records <c>net</c>'s node, Layer 2 choices and links, each only where it differs from the
+    /// defaults, so the maps stay sparse and <c>null</c> when nothing is custom.
     /// </summary>
-    public AppState Remember(Network net) => RememberNode(net).RememberServices(net);
+    public AppState Remember(Network net) => RememberNode(net).RememberL2(net).RememberServices(net);
 
     public AppState RememberNode(Network net)
     {
@@ -75,6 +78,18 @@ public sealed record AppState
         if (net.IsUsingDefaultNode) nodes.Remove(net.Name);
         else nodes[net.Name] = net.RpcURL.AbsoluteString();
         return this with { NodeURLs = nodes.Count == 0 ? null : nodes };
+    }
+
+    /// <summary>Etherlink is off by default everywhere, with our endpoint where we ship one.</summary>
+    public AppState RememberL2(Network net)
+    {
+        var nodes = new SortedDictionary<string, string>(L2NodeURLs?.ToDictionary() ?? [], StringComparer.Ordinal);
+        if (net.IsUsingDefaultL2Node || net.L2RPCURL is null) nodes.Remove(net.Name);
+        else nodes[net.Name] = net.L2RPCURL.AbsoluteString();
+        var flags = new SortedDictionary<string, bool>(L2Enabled?.ToDictionary() ?? [], StringComparer.Ordinal);
+        if (net.L2Enabled) flags[net.Name] = true;
+        else flags.Remove(net.Name);
+        return this with { L2NodeURLs = nodes.Count == 0 ? null : nodes, L2Enabled = flags.Count == 0 ? null : flags };
     }
 
     /// <summary>TzKT, explorer and faucet links ("" for a link turned off).</summary>
@@ -94,11 +109,13 @@ public sealed record AppState
 
     public bool Equals(AppState? other) =>
         other is not null && NetworkName == other.NetworkName && SelectedWalletAlias == other.SelectedWalletAlias &&
-        SameMap(NodeURLs, other.NodeURLs) &&
+        SameMap(NodeURLs, other.NodeURLs) && SameMap(L2NodeURLs, other.L2NodeURLs) &&
+        (L2Enabled is null) == (other.L2Enabled is null) &&
+        (L2Enabled ?? new Dictionary<string, bool>()).OrderBy(p => p.Key, StringComparer.Ordinal).SequenceEqual(
+            (other.L2Enabled ?? new Dictionary<string, bool>()).OrderBy(p => p.Key, StringComparer.Ordinal)) &&
         (ServiceURLs is null) == (other.ServiceURLs is null) &&
         (ServiceURLs ?? new Dictionary<string, IReadOnlyDictionary<string, string>>()).Count == (other.ServiceURLs?.Count ?? 0) &&
         (ServiceURLs ?? new Dictionary<string, IReadOnlyDictionary<string, string>>()).All(p => other.ServiceURLs!.TryGetValue(p.Key, out var o) && SameMap(p.Value, o)) &&
-        JsonNode.DeepEquals(L2Enabled, other.L2Enabled) && JsonNode.DeepEquals(L2NodeURLs, other.L2NodeURLs) &&
         JsonNode.DeepEquals(ShieldedEnabled, other.ShieldedEnabled) && JsonNode.DeepEquals(ShieldedSettings, other.ShieldedSettings);
 
     private static bool SameMap(IReadOnlyDictionary<string, string>? a, IReadOnlyDictionary<string, string>? b) =>

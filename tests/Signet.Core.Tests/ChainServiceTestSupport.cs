@@ -30,6 +30,16 @@ public abstract class TestChainService : IChainService
     public virtual Task<SentOperation> PerformStaking(StakingOperation operation, Wallet wallet, SigningKey signer, OperationLimits limits) =>
         Task.FromResult(new SentOperation("ooTest"));
     public virtual Task<string> ProofOfPossession(SigningKey signer) => Task.FromResult("BLsigTest");
+    public virtual Task<TransferEstimate> EstimateEtherlinkDeposit(Wallet wallet, decimal amount) =>
+        Task.FromResult(new TransferEstimate(0.001m, 0, amount + 0.001m, 0, 0, new OperationLimits("1000", 0, 0)));
+    public virtual Task<SentOperation> SendEtherlinkDeposit(Wallet wallet, SigningKey signer, decimal amount, OperationLimits limits) =>
+        Task.FromResult(new SentOperation("ooTest"));
+    public virtual Task<EtherlinkAliasStatus> EtherlinkAliasStatusFor(Address address) =>
+        Task.FromResult<EtherlinkAliasStatus>(new EtherlinkAliasStatus.Unlinked(EtherlinkAlias.AddressFor(address)));
+    public virtual Task<TransferEstimate> EstimateEtherlinkLink(Wallet wallet) =>
+        Task.FromResult(new TransferEstimate(0.001m, 0, 0.001m, 0, 0, new OperationLimits("1000", 0, 0)));
+    public virtual Task<SentOperation> SendEtherlinkLink(Wallet wallet, SigningKey signer, OperationLimits limits) =>
+        Task.FromResult(new SentOperation("ooTest"));
     public virtual Task<SignedPayload> SignPayload(SigningKey signer, string payloadHex) => Task.FromResult(new SignedPayload("edpkTest", "edsigTest"));
     public virtual Task<GovernanceInfo> GovernanceInfoFor(Address address) => Task.FromResult(new GovernanceInfo());
     public virtual Task<string> PerformGovernance(GovernanceOperation operation, Wallet wallet, SigningKey signer) => Task.FromResult("ooTest");

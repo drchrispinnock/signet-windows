@@ -27,7 +27,7 @@ public sealed partial class WalletHomeView : UserControl
         BadgeHost.Content = new NetworkBadgeMenu(model);
         ActionsHost.Content = new ActionButtonsView(model);
         ActivityHost.Content = new ActivityTabsView(model);
-        StatusHost.Content = new NodeStatusBar(model.NodeMonitor);
+        StatusHost.Content = new NodeStatusBar(model.NodeMonitor, model.L2Monitor);
         OperationsMenu.Opening += (_, _) => OperationsMenuItems.Fill(OperationsMenu, model, OpenSettings, CheckForUpdates);
         OperationsMenuItems.InstallShortcuts(this, model, OpenSettings);
         model.PropertyChanged += Changed;
@@ -39,6 +39,7 @@ public sealed partial class WalletHomeView : UserControl
         Loaded += async (_, _) =>
         {
             model.NodeMonitor.Start();
+            model.L2Monitor.Start();
             await Disclaimer.ShowIfNeeded(XamlRoot);
             // A sheet asked for before the window was up (a signet:// link at launch) opens now.
             _ = PresentSheets();
@@ -149,6 +150,7 @@ public sealed partial class WalletHomeView : UserControl
         Action? reset = null;
         if (model.Dapps.Current is { } request) { dialog = new DAppRequestSheet(model, request); reset = () => { }; }
         else if (model.IsPresentingConnectDApp) { dialog = new ConnectDAppSheet(model); reset = () => model.IsPresentingConnectDApp = false; }
+        else if (model.IsPresentingBridge && model.SelectedWallet is not null) { dialog = new BridgeSheet(model); reset = () => model.IsPresentingBridge = false; }
         else if (model.IsPresentingCreateWallet) { dialog = new CreateWalletSheet(model); reset = () => model.IsPresentingCreateWallet = false; }
         else if (model.IsPresentingImportAccount) { dialog = new ImportAccountSheet(model); reset = () => model.IsPresentingImportAccount = false; }
         else if (model.IsPresentingRenameWallet) { dialog = new RenameWalletSheet(model); reset = () => model.IsPresentingRenameWallet = false; }
@@ -156,7 +158,11 @@ public sealed partial class WalletHomeView : UserControl
         else if (model.IsPresentingExportKey) { dialog = new ExportKeySheet(model); reset = () => model.IsPresentingExportKey = false; }
         else if (model.IsPresentingForget) { dialog = new ForgetAccountSheet(model); reset = () => model.IsPresentingForget = false; }
         else if (model.IsPresentingRememberKey) { dialog = new RememberKeySheet(model); reset = () => model.IsPresentingRememberKey = false; }
-        else if (model.IsPresentingReceive && model.SelectedWallet is { } wallet) { dialog = new ReceiveSheet(wallet, model.Domains); reset = () => model.IsPresentingReceive = false; }
+        else if (model.IsPresentingReceive && model.SelectedWallet is { } wallet)
+        {
+            dialog = new ReceiveSheet(wallet, model.Domains, model.Network.HasL2 && wallet.Address.IsUsableOnEtherlink, model);
+            reset = () => model.IsPresentingReceive = false;
+        }
         else if (model.IsPresentingFaucet) { dialog = new FaucetSheet(model); reset = () => model.IsPresentingFaucet = false; }
         else if (model.IsPresentingStaking && model.SelectedWallet is not null)
         {
@@ -207,7 +213,7 @@ public sealed partial class WalletHomeView : UserControl
         {
             // Sheets not ported yet: drop the request rather than leave the flag set.
             model.IsPresentingSend = model.IsPresentingStaking = model.IsPresentingBaking = model.IsPresentingConnectLedger =
-                model.IsPresentingGovernance = model.IsPresentingBuy = model.IsPresentingReceive = false;
+                model.IsPresentingGovernance = model.IsPresentingBuy = model.IsPresentingReceive = model.IsPresentingBridge = false;
             return;
         }
         dialogOpen = true;

@@ -44,6 +44,18 @@ public interface IChainService
     /// <summary>BLS proof of possession for one of our tz4 keys.</summary>
     Task<string> ProofOfPossession(SigningKey signer);
 
+    // Etherlink bridge (0.9.1): a layer 1 deposit to the wallet's own account on the rollup.
+    Task<TransferEstimate> EstimateEtherlinkDeposit(Wallet wallet, decimal amount);
+    /// <summary>Signs and injects the deposit with exactly the approved <c>limits</c> (S14).</summary>
+    Task<SentOperation> SendEtherlinkDeposit(Wallet wallet, SigningKey signer, decimal amount, OperationLimits limits);
+
+    // Etherlink alias (0.9.3), on a Layer 2 (Michelson interface) service only: whether the
+    // account's EVM-side address exists on chain yet, and the gateway call that creates it.
+    Task<EtherlinkAliasStatus> EtherlinkAliasStatusFor(Address address);
+    Task<TransferEstimate> EstimateEtherlinkLink(Wallet wallet);
+    /// <summary>Signs and injects the link call with exactly the approved <c>limits</c> (S14).</summary>
+    Task<SentOperation> SendEtherlinkLink(Wallet wallet, SigningKey signer, OperationLimits limits);
+
     /// <summary>
     /// Signs raw bytes (hex) with no watermark, e.g. a packed "Tezos Signed Message". Returns the
     /// signer's public key and the prefixed signature (edsig/spsig/p2sig…).
@@ -79,6 +91,24 @@ public sealed record Portfolio(IReadOnlyList<AssetBalance> Tokens, IReadOnlyList
 
 public sealed record SignedPayload(string PublicKey, string Signature);
 
+/// <summary>
+/// Whether a tz account's address on Etherlink's EVM side exists on chain. The address itself
+/// is a pure function of the tz address (<c>EtherlinkAlias</c>), but the rollup only creates the
+/// account behind it, with the forwarder that passes tez on to the tz account, when the
+/// account makes its first cross-interface call. Before that, the gateway's <c>resolveAddress</c>
+/// view reports the address as derived (1) rather than recorded (0), and tez sent to it sit at
+/// an address nobody controls.
+/// </summary>
+public abstract record EtherlinkAliasStatus(string EvmAddress)
+{
+    /// <summary>Recorded on chain: tez sent to the alias reach the account.</summary>
+    public sealed record Linked(string EvmAddress) : EtherlinkAliasStatus(EvmAddress);
+    /// <summary>Only derived so far: the account must link itself first.</summary>
+    public sealed record Unlinked(string EvmAddress) : EtherlinkAliasStatus(EvmAddress);
+
+    public bool IsLinked => this is Linked;
+}
+
 /// <summary>Errors the UI distinguishes from generic failures. Equal when kind and payload match, like the Swift enum.</summary>
 public abstract class ChainError(string message) : Exception(message), IEquatable<ChainError>
 {
@@ -103,6 +133,10 @@ public abstract class ChainError(string message) : Exception(message), IEquatabl
     public sealed class KeyAddressMismatch(string detail) : ChainError(detail);
     /// <summary>The network has Etherlink off or no Etherlink node to ask.</summary>
     public sealed class NoEtherlinkNode() : ChainError("Etherlink is not enabled for this network.");
+    /// <summary>The network has no known bridge contract for depositing to Etherlink.</summary>
+    public sealed class NoEtherlinkBridge() : ChainError("Signet knows no Etherlink bridge for this network.");
+    /// <summary>Asked of a layer 1 service: alias status and linking live on the Layer 2 node.</summary>
+    public sealed class NotALayer2Service() : ChainError("This needs the Layer 2 node.");
     /// <summary>A node answered with another chain's id than the one pinned for it (S12).</summary>
     public sealed class WrongChain(string expected, string found) : ChainError($"The node serves chain {found}, not {expected}.");
 

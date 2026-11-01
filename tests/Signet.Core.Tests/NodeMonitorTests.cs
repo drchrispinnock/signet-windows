@@ -58,10 +58,43 @@ public class NodeMonitorTests
         Assert.StartsWith("Cannot reach node", status.Detail);
     }
 
+    /// <summary>
+    /// The Layer 2 monitor watches the Michelson node only while Layer 2 is on, and a reply
+    /// from another chain is as bad as no reply.
+    /// </summary>
+    [Fact]
+    public async Task LayerTwoMonitorFollowsTheLayerTwoSetting()
+    {
+        static NodeMonitor.ProbeReply Head(string chain)
+        {
+            var stamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
+            return new NodeMonitor.ProbeReply(Encoding.UTF8.GetBytes($"{{\"level\": 7, \"chain_id\": \"{chain}\", \"timestamp\": \"{stamp}\"}}"), 200, 0.1);
+        }
+        var monitor = new NodeMonitor(Network.Mainnet.L2On(), NodeMonitor.LayerValue.Two, url =>
+        {
+            if (url.Host == Network.Mainnet.L2RPCURL?.Host) return Task.FromResult(Head(Network.Mainnet.ExpectedL2ChainID!));
+            if (url.Host == "l2.example.org") return Task.FromResult(Head("NetXwrongchain"));
+            throw new TimeoutException("The request timed out.");
+        });
+        Assert.Equal(Network.Mainnet.L2RPCURL, monitor.Endpoint);
+        await monitor.CheckNow();
+        Assert.True(monitor.Status.Light == NodeStatus.LightColor.Green && monitor.Status.Level == 7);
+
+        monitor.Network = Network.Mainnet;   // off by default
+        Assert.Null(monitor.Endpoint);
+        await monitor.CheckNow();
+        Assert.Equal(new NodeStatus.Unknown(), monitor.Status);
+
+        monitor.Network = Network.Mainnet.UsingL2(true, new Uri("https://l2.example.org"));
+        await monitor.CheckNow();
+        Assert.True(monitor.Status.Light == NodeStatus.LightColor.Red && monitor.Status.Detail.Contains("NetXwrongchain"));
+        monitor.Stop();
+    }
+
     [Fact]
     public async Task MonitorPublishesProbeResultsAndFollowsNetworkChanges()
     {
-        var monitor = new NodeMonitor(Network.Mainnet, url =>
+        var monitor = new NodeMonitor(Network.Mainnet, probe: url =>
         {
             if (url.Host == Network.Mainnet.RpcURL.Host)
             {
@@ -158,7 +191,7 @@ public class NewHeadRefreshTests
     public async Task MonitorReportsNewHeadsAfterTheFirst()
     {
         var level = 100;
-        var monitor = new NodeMonitor(Network.Mainnet, _ =>
+        var monitor = new NodeMonitor(Network.Mainnet, probe: _ =>
         {
             var stamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture);
             return Task.FromResult(new NodeMonitor.ProbeReply(Encoding.UTF8.GetBytes($$"""{"level": {{level}}, "timestamp": "{{stamp}}"}"""), 200, 0.1));
@@ -239,7 +272,9 @@ public class NodeIdentityTests
         Assert.IsType<NodeIdentity.Unpinned>(await model.CheckNode("https://down.example", Network.Weeklynet));
         Assert.IsType<NodeIdentity.Unchecked>(await model.CheckNode("https://down.example", Network.Mainnet));
         Assert.IsType<NodeIdentity.Unchecked>(await model.CheckNode("ftp://x", Network.Mainnet));
-        // Upstream also checks a Layer 2 node against the Etherlink chain; Etherlink is not ported yet.
+        // Layer 2 compares with the Etherlink chain.
+        Assert.Equal(new NodeIdentity.Mismatch("NetXdQprcVkpaWU", "NetXtLrzvQDobza"),
+                     await model.CheckNode("https://wrong.example", Network.Shadownet, NodeMonitor.LayerValue.Two));
         // Asking changes nothing.
         Assert.Equal(Network.Shadownet.DefaultRPCURL, model.NodeURL(Network.Shadownet));
         Assert.Equal(Network.Mainnet, model.Network);

@@ -170,6 +170,8 @@ public static class OperationsMenuItems
         menu.Items.Add(Item("Forget account…", () => model.IsPresentingForget = true, enabled: hasWallet));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("dApps…", () => model.IsPresentingConnectDApp = true, VirtualKey.D, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift));
+        if (model.CanBridge) menu.Items.Add(Item("Bridge…", () => model.IsPresentingBridge = true));
+        // Upstream's Shield, Unshield, Send shielded and Shielded address belong with TzEL, which this port leaves out.
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Create multisig…", () => model.IsPresentingCreateMultisig = true));
         menu.Items.Add(Item("Add multisig…", () => model.IsPresentingAddMultisig = true));

@@ -64,6 +64,20 @@ public sealed partial class NodeMonitor : ObservableObject
     public sealed record ProbeReply(byte[] Data, int Status, double Latency);
     public delegate Task<ProbeReply> Probe(Uri url);
 
+    /// <summary>
+    /// Which of the network's nodes this monitor watches: the layer 1 node, or the Layer 2
+    /// Michelson node (only while the network has Layer 2 on; idle and grey otherwise).
+    /// (<c>Value</c> because the property <c>Layer</c> takes the name, as with <c>Network.FaucetKindValue</c>.)
+    /// </summary>
+    public enum LayerValue { One, Two }
+    public LayerValue Layer { get; }
+
+    /// <summary>The node being watched, or <c>null</c> when the network has none for this layer.</summary>
+    public Uri? Endpoint => Layer == LayerValue.One ? Network.RpcURL : Network.HasL2 ? Network.L2RPCURL : null;
+
+    /// <summary>The chain id a reply must carry, when the network pins one for this layer (S12).</summary>
+    public string? ExpectedChainID => Layer == LayerValue.One ? Network.ExpectedChainID : Network.ExpectedL2ChainID;
+
     [ObservableProperty] private NodeStatus status = new NodeStatus.Unknown();
     [ObservableProperty] private DateTimeOffset? lastChecked;
 
@@ -88,9 +102,10 @@ public sealed partial class NodeMonitor : ObservableObject
     private readonly Probe probe;
     private CancellationTokenSource? loop;
 
-    public NodeMonitor(Network network, Probe? probe = null)
+    public NodeMonitor(Network network, LayerValue layer = LayerValue.One, Probe? probe = null)
     {
         this.network = network;
+        Layer = layer;
         this.probe = probe ?? HttpProbe;
     }
 
@@ -123,15 +138,21 @@ public sealed partial class NodeMonitor : ObservableObject
         }
     }
 
-    /// <summary>One probe, outcome published in <c>Status</c>.</summary>
+    /// <summary>One probe, outcome published in <c>Status</c>. Nothing to watch leaves the status unknown.</summary>
     public async Task CheckNow()
     {
-        var url = Network.RpcURL.AppendingPathComponent("chains/main/blocks/head/header");
+        if (Endpoint is not { } endpoint)
+        {
+            Status = new NodeStatus.Unknown();
+            return;
+        }
+        var url = endpoint.AppendingPathComponent("chains/main/blocks/head/header");
+        var expected = ExpectedChainID;
         ProbeReply? reply = null;
         Exception? failure = null;
         try { reply = await probe(url); }
         catch (Exception e) { failure = e; }
-        Status = Evaluate(reply, failure, DateTimeOffset.UtcNow, Network.ExpectedChainID);
+        Status = Evaluate(reply, failure, DateTimeOffset.UtcNow, expected);
         LastChecked = DateTimeOffset.Now;
         if (Status.Level is { } level && level != lastLevel)
         {

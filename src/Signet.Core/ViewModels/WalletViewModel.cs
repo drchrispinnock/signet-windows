@@ -9,9 +9,8 @@ namespace Signet.ViewModels;
 /// Drives the default screen. Owns the list of wallets, the selected one and everything loaded for it.
 /// Touched on the UI thread only: awaits resume there, so property changes reach bindings where they expect them.
 ///
-/// Not ported yet: shielded transactions (<c>WalletViewModel+Shielded.swift</c>), Etherlink (the
-/// Layer 2 monitor and chain, Bridge, alias linking), multisig, dApps (<c>DAppConnectionManager</c>),
-/// Ledger (<c>ConnectLedger</c>), Buy and the per-network Layer 2 and shielded settings.
+/// Not ported: shielded transactions (<c>WalletViewModel+Shielded.swift</c>) and the per-network
+/// shielded settings.
 /// </summary>
 public sealed partial class WalletViewModel : ObservableObject
 {
@@ -90,6 +89,7 @@ public sealed partial class WalletViewModel : ObservableObject
     [ObservableProperty] private bool isPresentingNetworks;
     [ObservableProperty] private bool isPresentingBuy;
     [ObservableProperty] private bool isPresentingConnectDApp;
+    [ObservableProperty] private bool isPresentingBridge;
     [ObservableProperty] private bool isPresentingCreateMultisig;
     [ObservableProperty] private bool isPresentingAddMultisig;
     [ObservableProperty] private bool isPresentingSignMultisig;
@@ -171,6 +171,8 @@ public sealed partial class WalletViewModel : ObservableObject
 
     /// <summary>Watches the configured node for the status bar.</summary>
     public NodeMonitor NodeMonitor { get; }
+    /// <summary>Watches the Layer 2 Michelson node while the network has Layer 2 on; grey and idle otherwise.</summary>
+    public NodeMonitor L2Monitor { get; }
 
     /// <summary>
     /// The network and node the app talks to. Changing either swaps the chain service and
@@ -187,6 +189,7 @@ public sealed partial class WalletViewModel : ObservableObject
             OnPropertyChanged();
             OnPropertyChanged(nameof(CurrentMultisigProposals));
             NodeMonitor.Network = value;
+            L2Monitor.Network = value;
             chain = chainFactory(value);
             state = state.Remember(value) with { NetworkName = value.Name };
             PersistState();
@@ -224,7 +227,7 @@ public sealed partial class WalletViewModel : ObservableObject
     private RefreshContext? CurrentContext =>
         SelectedWallet is { } wallet ? new RefreshContext(refreshGeneration, wallet.Address, Network, walletDirectoryRevision) : null;
 
-    /// <summary><c>base</c> with the node and links the user saved for it (<c>AppState.Resolved</c>).</summary>
+    /// <summary><c>base</c> with the node, Layer 2 settings and links the user saved for it (<c>AppState.Resolved</c>).</summary>
     public Network Resolved(Network @base) => state.Resolved(@base);
 
     /// <summary>The link in use (saved or default) for <c>service</c> on <c>base</c>, without switching to it.</summary>
@@ -251,6 +254,24 @@ public sealed partial class WalletViewModel : ObservableObject
     /// <summary>Goes back to the link we ship for <c>service</c> on <c>base</c>.</summary>
     public void UseDefaultServiceURL(Network.Service service, Network @base) => Change(@base, n => n.Using(n.DefaultURLFor(service), service));
 
+    /// <summary>Whether the Etherlink balance is shown for <c>base</c> (saved or default), without switching.</summary>
+    public bool IsL2Enabled(Network @base) => Resolved(Network.Named(@base.Name) ?? @base).L2Enabled;
+
+    /// <summary>The Etherlink node in use for <c>base</c>, if it has one.</summary>
+    public Uri? L2NodeURL(Network @base) => Resolved(Network.Named(@base.Name) ?? @base).L2RPCURL;
+
+    public void SetL2Enabled(bool enabled, Network @base) => Change(@base, n => n.UsingL2(enabled, n.L2RPCURL));
+
+    /// <summary>Points <c>base</c>'s Etherlink at the node typed in Networks; false when it is not a URL.</summary>
+    public bool SetL2Node(string text, Network @base)
+    {
+        if (Network.NodeURL(text) is not { } url) return false;
+        Change(@base, n => n.UsingL2(n.L2Enabled, url));
+        return true;
+    }
+
+    public void UseDefaultL2Node(Network @base) => Change(@base, n => n.UsingL2(n.L2Enabled, n.L2DefaultRPCURL));
+
     /// <summary>
     /// Applies a per-network change: through <c>Network</c> (which persists and reloads) when
     /// <c>base</c> is in use, else straight into the saved state.
@@ -264,7 +285,7 @@ public sealed partial class WalletViewModel : ObservableObject
         else
         {
             var changed = change(Resolved(Network.Named(@base.Name) ?? @base));
-            state = state.RememberServices(changed);
+            state = state.RememberL2(changed).RememberServices(changed);
             PersistState();
         }
     }
@@ -284,14 +305,15 @@ public sealed partial class WalletViewModel : ObservableObject
     /// <summary>
     /// Asks the node typed in Networks which chain it serves before it is adopted, so a node for
     /// the wrong network is warned about as it is entered, not only by the red status bar
-    /// afterwards. Networks that pin no chain id (Weeklynet, Quantumnet, Custom) are <c>Unpinned</c>.
-    /// Nothing is changed by asking. (Upstream's <c>layer:</c> argument waits for Etherlink.)
+    /// afterwards. Networks that pin no chain id (Weeklynet, Quantumnet, Custom) are <c>Unpinned</c>;
+    /// <c>layer: Two</c> compares with the Etherlink chain. Nothing is changed by asking.
     /// </summary>
-    public async Task<NodeIdentity> CheckNode(string text, Network @base)
+    public async Task<NodeIdentity> CheckNode(string text, Network @base, NodeMonitor.LayerValue layer = NodeMonitor.LayerValue.One)
     {
         if (Network.NodeURL(text) is not { } url) return new NodeIdentity.Unchecked(Network.NodeURLProblem(text));
         var template = Network.Named(@base.Name) ?? @base;
-        return await NodeMonitor.Identity(url, template.ExpectedChainID, nodeProbe ?? NodeMonitor.HttpProbe);
+        var expected = layer == NodeMonitor.LayerValue.One ? template.ExpectedChainID : template.ExpectedL2ChainID;
+        return await NodeMonitor.Identity(url, expected, nodeProbe ?? NodeMonitor.HttpProbe);
     }
 
     /// <summary>The node in use (saved or default) for any network, without switching to it.</summary>
@@ -399,7 +421,8 @@ public sealed partial class WalletViewModel : ObservableObject
         this.stateStore = stateStore;
         network = state.Resolved(Network.Named(state.NetworkName) ?? Network.Mainnet);
         this.nodeProbe = nodeProbe;
-        NodeMonitor = new NodeMonitor(network, nodeProbe);
+        NodeMonitor = new NodeMonitor(network, probe: nodeProbe);
+        L2Monitor = new NodeMonitor(network, NodeMonitor.LayerValue.Two, nodeProbe);
         this.chainFactory = factory;
         this.chain = factory(network);
         this.keyGenerator = keyGenerator ?? new KeyGenerator();
@@ -608,11 +631,13 @@ public sealed partial class WalletViewModel : ObservableObject
         var names = Start(() => chain.DomainsFor(address));
         var history = Start(() => chain.RecentTransactionsFor(address, RecentTransactionLimit));
         var delegation = Start(() => chain.DelegateInfoFor(address));
+        var etherlink = EtherlinkRow(address, mine.Network, chain);
         try
         {
             var tezBalance = await tez;
             snapshot.TezBalance = tezBalance;
             snapshot.Assets = [new AssetBalance("tez", new AssetBalance.AssetKind.Tez(), "Tezos", "tz", tezBalance.Total) { Details = tezBalance.Breakdown }];
+            if (await etherlink is { } row) snapshot.Assets.Add(row);
             try { snapshot.Portfolio = await holdings; }
             catch (Exception) { snapshot.Portfolio = new Portfolio([], [], new Portfolio.PortfolioState.Unavailable("Could not read the account's tokens.")); }
             snapshot.Domains = await names;
@@ -621,7 +646,7 @@ public sealed partial class WalletViewModel : ObservableObject
         }
         catch (ChainError.AccountNotOnChain)
         {
-            // Not on layer 1: no balance rows at all.
+            // Not on layer 1: no balance rows at all, the Etherlink one included.
             snapshot.NotOnChain = true;
             try { snapshot.Portfolio = await holdings; } catch (Exception) { }
             try { snapshot.Domains = await names; } catch (Exception) { }
@@ -630,7 +655,7 @@ public sealed partial class WalletViewModel : ObservableObject
         {
             snapshot.Error = e.Message;
         }
-        Observe(holdings, names, history, delegation);
+        Observe(holdings, names, history, delegation, etherlink);
 
         // Publish only into the context the load was started for.
         if (CurrentContext != mine) return;
@@ -657,6 +682,23 @@ public sealed partial class WalletViewModel : ObservableObject
         if (!Transactions.SequenceEqual(snapshot.Transactions)) Transactions = snapshot.Transactions;
         DelegateInfo = snapshot.DelegateInfo;
         AccountNotOnChain = snapshot.NotOnChain;
+    }
+
+    /// <summary>
+    /// The Etherlink row of the dashboard: only on networks with Etherlink on and for keys the
+    /// rollup accepts. An unreachable Etherlink node blanks this row alone, never the dashboard.
+    /// </summary>
+    private static async Task<AssetBalance?> EtherlinkRow(Address address, Network network, IChainService chain)
+    {
+        if (!network.HasL2 || !address.IsUsableOnEtherlink) return null;
+        try
+        {
+            return new AssetBalance("etherlink", new AssetBalance.AssetKind.Etherlink(), "Etherlink", "tz", await chain.EtherlinkBalanceFor(address));
+        }
+        catch (Exception e)
+        {
+            return new AssetBalance("etherlink", new AssetBalance.AssetKind.Etherlink(), "Etherlink", "tz", 0) { Unavailable = $"Etherlink balance unavailable: {e.Message}" };
+        }
     }
 
     /// <summary>Marks the loads a refresh gave up on as observed, so their failures never surface as unobserved exceptions.</summary>
@@ -1044,6 +1086,103 @@ public sealed partial class WalletViewModel : ObservableObject
         }
     }
 
+    // Etherlink bridge (0.9.1)
+
+    /// <summary>The Bridge item: Layer 2 on with a known bridge, and a tz1 to tz3 account we can sign for.</summary>
+    public bool CanBridge => Network.CanDepositToL2 && SelectedWallet is { } wallet && wallet.Address.IsUsableOnEtherlink && wallet.KeyKind.CanSign();
+
+    /// <summary>
+    /// What a deposit estimate was made for (S31): the account, the whole network (node and
+    /// Layer 2 settings included) and the directory the key comes from. The estimate is only
+    /// good for carrying out a deposit in exactly this context.
+    /// </summary>
+    public sealed record BridgeContextInfo(Wallet Wallet, Network Network, Guid DirectoryRevision, Guid Generation);
+
+    /// <summary>The context a deposit would run in right now; <c>null</c> when nothing is selected.</summary>
+    public BridgeContextInfo? BridgeContext =>
+        SelectedWallet is { } wallet ? new BridgeContextInfo(wallet, Network, walletDirectoryRevision, operationGeneration) : null;
+
+    /// <summary>A deposit estimate together with the context it is valid for.</summary>
+    public sealed record BridgeEstimate(TransferEstimate Estimate, BridgeContextInfo Context, decimal Amount);
+
+    public async Task<BridgeEstimate> EstimateBridgeDeposit(decimal amount)
+    {
+        if (SelectedWallet is not { } wallet || BridgeContext is not { } context) throw new WalletError.EmptyAlias();
+        if (amount <= 0 || !Mutez.IsValid(Mutez.FromTez(amount))) throw new SendViewModel.SendError.InvalidAmount();
+        var chain = this.chain;
+        var estimate = await chain.EstimateEtherlinkDeposit(wallet, amount);
+        // The account, network, node or directory may have changed while the node was asked.
+        if (BridgeContext != context) throw new WalletError.ContextChanged();
+        return new BridgeEstimate(estimate, context, amount);
+    }
+
+    /// <summary>
+    /// Moves <c>amount</c> tez from the selected account on layer 1 to the same account on Etherlink,
+    /// with the approved limits (S14), and waits for the layer 1 block. The rollup credits the
+    /// account on its own shortly after. The estimate must have been made in the context the
+    /// deposit runs in now (S31): a different account, network, node or directory refuses it.
+    /// </summary>
+    public async Task<(string Hash, int Level)> BridgeToEtherlink(decimal amount, BridgeEstimate? approved, string? passphrase)
+    {
+        if (SelectedWallet is not { } wallet) throw new WalletError.EmptyAlias();
+        if (approved?.Estimate.Limits is not { } limits) throw new WalletError.NotEstimated();
+        if (approved.Context != BridgeContext) throw new WalletError.ContextChanged();
+        if (!CanBridge) throw new ChainError.NoEtherlinkBridge();
+        if (amount <= 0 || !Mutez.IsValid(Mutez.FromTez(amount))) throw new SendViewModel.SendError.InvalidAmount();
+        if (amount != approved.Amount) throw new WalletError.ContextChanged();
+        var signer = SigningKeyFor(wallet, passphrase) ?? throw new SendViewModel.SendError.NoSecretKey();
+        var chain = this.chain;
+        var sent = await chain.SendEtherlinkDeposit(wallet, signer, amount, limits);
+        int level;
+        try { level = await chain.WaitForConfirmation(sent.Hash); }
+        catch (Exception) when (!sent.Injected) { throw new WalletError.OutcomeUnknown(sent.Hash); }
+        await RefreshAfterOperation();
+        return (sent.Hash, level);
+    }
+
+    // Etherlink alias (0.9.3)
+
+    /// <summary>
+    /// Whether the selected account's EVM-side address exists on Etherlink yet, asked of the
+    /// Layer 2 node; <c>null</c> when Layer 2 is off or the key is not usable on the rollup.
+    /// </summary>
+    public async Task<EtherlinkAliasStatus?> EtherlinkAliasStatusForSelected()
+    {
+        if (SelectedWallet is not { } wallet || !wallet.Address.IsUsableOnEtherlink || Layer2Chain is not { } chain) return null;
+        return await chain.EtherlinkAliasStatusFor(wallet.Address);
+    }
+
+    /// <summary>
+    /// The fee for linking the selected account to its EVM alias (a no-op gateway call on the
+    /// Michelson interface, S14: the estimate's limits are what the link is sent with).
+    /// </summary>
+    public Task<TransferEstimate> EstimateEtherlinkLink()
+    {
+        if (SelectedWallet is not { } wallet || Layer2Chain is not { } chain) throw new ChainError.NoEtherlinkNode();
+        if (!wallet.Address.IsUsableOnEtherlink || !wallet.KeyKind.CanSign()) throw new SendViewModel.SendError.NoSecretKey();
+        return chain.EstimateEtherlinkLink(wallet);
+    }
+
+    /// <summary>
+    /// Links the selected account to its EVM alias: sends the gateway no-op from the account on
+    /// the Layer 2 node with the approved <c>limits</c> and waits for the rollup block, after which
+    /// <c>EtherlinkAliasStatusForSelected</c> reports it linked. The account pays the fee on Etherlink, so it
+    /// needs a little tez there first (the Bridge sheet moves some).
+    /// </summary>
+    public async Task<(string Hash, int Level)> LinkToEtherlink(OperationLimits? limits, string? passphrase)
+    {
+        if (SelectedWallet is not { } wallet || Layer2Chain is not { } chain) throw new ChainError.NoEtherlinkNode();
+        if (limits is null) throw new WalletError.NotEstimated();
+        if (!wallet.Address.IsUsableOnEtherlink) throw new SendViewModel.SendError.NoSecretKey();
+        var signer = SigningKeyFor(wallet, passphrase) ?? throw new SendViewModel.SendError.NoSecretKey();
+        var sent = await chain.SendEtherlinkLink(wallet, signer, limits);
+        int level;
+        try { level = await chain.WaitForConfirmation(sent.Hash); }
+        catch (Exception) when (!sent.Injected) { throw new WalletError.OutcomeUnknown(sent.Hash); }
+        await RefreshAfterOperation();
+        return (sent.Hash, level);
+    }
+
     /// <summary>Fee estimate for a staking-family operation from the selected wallet.</summary>
     public Task<TransferEstimate> EstimateStaking(StakingOperation operation) =>
         SelectedWallet is { } wallet ? chain.EstimateStaking(operation, wallet) : throw new WalletError.EmptyAlias();
@@ -1093,6 +1232,16 @@ public sealed partial class WalletViewModel : ObservableObject
 
     /// <summary>The live chain service, for flows that run their own lookups (Send).</summary>
     public IChainService ChainService => chain;
+
+    /// <summary>
+    /// A chain service for Etherlink's Michelson interface (<c>Network.Layer2</c>), for operations
+    /// between tz accounts on the rollup; <c>null</c> unless Layer 2 is on with a node.
+    /// </summary>
+    public IChainService? Layer2Chain => Network.Layer2 is { } layer2 ? chainFactory(layer2) : null;
+
+    /// <summary>The selected account's tez on Etherlink as last loaded, or <c>null</c> when unknown.</summary>
+    public decimal? EtherlinkSpendable =>
+        Assets.FirstOrDefault(a => a.Kind is AssetBalance.AssetKind.Etherlink && a.Unavailable is null)?.Amount;
 
     /// <summary>
     /// A software key's secret (clear or octez-encrypted) from the directory, or from memory for

@@ -118,7 +118,7 @@ public sealed partial class AssetRowView : UserControl
 
     private static Image Logo(string path) => new()
     {
-        Source = new SvgImageSource(new Uri(Path.Combine(AppContext.BaseDirectory, path))) { RasterizePixelWidth = 88, RasterizePixelHeight = 88 },
+        Source = Services.SvgLogo.Load(path, 88),
         Width = 44, Height = 44,
     };
 

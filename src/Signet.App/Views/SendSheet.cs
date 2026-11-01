@@ -10,14 +10,25 @@ using Signet.ViewModels;
 namespace Signet.App.Views;
 
 /// <summary>
-/// Send tez: compose (recipient + amount), confirm (you → them), then the result. The network shown
-/// and linked to is captured when the sheet opens, with the chain service it talks to (S16, S31).
-/// (Upstream's <c>ChainSidePicker</c>, sending on Etherlink, waits for Etherlink.)
+/// Send tez: compose (recipient + amount), confirm (you → them), then the result. With Layer 2
+/// on, the drop-down at the top left (<c>ChainSidePicker</c>) sends on Etherlink instead: the same
+/// account, through the Layer 2 Michelson node, to tz1, tz2 or tz3 accounts only. Both sides are
+/// captured when the sheet opens, each network with the chain service it talks to (S16, S31).
 /// </summary>
 public sealed partial class SendSheet : Sheet
 {
-    private readonly SendViewModel send;
-    private readonly Network network;
+    private readonly WalletViewModel model;
+    private readonly Wallet sender;
+    private readonly IReadOnlyList<Wallet> wallets;
+    private readonly SendSideContext layer1;
+    private readonly SendSideContext? layer2;
+    private ChainSide side = ChainSide.Tezos;
+    private SendViewModel send;
+    private SendSideContext Context => side == ChainSide.Etherlink ? layer2 ?? layer1 : layer1;
+    private Network network => Context.Network;
+    private readonly StackPanel heading = new() { Orientation = Orientation.Horizontal, Spacing = 12 };
+    private readonly TextBlock headingText = new() { VerticalAlignment = VerticalAlignment.Center };
+    private readonly Grid from = new() { ColumnSpacing = 8 };
     /// <summary>Set once something was handed to the node, so closing the sheet refreshes the dashboard.</summary>
     public bool DidSend { get; private set; }
 
@@ -41,9 +52,24 @@ public sealed partial class SendSheet : Sheet
 
     public SendSheet(WalletViewModel model, Wallet sender) : base("Send tez", 520)
     {
-        network = model.Network;
-        send = new SendViewModel(sender, model.Wallets, model.ChainService, model.TezBalance?.Spendable,
-                                 (wallet, passphrase) => model.SigningKeyFor(wallet, passphrase));
+        this.model = model;
+        this.sender = sender;
+        wallets = model.Wallets;
+        (layer1, layer2) = SendSideContext.Capture(model);
+        send = MakeSend();
+        var picker = new ChainSidePicker(side, layer2 is not null && sender.Address.IsUsableOnEtherlink);
+        picker.SideChanged += async picked =>
+        {
+            side = picked;
+            send.PropertyChanged -= Changed;
+            send = MakeSend();
+            send.PropertyChanged += Changed;
+            RenderFrom();
+            Render();
+            await send.RecoverPending();
+        };
+        heading.Children.Add(picker);
+        heading.Children.Add(headingText);
         BuildCompose();
         BuildConfirm();
         Form.Children.Add(compose);
@@ -73,6 +99,7 @@ public sealed partial class SendSheet : Sheet
         // Esc must not abandon an operation that is being signed and handed to the node.
         Closing += (_, args) => { if (send.CurrentStep is SendViewModel.Step.Sending) args.Cancel = true; };
         Closed += (_, _) => send.PropertyChanged -= Changed;
+        RenderFrom();
         Opened += async (_, _) =>
         {
             recipientText.Focus(FocusState.Programmatic);
@@ -83,33 +110,20 @@ public sealed partial class SendSheet : Sheet
 
     private void Changed(object? sender, PropertyChangedEventArgs e) => Render();
 
+    /// <summary>A send for the side in use, on that side's chain service (never the other's).</summary>
+    private SendViewModel MakeSend() =>
+        new(sender, wallets, Context.Chain, Context.Spendable, (wallet, passphrase) => model.SigningKeyFor(wallet, passphrase), Context.ImplicitAccountsOnly);
+
     // ---- Step 1 ----------------------------------------------------------------------------------
 
     private void BuildCompose()
     {
-        var from = new Grid { ColumnSpacing = 8 };
         from.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         from.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         from.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var who = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-        who.Children.Add(new AccountAvatarView(send.Sender.Address, 24));
-        who.Children.Add(new TextBlock { Text = send.Sender.Alias, VerticalAlignment = VerticalAlignment.Center });
-        who.Children.Add(new TextBlock { Text = send.Sender.Address.Shortened(), Style = (Style)Application.Current.Resources["MonoText"], Foreground = Secondary, VerticalAlignment = VerticalAlignment.Center });
-        Grid.SetColumn(who, 1);
-        from.Children.Add(new TextBlock { Text = "From", VerticalAlignment = VerticalAlignment.Center });
-        from.Children.Add(who);
-        if (send.Spendable is { } spendable)
-        {
-            var available = new TextBlock { Text = $"{AssetBalance.Format(spendable, "tz")} spendable", Foreground = Secondary, VerticalAlignment = VerticalAlignment.Center };
-            Grid.SetColumn(available, 2);
-            from.Children.Add(available);
-        }
         compose.Children.Add(from);
 
         compose.Children.Add(new TextBlock { Text = "To" });
-        recipientText.PlaceholderText = send.ImplicitAccountsOnly
-            ? "tz1, tz2 or tz3 address, name.tez, or an account from your list"
-            : "Address, name.tez, or an account from your list";
         recipientText.TextChanged += (_, _) => send.RecipientText = recipientText.Text;
         compose.Children.Add(recipientText);
         compose.Children.Add(recipientStatus);
@@ -125,12 +139,35 @@ public sealed partial class SendSheet : Sheet
             if (send.CanProceed) await send.ProceedToConfirm();
         };
         max.Click += (_, _) => send.UseMaximum();
-        max.IsEnabled = send.Spendable is not null;
         ToolTipService.SetToolTip(max, "Everything except a small reserve for the fee");
         amountRow.Children.Add(amountText);
         amountRow.Children.Add(new TextBlock { Text = "tz", Foreground = Secondary, VerticalAlignment = VerticalAlignment.Center });
         amountRow.Children.Add(max);
         compose.Children.Add(amountRow);
+    }
+
+    /// <summary>The From line, the recipient prompt and Max: what differs between the two sides.</summary>
+    private void RenderFrom()
+    {
+        from.Children.Clear();
+        var who = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        who.Children.Add(new AccountAvatarView(send.Sender.Address, 24));
+        who.Children.Add(new TextBlock { Text = send.Sender.Alias, VerticalAlignment = VerticalAlignment.Center });
+        who.Children.Add(new TextBlock { Text = send.Sender.Address.Shortened(), Style = (Style)Application.Current.Resources["MonoText"], Foreground = Secondary, VerticalAlignment = VerticalAlignment.Center });
+        Grid.SetColumn(who, 1);
+        from.Children.Add(new TextBlock { Text = "From", VerticalAlignment = VerticalAlignment.Center });
+        from.Children.Add(who);
+        if (send.Spendable is { } spendable)
+        {
+            var available = new TextBlock { Text = $"{AssetBalance.Format(spendable, "tz")} spendable", Foreground = Secondary, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(available, 2);
+            from.Children.Add(available);
+        }
+        recipientText.PlaceholderText = send.ImplicitAccountsOnly
+            ? "tz1, tz2 or tz3 address, name.tez, or an account from your list"
+            : "Address, name.tez, or an account from your list";
+        max.IsEnabled = send.Spendable is not null;
+        headingText.Text = side == ChainSide.Etherlink ? "Send tez on Etherlink" : "Send tez";
     }
 
     private void RenderCompose()
@@ -355,7 +392,7 @@ public sealed partial class SendSheet : Sheet
         compose.Visibility = isCompose ? Visibility.Visible : Visibility.Collapsed;
         confirm.Visibility = isConfirm ? Visibility.Visible : Visibility.Collapsed;
         result.Visibility = isResult ? Visibility.Visible : Visibility.Collapsed;
-        Title = isCompose ? "Send tez" : isConfirm ? "Confirm" : null;
+        Title = isCompose ? heading : isConfirm ? "Confirm" : null;
 
         if (isCompose) RenderCompose();
         if (isConfirm) RenderConfirm();
