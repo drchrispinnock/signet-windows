@@ -74,9 +74,12 @@ jobs:
             $version = "$version-ci.${{ github.run_number }}"
           }
           # The previous published release, so this one carries a small delta update for it.
-          # The first Velopack release has nothing to download; that is fine.
-          vpk download github --repoUrl "https://github.com/${{ github.repository }}" --channel $rid --token $env:GH_TOKEN -o releases
-          if ($LASTEXITCODE -ne 0) { Write-Host 'No earlier release to make a delta from.'; $global:LASTEXITCODE = 0 }
+          # The first Velopack release has nothing to download; that is fine. A manual run skips
+          # it: its x.y.z-ci.N sorts below a published x.y.z, which vpk would refuse to pack after.
+          if ('${{ steps.version.outputs.version }}') {
+            vpk download github --repoUrl "https://github.com/${{ github.repository }}" --channel $rid --token $env:GH_TOKEN -o releases
+            if ($LASTEXITCODE -ne 0) { Write-Host 'No earlier release to make a delta from.'; $global:LASTEXITCODE = 0 }
+          }
           vpk pack -u SignetWallet -v $version -p $out -e Signet.exe `
             --packTitle Signet --packAuthors 'Chris Pinnock' -i src/Signet.App/Assets/Signet.ico `
             -c $rid -r $rid -o releases
