@@ -66,6 +66,14 @@ public interface IChainService
     Task<GovernanceInfo> GovernanceInfoFor(Address address);
     /// <summary>Injects an upvote or ballot. Returns the operation hash.</summary>
     Task<string> PerformGovernance(GovernanceOperation operation, Wallet wallet, SigningKey signer);
+
+    // Etherlink governance: layer 1 contracts, called with an ordinary fee.
+    /// <summary>The bakers <c>address</c> is the Etherlink voting key of on <c>contract</c> (the delegation contract's <c>list_voters</c>).</summary>
+    Task<IReadOnlyList<Address>> EtherlinkVotingRightsFor(Address address, Address contract);
+    Task<EtherlinkGovernance.State> EtherlinkGovernanceState(Address contract, Address address);
+    Task<TransferEstimate> EstimateEtherlinkGovernance(EtherlinkGovernance.Operation operation, Address contract, Wallet wallet);
+    /// <summary>Signs and injects the call with exactly the approved <c>limits</c> (S14).</summary>
+    Task<SentOperation> SendEtherlinkGovernance(EtherlinkGovernance.Operation operation, Address contract, Wallet wallet, SigningKey signer, OperationLimits limits);
 }
 
 /// <summary>
@@ -144,6 +152,11 @@ public abstract class ChainError(string message) : Exception(message), IEquatabl
     /// possession, which only the secret key can make (<c>ChainService.ProofOfPossession</c>).
     /// </summary>
     public sealed class ProofOfPossessionRequired() : ChainError("This account's first operation reveals its key with a proof of possession, which needs the secret key.");
+    /// <summary>
+    /// The node refused to simulate because the source cannot pay: it holds no tez on this
+    /// network (<c>empty_implicit_contract</c>) or too little for the fee (<c>balance_too_low</c>).
+    /// </summary>
+    public sealed class CannotPayFee() : ChainError("This account holds no tez on this network, or too little to pay the fee.");
 
     public bool Equals(ChainError? other) =>
         other is not null && other.GetType() == GetType() && other.Message == Message &&
@@ -167,6 +180,7 @@ public abstract class ChainError(string message) : Exception(message), IEquatabl
         if (Has("does not hold this key")) return new LedgerWrongDevice(message);
         if (Has("does not derive the account's address")) return new KeyAddressMismatch(message);
         if (Has("proof of possession required")) return new ProofOfPossessionRequired();
+        if (Has("empty_implicit_contract", "empty implicit contract", "balance_too_low", "subtraction_underflow")) return new CannotPayFee();
         return null;
     }
 }

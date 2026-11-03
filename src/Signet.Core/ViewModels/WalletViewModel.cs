@@ -29,6 +29,7 @@ public sealed partial class WalletViewModel : ObservableObject
             : WalletError("The account, network or node changed since the fee was estimated. Nothing was sent; the estimate will be made again.");
         public sealed class OutcomeUnknown(string hash)
             : WalletError($"The node did not confirm receiving operation {hash[..Math.Min(12, hash.Length)]}… and it has not appeared in a block yet. Check the explorer before trying again; do not repeat it blindly.");
+        public sealed class InvalidKernelHash() : WalletError("A kernel hash is 0x followed by 66 hexadecimal digits.");
 
         public bool Equals(WalletError? other) => other is not null && other.GetType() == GetType() && other.Message == Message;
         public override bool Equals(object? obj) => Equals(obj as WalletError);
@@ -69,7 +70,7 @@ public sealed partial class WalletViewModel : ObservableObject
     private readonly SessionKeyStore sessionKeys = new();
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SelectedWallet), nameof(CanExportSelectedKey), nameof(CanProveSelectedKey), nameof(CanRememberSelectedKey), nameof(CanGovern))]
+    [NotifyPropertyChangedFor(nameof(SelectedWallet), nameof(CanExportSelectedKey), nameof(CanProveSelectedKey), nameof(CanRememberSelectedKey), nameof(CanGovern), nameof(CanGovernEtherlink))]
     private string? selectedWalletID;
 
     [ObservableProperty] private bool isPresentingCreateWallet;
@@ -131,7 +132,7 @@ public sealed partial class WalletViewModel : ObservableObject
     [ObservableProperty] private DAppConnectionManager dapps;
 
     /// <summary>Export shows keys Signet holds on disk; Ledger and watch-only entries have nothing to show.</summary>
-    public bool CanExportSelectedKey => SelectedWallet?.KeyKind is KeyKind.Unencrypted or KeyKind.Encrypted;
+    public bool CanExportSelectedKey => SelectedWallet?.KeyKind is KeyKind.Unencrypted or KeyKind.Encrypted;
     /// <summary>
     /// Create proof of possession is for a tz4 (BLS) account whose secret key Signet holds: the
     /// proof is the key's signature over its own public key, and Taquito's Ledger signer cannot
@@ -139,8 +140,18 @@ public sealed partial class WalletViewModel : ObservableObject
     /// </summary>
     public bool CanProveSelectedKey => SelectedWallet?.Scheme == AddressScheme.Tz4 && CanExportSelectedKey;
 
-    /// <summary>Governance is for bakers whose key we can sign with.</summary>
-    public bool CanGovern => SelectedWallet?.KeyKind.CanSign() == true && DelegateInfo?.IsBaker == true;
+    /// <summary>
+    /// Governance is for bakers whose key we can sign with, and, with Layer 2 on, for an
+    /// account that is some baker's Etherlink voting key.
+    /// </summary>
+    public bool CanGovern => SelectedWallet?.KeyKind.CanSign() == true && (DelegateInfo?.IsBaker == true || CanGovernEtherlink);
+
+    /// <summary>
+    /// The Etherlink tab of Governance: Layer 2 on with a governance contract, a key we can sign
+    /// with, and either a baker or an account the delegation contract lists as a voting key.
+    /// </summary>
+    public bool CanGovernEtherlink =>
+        Network.CanGovernEtherlink && SelectedWallet?.KeyKind.CanSign() == true && (DelegateInfo?.IsBaker == true || EtherlinkVotesFor.Count > 0);
 
     [ObservableProperty] private IReadOnlyList<string> domains = [];
     [ObservableProperty] private IReadOnlyList<AssetBalance> assets = [];
@@ -151,7 +162,12 @@ public sealed partial class WalletViewModel : ObservableObject
     /// <summary>Whether <c>Tokens</c> and <c>Nfts</c> are the whole story (S26).</summary>
     [ObservableProperty] private Portfolio.PortfolioState portfolioState = new Portfolio.PortfolioState.Complete();
     [ObservableProperty] private IReadOnlyList<TezosTransaction> transactions = [];
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanGovern))] private DelegateInfo? delegateInfo;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanGovern), nameof(CanGovernEtherlink))] private DelegateInfo? delegateInfo;
+    /// <summary>
+    /// Bakers the selected account votes for in Etherlink governance (their voting key), as of
+    /// the last refresh; empty when Layer 2 is off or the account votes for nobody.
+    /// </summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanGovern), nameof(CanGovernEtherlink))] private IReadOnlyList<Address> etherlinkVotesFor = [];
     public const int RecentTransactionLimit = 25;
 
     public enum ActivityTab { Transactions, Assets, Nfts }
@@ -195,6 +211,8 @@ public sealed partial class WalletViewModel : ObservableObject
             network = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(CurrentMultisigProposals));
+            OnPropertyChanged(nameof(CanGovern));
+            OnPropertyChanged(nameof(CanGovernEtherlink));
             NodeMonitor.Network = value;
             L2Monitor.Network = value;
             chain = chainFactory(value);
@@ -218,6 +236,7 @@ public sealed partial class WalletViewModel : ObservableObject
         Nfts = [];
         Transactions = [];
         DelegateInfo = null;
+        EtherlinkVotesFor = [];
         TezBalance = null;
         AccountNotOnChain = false;
         PortfolioState = new Portfolio.PortfolioState.Complete();
@@ -264,6 +283,30 @@ public sealed partial class WalletViewModel : ObservableObject
     /// <summary>Whether the Etherlink balance is shown for <c>base</c> (saved or default), without switching.</summary>
     public bool IsL2Enabled(Network @base) => Resolved(Network.Named(@base.Name) ?? @base).L2Enabled;
 
+    /// <summary>The Etherlink governance contract in use for <c>process</c> on <c>base</c> ("" when the process is off).</summary>
+    public string EtherlinkGovernanceContract(EtherlinkGovernance.Process process, Network @base) =>
+        Resolved(Network.Named(@base.Name) ?? @base).EtherlinkGovernanceContracts.Get(process)?.Value ?? "";
+
+    /// <summary>
+    /// Points <c>process</c> on <c>base</c> at the contract typed in Networks, or turns the process off for
+    /// empty text. False (and no change) when the text is not a contract address.
+    /// </summary>
+    public bool SetEtherlinkGovernanceContract(string text, EtherlinkGovernance.Process process, Network @base)
+    {
+        var trimmed = text.Trim();
+        Address? contract = null;
+        if (trimmed.Length > 0)
+        {
+            if (EtherlinkGovernance.ContractAddress(trimmed) is not { } parsed) return false;
+            contract = parsed;
+        }
+        Change(@base, n => n.UsingEtherlinkGovernance(contract, process));
+        return true;
+    }
+
+    public void UseDefaultEtherlinkGovernanceContract(EtherlinkGovernance.Process process, Network @base) =>
+        Change(@base, n => n.UsingEtherlinkGovernance(n.DefaultEtherlinkGovernance.Get(process), process));
+
     /// <summary>The Etherlink node in use for <c>base</c>, if it has one.</summary>
     public Uri? L2NodeURL(Network @base) => Resolved(Network.Named(@base.Name) ?? @base).L2RPCURL;
 
@@ -292,7 +335,7 @@ public sealed partial class WalletViewModel : ObservableObject
         else
         {
             var changed = change(Resolved(Network.Named(@base.Name) ?? @base));
-            state = state.RememberL2(changed).RememberServices(changed);
+            state = state.RememberL2(changed).RememberServices(changed).RememberEtherlinkGovernance(changed);
             PersistState();
         }
     }
@@ -610,6 +653,7 @@ public sealed partial class WalletViewModel : ObservableObject
         public IReadOnlyList<string> Domains = [];
         public IReadOnlyList<TezosTransaction> Transactions = [];
         public DelegateInfo? DelegateInfo;
+        public IReadOnlyList<Address> EtherlinkVotesFor = [];
         public bool NotOnChain;
         public string? Error;
     }
@@ -647,6 +691,7 @@ public sealed partial class WalletViewModel : ObservableObject
         var history = Start(() => chain.RecentTransactionsFor(address, RecentTransactionLimit));
         var delegation = Start(() => chain.DelegateInfoFor(address));
         var etherlink = EtherlinkRow(address, mine.Network, chain);
+        var votesFor = EtherlinkVotesForAddress(address, mine.Network, chain);
         try
         {
             var tezBalance = await tez;
@@ -658,6 +703,7 @@ public sealed partial class WalletViewModel : ObservableObject
             snapshot.Domains = await names;
             snapshot.Transactions = await history;
             try { snapshot.DelegateInfo = await delegation; } catch (Exception) { }
+            snapshot.EtherlinkVotesFor = await votesFor;
         }
         catch (ChainError.AccountNotOnChain)
         {
@@ -670,7 +716,7 @@ public sealed partial class WalletViewModel : ObservableObject
         {
             snapshot.Error = e.Message;
         }
-        Observe(holdings, names, history, delegation, etherlink);
+        Observe(holdings, names, history, delegation, etherlink, votesFor);
 
         // Publish only into the context the load was started for.
         if (CurrentContext != mine) return;
@@ -696,7 +742,28 @@ public sealed partial class WalletViewModel : ObservableObject
         if (!Domains.SequenceEqual(snapshot.Domains)) Domains = snapshot.Domains;
         if (!Transactions.SequenceEqual(snapshot.Transactions)) Transactions = snapshot.Transactions;
         DelegateInfo = snapshot.DelegateInfo;
+        if (!EtherlinkVotesFor.SequenceEqual(snapshot.EtherlinkVotesFor)) EtherlinkVotesFor = snapshot.EtherlinkVotesFor;
         AccountNotOnChain = snapshot.NotOnChain;
+    }
+
+    /// <summary>
+    /// The bakers <c>address</c> is the Etherlink voting key of, across the network's governance
+    /// contracts; empty when Layer 2 is off, no contract is set, or the lookup fails (the
+    /// Governance item then shows for bakers alone). (Upstream <c>etherlinkVotesFor(_:on:chain:)</c>.)
+    /// </summary>
+    private static async Task<IReadOnlyList<Address>> EtherlinkVotesForAddress(Address address, Network network, IChainService chain)
+    {
+        if (!network.CanGovernEtherlink) return [];
+        var bakers = new List<Address>();
+        foreach (var process in network.EtherlinkGovernanceProcesses)
+        {
+            if (network.EtherlinkGovernanceContracts.Get(process) is not { } contract) continue;
+            IReadOnlyList<Address> rights;
+            try { rights = await chain.EtherlinkVotingRightsFor(address, contract); }
+            catch (Exception) { continue; }
+            foreach (var baker in rights) if (!bakers.Contains(baker)) bakers.Add(baker);
+        }
+        return bakers;
     }
 
     /// <summary>
@@ -847,7 +914,7 @@ public sealed partial class WalletViewModel : ObservableObject
         {
             SelectedWalletID = null;
             RememberSelection();
-            Domains = []; Assets = []; Tokens = []; Nfts = []; Transactions = []; DelegateInfo = null; TezBalance = null;
+            Domains = []; Assets = []; Tokens = []; Nfts = []; Transactions = []; DelegateInfo = null; EtherlinkVotesFor = []; TezBalance = null;
         }
     }
 
@@ -1219,6 +1286,58 @@ public sealed partial class WalletViewModel : ObservableObject
 
     public Task<GovernanceInfo> GovernanceInfoForSelected() =>
         SelectedWallet is { } wallet ? chain.GovernanceInfoFor(wallet.Address) : throw new WalletError.EmptyAlias();
+
+    // ---- Etherlink governance --------------------------------------------------------------------
+
+    /// <summary>The contract governing <c>process</c> on the current network, if Layer 2 is on and one is set.</summary>
+    public Address? EtherlinkGovernanceContract(EtherlinkGovernance.Process process) =>
+        Network.CanGovernEtherlink ? Network.EtherlinkGovernanceContracts.Get(process) : null;
+
+    /// <summary>The current period of <c>process</c> and where the selected account stands in it.</summary>
+    public async Task<EtherlinkGovernance.State> EtherlinkGovernanceState(EtherlinkGovernance.Process process)
+    {
+        if (SelectedWallet is not { } wallet) throw new WalletError.EmptyAlias();
+        if (EtherlinkGovernanceContract(process) is not { } contract) throw new ChainError.NoEtherlinkNode();
+        return await chain.EtherlinkGovernanceState(contract, wallet.Address);
+    }
+
+    /// <summary>
+    /// A governance call's estimate together with the context it was made in (S31): the exact
+    /// contract and operation, the account, network and directory.
+    /// </summary>
+    public sealed record EtherlinkGovernanceEstimate(TransferEstimate Estimate, Address Contract, EtherlinkGovernance.Operation Operation, BridgeContextInfo Context);
+
+    public async Task<EtherlinkGovernanceEstimate> EstimateEtherlinkGovernance(EtherlinkGovernance.Operation operation, EtherlinkGovernance.Process process)
+    {
+        if (SelectedWallet is not { } wallet || BridgeContext is not { } context) throw new WalletError.EmptyAlias();
+        if (EtherlinkGovernanceContract(process) is not { } contract) throw new ChainError.NoEtherlinkNode();
+        if (operation.KernelHash is { } hash && !EtherlinkGovernance.IsKernelHash(hash)) throw new WalletError.InvalidKernelHash();
+        var chain = this.chain;
+        var estimate = await chain.EstimateEtherlinkGovernance(operation, contract, wallet);
+        if (BridgeContext != context) throw new WalletError.ContextChanged();
+        return new EtherlinkGovernanceEstimate(estimate, contract, operation, context);
+    }
+
+    /// <summary>
+    /// Sends the approved governance call with its approved limits (S14) and waits for its block.
+    /// The estimate must have been made for this operation in the context it runs in now (S31).
+    /// </summary>
+    public async Task<(string Hash, int Level)> PerformEtherlinkGovernance(EtherlinkGovernance.Operation operation, EtherlinkGovernance.Process process,
+                                                                          EtherlinkGovernanceEstimate? approved, string? passphrase)
+    {
+        if (SelectedWallet is not { } wallet) throw new WalletError.EmptyAlias();
+        if (approved?.Estimate.Limits is not { } limits) throw new WalletError.NotEstimated();
+        if (EtherlinkGovernanceContract(process) is not { } contract || approved.Contract != contract || approved.Operation != operation || approved.Context != BridgeContext)
+            throw new WalletError.ContextChanged();
+        var signer = SigningKeyFor(wallet, passphrase) ?? throw new SendViewModel.SendError.NoSecretKey();
+        var chain = this.chain;
+        var sent = await chain.SendEtherlinkGovernance(operation, contract, wallet, signer, limits);
+        int level;
+        try { level = await chain.WaitForConfirmation(sent.Hash); }
+        catch (Exception) when (!sent.Injected) { throw new WalletError.OutcomeUnknown(sent.Hash); }
+        await RefreshAfterOperation();
+        return (sent.Hash, level);
+    }
 
     /// <summary>Upvotes or casts a ballot for the selected baker and waits one block.</summary>
     public async Task<(string Hash, int Level)> PerformGovernance(GovernanceOperation operation, string? passphrase)

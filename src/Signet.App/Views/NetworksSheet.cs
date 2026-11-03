@@ -38,6 +38,8 @@ public sealed partial class NetworksSheet : Sheet
     private readonly Button l2UseDefault = new() { Content = "Use Default" };
     private readonly Button l2Apply = new() { Content = "Apply" };
     private readonly Button l2UseAnyway = new() { Content = "Use Anyway", Visibility = Visibility.Collapsed };
+    /// <summary>Etherlink's slow and fast governance contracts, rebuilt for the network being edited.</summary>
+    private readonly StackPanel governance = new() { Spacing = 16 };
     private NodeIdentity? l2NodeWarning;
     private bool l2NodeChecking;
     /// <summary>
@@ -83,6 +85,7 @@ public sealed partial class NetworksSheet : Sheet
         l2Section.Children.Add(l2NodeMessage);
         l2Section.Children.Add(l2Checking);
         l2Section.Children.Add(l2Buttons);
+        l2Section.Children.Add(governance);
         Form.Children.Add(l2Section);
         Form.Children.Add(linksHeader);
         Form.Children.Add(links);
@@ -213,6 +216,7 @@ public sealed partial class NetworksSheet : Sheet
         {
             text += " With Layer 2 on, the dashboard shows each tz1, tz2 or tz3 account's balance on Etherlink, read from the Layer 2 Michelson node";
             text += @base.L2DefaultRPCURL is { } l2 ? $" (default {l2.AbsoluteString()})." : " you enter here.";
+            text += $" The slow and fast governance contracts are Etherlink's kernel-upgrade votes on layer 1 ({(@base.DefaultEtherlinkGovernance.IsEmpty ? $"none shipped for {@base.Name}" : "mainnet's are shipped")}); with one set, Governance gains an Etherlink tab for bakers and their voting keys. Leave a field empty to do without that process.";
         }
         return text;
     }
@@ -255,6 +259,13 @@ public sealed partial class NetworksSheet : Sheet
         linksHeader.Help = LinksHelp(@base);
         // The links beside the node. Each field is applied on Enter or with Apply; empty text
         // turns the link off (no explorer links, no Get test tez button); Use Default restores ours.
+        governance.Children.Clear();
+        foreach (var process in EtherlinkGovernance.AllProcesses)
+            governance.Children.Add(new SettingField(process.SettingTitle(), () => model.EtherlinkGovernanceContract(process, @base),
+                                                     @base.DefaultEtherlinkGovernance.Get(process)?.Value ?? "", "KT1…", monospaced: true,
+                                                     text => model.SetEtherlinkGovernanceContract(text, process, @base),
+                                                     _ => "Enter the governance contract's address (KT1…), or leave it empty to do without this process.",
+                                                     () => model.UseDefaultEtherlinkGovernanceContract(process, @base)));
         links.Children.Clear();
         foreach (var service in Enum.GetValues<Network.Service>().Where(@base.Offers))
             links.Children.Add(new LinkField(service.Title(), () => model.ServiceURL(service, @base), @base.DefaultURLFor(service),

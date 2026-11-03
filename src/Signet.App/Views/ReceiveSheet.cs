@@ -34,7 +34,11 @@ public sealed partial class ReceiveSheet : Sheet
     {
         public sealed record Checking : AliasState;
         public sealed record Linked(string Evm) : AliasState;
-        public sealed record Unlinked(decimal? Fee, string? Problem) : AliasState;
+        /// <summary>
+        /// <c>Unfunded</c>: the account holds no tez on Etherlink, so the link (paid there) cannot be
+        /// estimated or sent until some are bridged across; the node's refusal is not shown.
+        /// </summary>
+        public sealed record Unlinked(decimal? Fee, string? Problem, bool Unfunded = false) : AliasState;
         public sealed record Linking : AliasState;
         public sealed record Failed(string Message) : AliasState;
     }
@@ -144,7 +148,14 @@ public sealed partial class ReceiveSheet : Sheet
                 break;
             case AliasState.Unlinked unlinked:
                 stack.Children.Add(Centered("This account has no address on Etherlink's EVM side yet. Etherlink creates one the first time the account calls across from its Tezos side; tez sent there before that would be stuck at an address nobody controls."));
-                if (wallet.KeyKind.CanSign())
+                if (unlinked.Unfunded)
+                {
+                    stack.Children.Add(Centered("Linking sends a small no-op call from this account on Etherlink, paid there, and this account holds no tez on Etherlink yet. Use Bridge… in the menu to move a little across, then come back here."));
+                    var again = MakeButton("Check again", async () => await CheckAlias(generation));
+                    again.HorizontalAlignment = HorizontalAlignment.Center;
+                    stack.Children.Add(again);
+                }
+                else if (wallet.KeyKind.CanSign())
                 {
                     stack.Children.Add(Centered("Linking sends a small no-op call from this account on Etherlink. It needs a little tez there to pay the fee (use Bridge… first)."));
                     var link = new Button
@@ -208,11 +219,22 @@ public sealed partial class ReceiveSheet : Sheet
                 Publish(mine, new AliasState.Unlinked(null, null));
                 return;
             }
+            // A fresh account has nothing on Etherlink to pay the link with: say so instead of
+            // asking the node, whose refusal (an empty implicit contract) would read as a fault.
+            if (model.EtherlinkSpendable == 0)
+            {
+                Publish(mine, new AliasState.Unlinked(null, null, Unfunded: true));
+                return;
+            }
             try
             {
                 var fee = await model.EstimateEtherlinkLink();
                 if (mine == generation) estimate = fee;
                 Publish(mine, new AliasState.Unlinked(fee.Fee, null));
+            }
+            catch (ChainError.CannotPayFee)
+            {
+                Publish(mine, new AliasState.Unlinked(null, null, Unfunded: true));
             }
             catch (Exception e)
             {
@@ -239,6 +261,11 @@ public sealed partial class ReceiveSheet : Sheet
             alias = new AliasState.Checking();
             if (side == ChainSide.Etherlink) await CheckAlias(generation);
             else Render();
+        }
+        catch (ChainError.CannotPayFee)
+        {
+            alias = new AliasState.Unlinked(null, null, Unfunded: true);
+            Render();
         }
         catch (Exception e)
         {

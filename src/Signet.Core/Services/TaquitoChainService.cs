@@ -408,6 +408,75 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
         return r["hash"]?.StringValue ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected payload: {r}");
     }
 
+    // ---- Etherlink governance (layer 1 contracts) ------------------------------------------------
+
+    public async Task<IReadOnlyList<Address>> EtherlinkVotingRightsFor(Address address, Address contract)
+    {
+        await VerifyChain();
+        var r = await bridge.Call("etherlinkVotingRights", Rpc, contract.Value, address.Value);
+        if (r.ArrayValue is not { } list) throw new TaquitoBridge.BridgeError.JavaScript($"unexpected voting rights payload: {r}");
+        return list.Select(item => item.StringValue is { } value && new Address(value).IsValidAccount
+            ? new Address(value)
+            : throw new TaquitoBridge.BridgeError.JavaScript($"unexpected voting rights payload: {r}")).ToList();
+    }
+
+    public async Task<EtherlinkGovernance.State> EtherlinkGovernanceState(Address contract, Address address)
+    {
+        await VerifyChain();
+        var r = await bridge.Call("getEtherlinkGovernanceState", Rpc, contract.Value, address.Value, Network.TzktURL?.AbsoluteString() ?? "");
+        return EtherlinkGovernanceStateFrom(r, contract);
+    }
+
+    /// <summary>Pure parser for the bridge's state payload (S20: every number is checked).</summary>
+    public static EtherlinkGovernance.State EtherlinkGovernanceStateFrom(JSONValue r, Address contract)
+    {
+        TaquitoBridge.BridgeError Bad() => new TaquitoBridge.BridgeError.JavaScript($"unexpected governance state payload: {r}");
+        decimal Power(JSONValue? v) =>
+            v?.StringValue is { } text && Mutez.IsValid(text) && decimal.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var value) ? value : throw Bad();
+        int Count(JSONValue? v) => v?.IntValue is { } n && n >= 0 ? n : throw Bad();
+
+        var state = new EtherlinkGovernance.State(contract)
+        {
+            PeriodIndex = Count(r["periodIndex"]),
+            PeriodKind = r["periodKind"]?.StringValue is { } kindText && EtherlinkGovernance.PeriodKindFromRawValue(kindText) is { } kind ? kind : throw Bad(),
+            RemainingBlocks = Count(r["remainingBlocks"]),
+        };
+        var c = r["config"];
+        state.Config = new EtherlinkGovernance.Config(Count(c?["periodLength"]), Count(c?["upvotingLimit"]), Count(c?["scale"]),
+                                                      Count(c?["proposalQuorum"]), Count(c?["promotionQuorum"]), Count(c?["promotionSupermajority"]));
+        state.TotalVotingPower = Power(r["totalVotingPower"]);
+        state.Proposals = (r["proposals"]?.ArrayValue ?? []).Select(p =>
+        {
+            var hash = p["hash"]?.StringValue is { } h ? EtherlinkGovernance.KernelHash(h) ?? throw Bad() : throw Bad();
+            var proposers = (p["proposers"]?.ArrayValue ?? []).Select(x => x.StringValue).OfType<string>().Select(x => new Address(x)).ToList();
+            return new EtherlinkGovernance.Proposal(hash, proposers, Power(p["upvotes"]), p["upvoted"]?.BoolValue ?? false);
+        }).ToList();
+        state.ProposalsKnown = r["proposalsKnown"]?.BoolValue ?? true;
+        if (r["candidate"]?.StringValue is { } candidate)
+            state.Candidate = EtherlinkGovernance.KernelHash(candidate) ?? throw Bad();
+        state.Tallies = new EtherlinkGovernance.Tallies(Power(r["tallies"]?["yea"]), Power(r["tallies"]?["nay"]), Power(r["tallies"]?["pass"]));
+        state.VotingPower = Power(r["votingPower"]);
+        state.VotesFor = (r["votesFor"]?.ArrayValue ?? []).Select(x => x.StringValue).OfType<string>().Select(x => new Address(x)).ToList();
+        state.UpvotesUsed = Count(r["upvotesUsed"]);
+        state.MyVote = r["myVote"]?.StringValue is { } mine ? EtherlinkGovernance.VoteFromRawValue(mine) : null;
+        return state;
+    }
+
+    public async Task<TransferEstimate> EstimateEtherlinkGovernance(EtherlinkGovernance.Operation operation, Address contract, Wallet wallet)
+    {
+        var publicKey = PublicKeyArgument(wallet);
+        await VerifyChain();
+        var result = await TaquitoBridge.BridgeError.Typed(() => bridge.Call("estimateEtherlinkGovernance", Rpc, wallet.Address.Value, publicKey, contract.Value, operation.Entrypoint, operation.Payload));
+        return EstimateFrom(result);
+    }
+
+    public async Task<SentOperation> SendEtherlinkGovernance(EtherlinkGovernance.Operation operation, Address contract, Wallet wallet, SigningKey signer, OperationLimits limits)
+    {
+        await VerifyChain();
+        var result = await Signing(() => bridge.Call("sendEtherlinkGovernance", Rpc, signer.BridgeSpec, contract.Value, operation.Entrypoint, operation.Payload, limits.Json));
+        return SentOperation.From(result) ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected governance payload: {result}");
+    }
+
     public async Task<IReadOnlyList<AssetBalance>> TokenBalancesFor(Address address) =>
         Network.TzktURL is { } tzkt ? await new TzKTService(tzkt, http).FungibleTokensFor(address) : [];
 

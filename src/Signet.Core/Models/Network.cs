@@ -24,9 +24,13 @@ public sealed record Network
     public Network(string name, string chain, Uri rpcURL, Uri? tezosDomainsURL, Uri? tzktURL, Uri? faucetURL = null,
                    FaucetKindValue faucetKind = FaucetKindValue.Teztnets, Uri? explorerURL = null, string? expectedChainID = null,
                    Uri? l2RPCURL = null, string? expectedL2ChainID = null, string? l2BridgeHelper = null, string? l2Rollup = null,
-                   Uri? l2TzKTURL = null, Uri? l2ExplorerURL = null)
+                   Uri? l2TzKTURL = null, Uri? l2ExplorerURL = null,
+                   IReadOnlyDictionary<EtherlinkGovernance.Process, string>? etherlinkGovernance = null)
     {
         Name = name;
+        DefaultEtherlinkGovernance = new EtherlinkGovernance.Contracts(
+            (etherlinkGovernance ?? new Dictionary<EtherlinkGovernance.Process, string>()).ToDictionary(p => p.Key, p => new Address(p.Value)));
+        EtherlinkGovernanceContracts = DefaultEtherlinkGovernance;
         Chain = chain;
         RpcURL = rpcURL;
         DefaultRPCURL = rpcURL;
@@ -102,6 +106,26 @@ public sealed record Network
     /// <summary>TzKT for the Michelson interface and its explorer, where TzKT indexes it.</summary>
     public Uri? L2TzKTURL { get; init; }
     public Uri? L2ExplorerURL { get; init; }
+    /// <summary>
+    /// Etherlink's governance contracts on layer 1 (slow and fast kernel upgrades), in use and
+    /// as shipped: mainnet's, nothing on the testnets. Each is replaceable or clearable in the
+    /// Networks sheet under Layer 2; a process without a contract is not offered.
+    /// (Upstream <c>etherlinkGovernance</c>; the name <c>EtherlinkGovernance</c> is the model's.)
+    /// </summary>
+    public EtherlinkGovernance.Contracts EtherlinkGovernanceContracts { get; init; }
+    public EtherlinkGovernance.Contracts DefaultEtherlinkGovernance { get; }
+
+    /// <summary>Etherlink governance can be shown here: Layer 2 is on and at least one process has a contract.</summary>
+    public bool CanGovernEtherlink => HasL2 && !EtherlinkGovernanceContracts.IsEmpty;
+    /// <summary>The processes with a contract, in display order.</summary>
+    public IReadOnlyList<EtherlinkGovernance.Process> EtherlinkGovernanceProcesses =>
+        EtherlinkGovernance.AllProcesses.Where(EtherlinkGovernanceContracts.ContainsKey).ToList();
+    public bool IsUsingDefaultEtherlinkGovernance(EtherlinkGovernance.Process process) =>
+        EtherlinkGovernanceContracts.Get(process) == DefaultEtherlinkGovernance.Get(process);
+
+    /// <summary>The same network with <c>process</c> governed through <c>contract</c> (null turns the process off).</summary>
+    public Network UsingEtherlinkGovernance(Address? contract, EtherlinkGovernance.Process process) =>
+        this with { EtherlinkGovernanceContracts = EtherlinkGovernanceContracts.With(process, contract) };
 
     /// <summary>
     /// Etherlink's Michelson interface as a network of its own, for operations between tz
@@ -247,7 +271,13 @@ public sealed record Network
         l2BridgeHelper: "KT1Wj8SUGmnEPFqyahHAcjcNQwe6YGhEXJb5",
         l2Rollup: "sr1Ghq66tYK9y3r8CC1Tf8i8m5nxh8nTvZEf",
         l2TzKTURL: new Uri("https://api.etherlink.tzkt.io"),
-        l2ExplorerURL: new Uri("https://etherlink.tzkt.io"));
+        l2ExplorerURL: new Uri("https://etherlink.tzkt.io"),
+        // The contracts of the Ganesha update (May 2026); the earlier ones still answer but count for nothing.
+        etherlinkGovernance: new Dictionary<EtherlinkGovernance.Process, string>
+        {
+            [EtherlinkGovernance.Process.Slow] = "KT1AXRU3wLc87WNhLhVGrgqDGubLACUMUgPb",
+            [EtherlinkGovernance.Process.Fast] = "KT19oUVQPnVLuUBYXrBVd46WJnNAMpqkKSwo",
+        });
 
     public static readonly Network Shadownet = new(
         name: "Shadownet",

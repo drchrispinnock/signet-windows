@@ -107,3 +107,81 @@ public sealed partial class LinkField : UserControl
         }
     }
 }
+
+/// <summary>
+/// One text setting with its problem line and Use Default / Apply buttons (upstream's
+/// <c>SettingField</c>): applied on Enter or Apply, refused text explained by <c>problem</c>.
+/// </summary>
+public sealed partial class SettingField : UserControl
+{
+    private readonly TextBox text;
+    private readonly TextBlock error = new() { Style = (Style)Application.Current.Resources["ErrorText"], Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap };
+    private readonly Button useDefault = new() { Content = "Use Default" };
+    private readonly Button apply = new() { Content = "Apply" };
+    private readonly Func<string> current;
+    private readonly string defaultValue;
+    /// <summary>Applies the text; false when it was refused.</summary>
+    private readonly Func<string, bool> applyText;
+    private readonly Func<string, string> problem;
+
+    public SettingField(string title, Func<string> current, string defaultValue, string prompt, bool monospaced,
+                        Func<string, bool> apply, Func<string, string> problem, Action useDefault, bool multiline = false)
+    {
+        this.current = current;
+        this.defaultValue = defaultValue;
+        applyText = apply;
+        this.problem = problem;
+        text = new TextBox { PlaceholderText = prompt, IsSpellCheckEnabled = false, AcceptsReturn = multiline, TextWrapping = multiline ? TextWrapping.Wrap : TextWrapping.NoWrap };
+        if (multiline) text.MaxHeight = 120;
+        if (monospaced) text.FontFamily = new FontFamily("Cascadia Mono, Consolas");
+        text.TextChanged += (_, _) => Update();
+        if (!multiline)
+            text.KeyDown += (_, e) =>
+            {
+                if (e.Key != Windows.System.VirtualKey.Enter) return;
+                e.Handled = true;
+                Submit();
+            };
+        this.useDefault.Click += (_, _) => { useDefault(); Sync(); };
+        this.apply.Click += (_, _) => Submit();
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+        buttons.Children.Add(this.useDefault);
+        buttons.Children.Add(this.apply);
+        var stack = new StackPanel { Spacing = 8 };
+        // A label of its own: a TextBox header would take the field's monospaced font.
+        stack.Children.Add(new TextBlock { Text = title });
+        stack.Children.Add(text);
+        stack.Children.Add(error);
+        stack.Children.Add(buttons);
+        Content = stack;
+        Sync();
+    }
+
+    private bool IsDirty => text.Text.Trim() != current();
+
+    private void Update()
+    {
+        apply.IsEnabled = IsDirty;
+        useDefault.IsEnabled = current() != defaultValue;
+    }
+
+    private void Sync()
+    {
+        text.Text = current();
+        error.Visibility = Visibility.Collapsed;
+        Update();
+    }
+
+    private void Submit()
+    {
+        if (applyText(text.Text))
+        {
+            Sync();
+        }
+        else
+        {
+            error.Text = problem(text.Text);
+            error.Visibility = Visibility.Visible;
+        }
+    }
+}

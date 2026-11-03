@@ -169,4 +169,35 @@ public sealed class MockChainService : IChainService
         CheckPassphrase(wallet, signer);
         return Task.FromResult($"ooMockGovernance{operation.BridgeKind}");
     }
+
+    /// <summary>The sample account votes for Captain Stake on Etherlink; nobody else is a voting key.</summary>
+    public static readonly Address EtherlinkVotingKey = new("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb");
+    public const string MockKernelHash = "0x009e07373751a43acbf0cd747b404f45130e0ad561c4b7da937e02eb812bd0f7e8";
+
+    public Task<IReadOnlyList<Address>> EtherlinkVotingRightsFor(Address address, Address contract) =>
+        Task.FromResult<IReadOnlyList<Address>>(address == EtherlinkVotingKey ? [CaptainStake] : []);
+
+    public async Task<EtherlinkGovernance.State> EtherlinkGovernanceState(Address contract, Address address)
+    {
+        var state = new EtherlinkGovernance.State(contract)
+        {
+            PeriodIndex = 816,
+            RemainingBlocks = 3780,
+            Config = new EtherlinkGovernance.Config(4800, 20, 100, 5, 15, 80),
+            TotalVotingPower = 654_433_650_040_589,
+            Proposals = [new EtherlinkGovernance.Proposal(MockKernelHash, [CaptainStake], 215_727_025_713_721)],
+            VotesFor = await EtherlinkVotingRightsFor(address, contract),
+        };
+        state.VotingPower = address == CaptainStake || state.VotesFor.Count > 0 ? 1_234_567_000 : 0;
+        return state;
+    }
+
+    public Task<TransferEstimate> EstimateEtherlinkGovernance(EtherlinkGovernance.Operation operation, Address contract, Wallet wallet) =>
+        Task.FromResult(new TransferEstimate(0.001845m, 0, 0.001845m, 4200, 0, new OperationLimits("1845", 4200, 0)));
+
+    public Task<SentOperation> SendEtherlinkGovernance(EtherlinkGovernance.Operation operation, Address contract, Wallet wallet, SigningKey signer, OperationLimits limits)
+    {
+        CheckPassphrase(wallet, signer);
+        return Task.FromResult(new SentOperation($"ooMockEtherlink{operation.Entrypoint}"));
+    }
 }

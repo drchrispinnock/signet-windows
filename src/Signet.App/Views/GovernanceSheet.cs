@@ -7,18 +7,28 @@ using Signet.ViewModels;
 namespace Signet.App.Views;
 
 /// <summary>
-/// On-chain voting for a baker we can sign for: upvote proposals in a proposal period, cast a
-/// ballot in the exploration and promotion votes, and otherwise say what the chain is doing.
+/// Governance for an account we can sign for: the Tezos tab is on-chain protocol voting for a
+/// baker (upvote proposals in a proposal period, cast a ballot in the exploration and promotion
+/// votes); the Etherlink tab, with Layer 2 on, is Etherlink's kernel-upgrade governance, for a
+/// baker or an account that is some baker's voting key (<c>EtherlinkGovernanceView.cs</c>).
 /// </summary>
 public sealed partial class GovernanceSheet : Sheet
 {
+    private enum Tab { Tezos, Etherlink }
+
     private abstract record Mode
     {
         public sealed record Overview : Mode;
         public sealed record Confirm(GovernanceOperation Operation) : Mode;
         public sealed record Working(GovernanceOperation Operation) : Mode;
         public sealed record Done(string Hash, int Level, GovernanceOperation Operation) : Mode;
+        public sealed record EtherlinkConfirm(EtherlinkGovernance.Operation Operation) : Mode;
+        public sealed record EtherlinkWorking(EtherlinkGovernance.Operation Operation) : Mode;
+        public sealed record EtherlinkDone(string Hash, int Level, EtherlinkGovernance.Operation Operation) : Mode;
     }
+
+    private Tab tab = Tab.Tezos;
+    private bool ShowsTabs => model.CanGovernEtherlink;
 
     private readonly WalletViewModel model;
     private readonly Wallet? wallet;
@@ -37,11 +47,14 @@ public sealed partial class GovernanceSheet : Sheet
         wallet = model.SelectedWallet;
         PrimaryButtonClick += async (_, args) =>
         {
-            if (mode is Mode.Done) return;
+            if (mode is Mode.Done or Mode.EtherlinkDone) return;
             args.Cancel = true;
-            if (mode is not Mode.Confirm confirm) return;
             var deferral = args.GetDeferral();
-            try { await Perform(confirm.Operation); }
+            try
+            {
+                if (mode is Mode.Confirm confirm) await Perform(confirm.Operation);
+                else if (mode is Mode.EtherlinkConfirm etherlink) await PerformEtherlink(etherlink.Operation);
+            }
             finally { deferral.Complete(); }
         };
         SecondaryButtonClick += (_, args) =>
@@ -51,8 +64,10 @@ public sealed partial class GovernanceSheet : Sheet
             SetMode(new Mode.Overview());
         };
         // A vote being signed and sent must not be abandoned with Esc.
-        Closing += (_, args) => { if (mode is Mode.Working) args.Cancel = true; };
-        Opened += async (_, _) => await Load();
+        Closing += (_, args) => { if (mode is Mode.Working or Mode.EtherlinkWorking) args.Cancel = true; };
+        // An account that cannot vote on Tezos (a voting key that is not a baker) opens on Etherlink.
+        if (ShowsTabs && model.DelegateInfo?.IsBaker != true) tab = Tab.Etherlink;
+        Opened += async (_, _) => await (tab == Tab.Tezos ? Load() : LoadEtherlink());
         SetMode(new Mode.Overview());
     }
 
@@ -69,24 +84,37 @@ public sealed partial class GovernanceSheet : Sheet
             Mode.Confirm c => c.Operation.Title,
             Mode.Working w => w.Operation.Title,
             Mode.Done d => $"{d.Operation.Title}: done",
+            Mode.EtherlinkConfirm c => $"{c.Operation.Title} ({process.Title().ToLowerInvariant()})",
+            Mode.EtherlinkWorking w => $"{w.Operation.Title} ({process.Title().ToLowerInvariant()})",
+            Mode.EtherlinkDone d => $"{d.Operation.Title}: done",
             _ => "Governance",
         };
         Form.Children.Clear();
         upvoteButton = null;
         newProposalProblem = null;
+        etherlinkFee = null;
+        newHashProblem = null;
+        newHashButtons = [];
         if (wallet is not null) Form.Children.Add(AccountHeading(wallet));
+        if (next is Mode.Overview && ShowsTabs) Form.Children.Add(TabPicker());
         switch (next)
         {
+            case Mode.Overview when tab == Tab.Etherlink: EtherlinkOverview(); break;
             case Mode.Overview: Overview(); break;
             case Mode.Confirm confirm: Confirmation(confirm.Operation); break;
             case Mode.Working working: AddWorkingRow(working.Operation.Title, SignsOnLedger); break;
             case Mode.Done done: AddIncludedInBlock(model.Network, done.Hash, done.Level); break;
+            case Mode.EtherlinkConfirm confirm: EtherlinkConfirmation(confirm.Operation); break;
+            case Mode.EtherlinkWorking working:
+                AddWorkingRow(working.Operation.Title, SignsOnLedger);
+                break;
+            case Mode.EtherlinkDone done: AddIncludedInBlock(model.Network, done.Hash, done.Level); break;
         }
         (PrimaryButtonText, SecondaryButtonText, CloseButtonText) = mode switch
         {
             Mode.Overview => ("", "", "Done"),
-            Mode.Confirm => ("Confirm", "Back", ""),
-            Mode.Working => ("", "", ""),
+            Mode.Confirm or Mode.EtherlinkConfirm => ("Confirm", "Back", ""),
+            Mode.Working or Mode.EtherlinkWorking => ("", "", ""),
             _ => ("Done", "", ""),
         };
         DefaultButton = mode is Mode.Overview ? ContentDialogButton.Close : ContentDialogButton.Primary;
@@ -94,9 +122,32 @@ public sealed partial class GovernanceSheet : Sheet
         Validate();
     }
 
+    /// <summary>The Tezos / Etherlink picker, shown with Layer 2 on for an account that can vote there.</summary>
+    private UIElement TabPicker()
+    {
+        var bar = new SelectorBar();
+        foreach (var each in new[] { Tab.Tezos, Tab.Etherlink })
+            bar.Items.Add(new SelectorBarItem { Text = each.ToString(), Tag = each, IsSelected = each == tab });
+        bar.SelectionChanged += async (sender, _) =>
+        {
+            if (sender.SelectedItem?.Tag is not Tab picked || picked == tab) return;
+            tab = picked;
+            ShowError(null);
+            SetMode(new Mode.Overview());
+            await (tab == Tab.Tezos ? Load() : LoadEtherlink());
+        };
+        return bar;
+    }
+
     protected override void Validate()
     {
-        IsPrimaryButtonEnabled = mode is not Mode.Confirm || !(NeedsPassphrase && passphrase.Length == 0);
+        IsPrimaryButtonEnabled = mode switch
+        {
+            Mode.Confirm => !(NeedsPassphrase && passphrase.Length == 0),
+            Mode.EtherlinkConfirm => etherlinkEstimate is not null && !(NeedsPassphrase && passphrase.Length == 0),
+            _ => true,
+        };
+        ValidateEtherlink();
         if (upvoteButton is not null)
             upvoteButton.IsEnabled = UpvoteHashes.Count > 0 && (info?.ProposalCount ?? 0) + UpvoteHashes.Count <= GovernanceInfo.MaximumUpvotesPerPeriod;
         if (newProposalProblem is not null)
@@ -111,6 +162,11 @@ public sealed partial class GovernanceSheet : Sheet
 
     private void Overview()
     {
+        if (model.DelegateInfo?.IsBaker != true)
+        {
+            Form.Children.Add(Label("Tezos protocol voting is for bakers. This account is not a baker, so it can only vote on Etherlink.", ""));
+            return;
+        }
         if (loadError is not null)
         {
             Form.Children.Add(Label(loadError, "", "SystemFillColorCautionBrush"));
@@ -243,10 +299,11 @@ public sealed partial class GovernanceSheet : Sheet
 
     private async Task Load()
     {
+        if (model.DelegateInfo?.IsBaker != true) return;
         loadError = null;
         try { info = await model.GovernanceInfoForSelected(); }
         catch (Exception e) { loadError = $"Could not read the voting period: {e.Message}"; }
-        if (mode is Mode.Overview) SetMode(mode);
+        if (mode is Mode.Overview && tab == Tab.Tezos) SetMode(mode);
     }
 
     private void StartConfirm(GovernanceOperation operation)

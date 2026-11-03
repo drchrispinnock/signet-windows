@@ -15,6 +15,13 @@ namespace Signet.Services;
 /// </summary>
 public sealed record AppState
 {
+    /// <summary>
+    /// Etherlink governance contracts by network name, then by <c>EtherlinkGovernance.Process</c>
+    /// raw value, only where the user replaced what we ship; an empty string turns the process off.
+    /// </summary>
+    [JsonPropertyName("etherlinkGovernance"), JsonPropertyOrder(0)]
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>? EtherlinkGovernance { get; init; }
+
     /// <summary>Etherlink on or off by network name, only where the user turned it on (or saved off on the Mac).</summary>
     [JsonPropertyName("l2Enabled"), JsonPropertyOrder(1)]
     public IReadOnlyDictionary<string, bool>? L2Enabled { get; init; }
@@ -63,6 +70,13 @@ public sealed record AppState
             if (link.Length == 0) network = network.Using(null, service);
             else if (Network.NodeURL(link) is { } linkURL) network = network.Using(linkURL, service);
         }
+        foreach (var process in Models.EtherlinkGovernance.AllProcesses)
+        {
+            if (EtherlinkGovernance?.GetValueOrDefault(@base.Name)?.GetValueOrDefault(process.RawValue()) is not { } savedContract) continue;
+            // "" is a process the user turned off; anything that is not a contract address is ignored.
+            if (savedContract.Length == 0) network = network.UsingEtherlinkGovernance(null, process);
+            else if (Models.EtherlinkGovernance.ContractAddress(savedContract) is { } contract) network = network.UsingEtherlinkGovernance(contract, process);
+        }
         return network;
     }
 
@@ -70,7 +84,7 @@ public sealed record AppState
     /// Records <c>net</c>'s node, Layer 2 choices and links, each only where it differs from the
     /// defaults, so the maps stay sparse and <c>null</c> when nothing is custom.
     /// </summary>
-    public AppState Remember(Network net) => RememberNode(net).RememberL2(net).RememberServices(net);
+    public AppState Remember(Network net) => RememberNode(net).RememberL2(net).RememberServices(net).RememberEtherlinkGovernance(net);
 
     public AppState RememberNode(Network net)
     {
@@ -107,6 +121,21 @@ public sealed record AppState
         return this with { ServiceURLs = all.Count == 0 ? null : all };
     }
 
+    /// <summary>Etherlink governance contracts ("" for a process turned off).</summary>
+    public AppState RememberEtherlinkGovernance(Network net)
+    {
+        var all = new SortedDictionary<string, IReadOnlyDictionary<string, string>>(EtherlinkGovernance?.ToDictionary() ?? [], StringComparer.Ordinal);
+        var contracts = new SortedDictionary<string, string>(all.GetValueOrDefault(net.Name)?.ToDictionary() ?? [], StringComparer.Ordinal);
+        foreach (var process in Models.EtherlinkGovernance.AllProcesses)
+        {
+            if (net.IsUsingDefaultEtherlinkGovernance(process)) contracts.Remove(process.RawValue());
+            else contracts[process.RawValue()] = net.EtherlinkGovernanceContracts.Get(process)?.Value ?? "";
+        }
+        if (contracts.Count == 0) all.Remove(net.Name);
+        else all[net.Name] = contracts;
+        return this with { EtherlinkGovernance = all.Count == 0 ? null : all };
+    }
+
     public bool Equals(AppState? other) =>
         other is not null && NetworkName == other.NetworkName && SelectedWalletAlias == other.SelectedWalletAlias &&
         SameMap(NodeURLs, other.NodeURLs) && SameMap(L2NodeURLs, other.L2NodeURLs) &&
@@ -116,7 +145,12 @@ public sealed record AppState
         (ServiceURLs is null) == (other.ServiceURLs is null) &&
         (ServiceURLs ?? new Dictionary<string, IReadOnlyDictionary<string, string>>()).Count == (other.ServiceURLs?.Count ?? 0) &&
         (ServiceURLs ?? new Dictionary<string, IReadOnlyDictionary<string, string>>()).All(p => other.ServiceURLs!.TryGetValue(p.Key, out var o) && SameMap(p.Value, o)) &&
+        SameNestedMap(EtherlinkGovernance, other.EtherlinkGovernance) &&
         JsonNode.DeepEquals(ShieldedEnabled, other.ShieldedEnabled) && JsonNode.DeepEquals(ShieldedSettings, other.ShieldedSettings);
+
+    private static bool SameNestedMap(IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>? a, IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>? b) =>
+        (a is null) == (b is null) && (a?.Count ?? 0) == (b?.Count ?? 0) &&
+        (a ?? new Dictionary<string, IReadOnlyDictionary<string, string>>()).All(p => b!.TryGetValue(p.Key, out var o) && SameMap(p.Value, o));
 
     private static bool SameMap(IReadOnlyDictionary<string, string>? a, IReadOnlyDictionary<string, string>? b) =>
         (a is null) == (b is null) &&

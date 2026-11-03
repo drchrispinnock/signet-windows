@@ -102,6 +102,24 @@ public class EtherlinkNetworkTests
     }
 }
 
+public class EtherlinkLinkErrorTests
+{
+    /// <summary>
+    /// The node's refusal to simulate for an account with nothing to pay (a fresh account on
+    /// Etherlink, or one with too little) is a typed error, so Receive can say "bridge some tez
+    /// first" instead of showing the node's text.
+    /// </summary>
+    [Fact]
+    public void AnEmptyOrPoorSourceIsCannotPayFee()
+    {
+        Assert.Equal(new ChainError.CannotPayFee(), ChainError.FromBridgeMessage("(permanent) proto.023-PtSeouLo.implicit.empty_implicit_contract: Empty implicit contract (tz1abc)"));
+        Assert.Equal(new ChainError.CannotPayFee(), ChainError.FromBridgeMessage("proto.023-PtSeouLo.contract.balance_too_low"));
+        Assert.Equal(new ChainError.CannotPayFee(), ChainError.FromBridgeMessage("tez.subtraction_underflow"));
+        Assert.Null(ChainError.FromBridgeMessage("Http error (502)"));
+        Assert.Contains("no tez", new ChainError.CannotPayFee().Message);
+    }
+}
+
 public class EtherlinkSettingsTests
 {
     [Fact]
