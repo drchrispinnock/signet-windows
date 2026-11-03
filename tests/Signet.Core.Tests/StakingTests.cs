@@ -21,6 +21,10 @@ public class StakingOperationTests
         Assert.Equal(["pk"], new StakingOperation.UpdateConsensusKey("edpkX", null).BridgeArgument.Keys.Order());
         Assert.Equal(["pk", "proof"], new StakingOperation.UpdateCompanionKey("BLpkX", "BLsigP").BridgeArgument.Keys.Order());
         Assert.Equal("Register as a baker", new StakingOperation.RegisterAsBaker().Title);
+        // Reactivating a deactivated baker is the same self-delegation as registering.
+        Assert.Equal("registerDelegate", new StakingOperation.ReactivateBaker().BridgeKind);
+        Assert.Empty(new StakingOperation.ReactivateBaker().BridgeArgument);
+        Assert.Equal("Reactivate baker", new StakingOperation.ReactivateBaker().Title);
     }
 
     [Fact]

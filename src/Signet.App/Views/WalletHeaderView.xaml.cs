@@ -163,7 +163,8 @@ public static class OperationsMenuItems
         menu.Items.Add(Item("Import account…", () => model.IsPresentingImportAccount = true, VirtualKey.I, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift));
         menu.Items.Add(Item("Connect Ledger…", () => model.IsPresentingConnectLedger = true, VirtualKey.L, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift));
         menu.Items.Add(Item("Rename account…", () => model.IsPresentingRenameWallet = true, enabled: hasWallet));
-        menu.Items.Add(Item("Export secret key…", () => model.IsPresentingExportKey = true, enabled: model.CanExportSelectedKey));
+        menu.Items.Add(Item("Export secret key…", () => model.IsPresentingExportKey = true, enabled: model.CanExportSelectedKey));
+        if (model.CanProveSelectedKey) menu.Items.Add(Item("Create proof of possession…", () => model.IsPresentingProofOfPossession = true));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Add address…", () => model.IsPresentingAddAddress = true, VirtualKey.N, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift));
         if (model.CanRememberSelectedKey) menu.Items.Add(Item("Remember key…", () => model.IsPresentingRememberKey = true));

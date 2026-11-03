@@ -82,4 +82,10 @@ public sealed record Wallet
     /// in the wallet directory, and is gone when Signet quits.
     /// </summary>
     public bool IsSessionOnly { get; init; }
+    /// <summary>
+    /// The BLS proof of possession a tz4 account's reveal carries (<c>BLsig…</c>, the key's signature
+    /// over its own public key), once made with the secret key. Only an estimate for an
+    /// unrevealed tz4 account needs it; it is never stored (the reveal publishes it on chain).
+    /// </summary>
+    public string? ProofOfPossession { get; init; }
 }

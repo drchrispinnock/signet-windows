@@ -32,6 +32,12 @@ public sealed partial class BakingSheet : Sheet
     private string keyPassphrase = "";
     private Wallet? chosenKeyWallet;
     private string pastedPublicKey = "";
+    /// <summary>A pasted tz address resolved to its public key (our record, or the key it revealed on chain).</summary>
+    private (Address Address, string Key, WalletViewModel.ResolvedKeySource Source)? resolvedKey;
+    /// <summary>Why a pasted address gave no key, worded for someone setting up a baker.</summary>
+    private string? lookupNote;
+    private CancellationTokenSource? lookupTask;
+    private StackPanel? lookupArea;
     private string pastedProof = "";
     private string limitText = "";
     private string edgeText = "";
@@ -106,6 +112,7 @@ public sealed partial class BakingSheet : Sheet
         };
         Form.Children.Clear();
         proofArea = null;
+        lookupArea = null;
         parametersProblem = null;
         fee = null;
         if (wallet is not null) Form.Children.Add(AccountHeading(wallet));
@@ -166,6 +173,13 @@ public sealed partial class BakingSheet : Sheet
         }
         Form.Children.Add(LabeledContent("Status", new TextBlock { Text = baker.Deactivated ? "Registered, deactivated" : "Registered, active" }));
         if (baker.GracePeriod is { } grace) Form.Children.Add(LabeledContent("Grace period until cycle", new TextBlock { Text = grace.ToString(CultureInfo.InvariantCulture) }));
+        if (baker.Deactivated)
+        {
+            Form.Children.Add(Note(CanOperate
+                ? "The chain deactivated this baker because it missed its baking and attesting duties for a few cycles. Reactivating registers it again, the same operation as the first time; rights return after the usual delay, and the baker daemon must be running to keep them."
+                : "The chain deactivated this baker because it missed its baking and attesting duties for a few cycles. Register it again from where its key lives to reactivate it."));
+            if (CanOperate) Form.Children.Add(Row(MakeButton("Reactivate…", () => StartConfirm(new StakingOperation.ReactivateBaker()))));
+        }
 
         Form.Children.Add(new SectionHeader("Consensus key"));
         KeyRows(baker.ConsensusKey, baker.PendingConsensusKeys, "Baker's own key");
@@ -233,6 +247,10 @@ public sealed partial class BakingSheet : Sheet
 
     private void ResetKeyPicker()
     {
+        lookupTask?.Cancel();
+        lookupTask = null;
+        resolvedKey = null;
+        lookupNote = null;
         chosenKeyWallet = null;
         pastedPublicKey = "";
         pastedProof = "";
@@ -244,13 +262,89 @@ public sealed partial class BakingSheet : Sheet
             // consensus: any scheme the network allows
             && (role != KeyRole.Companion || w.Scheme == AddressScheme.Tz4)).ToList();
 
+    /// <summary>The pasted field, read as a key or an address.</summary>
+    private WalletViewModel.KeyFieldContent PastedContent => WalletViewModel.KeyFieldContentOf(pastedPublicKey);
+
     private string? PickedPublicKey
     {
         get
         {
             if (chosenKeyWallet?.PublicKey is { } key) return key;
-            var pasted = pastedPublicKey.Trim();
-            return pasted.Length == 0 ? null : pasted;
+            return PastedContent switch
+            {
+                WalletViewModel.KeyFieldContent.PublicKey(var pasted) => pasted,
+                WalletViewModel.KeyFieldContent.Other(var other) => other,
+                WalletViewModel.KeyFieldContent.AddressContent(var address) => resolvedKey is { } found && found.Address == address ? found.Key : null,
+                _ => null,
+            };
+        }
+    }
+
+    /// <summary>
+    /// Looks up the key behind a pasted tz address. A key, or anything else, is passed on as typed:
+    /// the chain or the bridge refuses what is not a key, and tz6 (xmpk) keys are only ever pasted.
+    /// </summary>
+    private async void PastedKeyChanged()
+    {
+        lookupTask?.Cancel();
+        lookupTask = null;
+        resolvedKey = null;
+        lookupNote = null;
+        if (PastedContent is not WalletViewModel.KeyFieldContent.AddressContent(var address)) { DrawLookup(); return; }
+        chosenKeyWallet = null;
+        var cancel = lookupTask = new CancellationTokenSource();
+        DrawLookup();
+        bool Current() => !cancel.IsCancellationRequested && PastedContent is WalletViewModel.KeyFieldContent.AddressContent(var now) && now == address;
+        try
+        {
+            var found = await model.PublicKeyForKeyOrAddress(address.Value);
+            if (!Current()) return;
+            resolvedKey = (address, found.Key, found.Source);
+        }
+        catch (WalletViewModel.MultisigError.NotRevealed)
+        {
+            if (!Current()) return;
+            lookupNote = $"{address.Shortened()} has not revealed a public key on {model.Network.Name}. That is usual for a new consensus or companion key: it has never sent an operation, so the chain does not know it. Paste the public key itself instead; on the machine that holds the key, octez-client show address <alias> prints it.";
+        }
+        catch (Exception e)
+        {
+            if (!Current()) return;
+            lookupNote = e.Message;
+        }
+        DrawLookup();
+        DrawProof();
+    }
+
+    /// <summary>What the lookup of a pasted address found, redrawn in place.</summary>
+    private void DrawLookup()
+    {
+        if (lookupArea is null) return;
+        lookupArea.Children.Clear();
+        if (PastedContent is not WalletViewModel.KeyFieldContent.AddressContent) return;
+        if (resolvedKey is { } found)
+        {
+            var origin = found.Source switch
+            {
+                WalletViewModel.ResolvedKeySource.OwnAccount own => $"the key of your account “{own.Alias}”",
+                WalletViewModel.ResolvedKeySource.RevealedOnChain => $"the key it revealed on {model.Network.Name}",
+                _ => "the key",
+            };
+            lookupArea.Children.Add(Note($"{found.Address.Shortened()} is {origin}: {found.Key[..Math.Min(12, found.Key.Length)]}…"));
+        }
+        else if (lookupNote is { } note)
+        {
+            lookupArea.Children.Add(new TextBlock
+            {
+                Text = note, TextWrapping = TextWrapping.Wrap, FontSize = 13,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SystemFillColorCautionBrush"],
+            });
+        }
+        else
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            row.Children.Add(new ProgressRing { Width = 14, Height = 14, IsActive = true });
+            row.Children.Add(new TextBlock { Text = "Looking up the key this address revealed…", FontSize = 13, Foreground = Secondary });
+            lookupArea.Children.Add(row);
         }
     }
 
@@ -279,10 +373,12 @@ public sealed partial class BakingSheet : Sheet
         Form.Children.Add(new TextBlock { Text = "From your accounts" });
         Form.Children.Add(picker);
 
-        Form.Children.Add(new TextBlock { Text = "Or paste a public key" });
+        Form.Children.Add(new TextBlock { Text = "Or paste a public key or address" });
         var pasted = BoundTextBox(() => pastedPublicKey, value => pastedPublicKey = value,
-            role == KeyRole.Companion ? "BLpk…" : "edpk… / sppk… / p2pk… / BLpk… / mdpk… / xmpk…", monospaced: true);
+            role == KeyRole.Companion ? "BLpk… or tz4…" : "edpk… / sppk… / p2pk… / BLpk… / mdpk… / xmpk… or a tz address", monospaced: true);
         Form.Children.Add(pasted);
+        lookupArea = new StackPanel();
+        Form.Children.Add(lookupArea);
         proofArea = new StackPanel { Spacing = 8 };
         Form.Children.Add(proofArea);
         Form.Children.Add(Note(role == KeyRole.Consensus ? "Takes effect after the consensus-rights delay (a few cycles)." : "Companion keys must be tz4 (BLS)."));
@@ -296,8 +392,10 @@ public sealed partial class BakingSheet : Sheet
         pasted.TextChanged += (_, _) =>
         {
             if (pastedPublicKey.Length > 0 && picker.SelectedIndex != 0) picker.SelectedIndex = 0;
+            PastedKeyChanged();
             DrawProof();
         };
+        DrawLookup();
         DrawProof();
     }
 

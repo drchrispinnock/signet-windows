@@ -79,6 +79,9 @@ public sealed partial class DAppRequestSheet : Sheet
             case nameof(DAppConnectionManager.Undelivered):
                 Rebuild();
                 break;
+            case nameof(DAppConnectionManager.AwaitingHash) when isWorking:
+                ShowProgress(WorkingText);
+                break;
         }
     }
 
@@ -339,6 +342,7 @@ public sealed partial class DAppRequestSheet : Sheet
     {
         get
         {
+            if (dapps.AwaitingHash is { } hash) return $"Waiting for the previous operation {hash[..Math.Min(10, hash.Length)]}… to reach a block…";
             var onLedger = SourceWallet?.KeyKind == KeyKind.Ledger;
             return request switch
             {

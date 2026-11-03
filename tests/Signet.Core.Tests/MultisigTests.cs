@@ -289,6 +289,35 @@ public class MultisigFlowTests
         await Assert.ThrowsAnyAsync<WalletViewModel.MultisigError>(() => model.MultisigSignerKey("hello"));
     }
 
+    /// <summary>
+    /// The Baking sheet's consensus/companion key field takes a tz address too, and must be able
+    /// to tell "never revealed" (the usual case for a fresh signing key) from every other failure.
+    /// </summary>
+    [Fact]
+    public async Task KeyFieldResolvesAddressesAndReportsUnrevealedOnes()
+    {
+        Assert.Equal(new WalletViewModel.KeyFieldContent.Empty(), WalletViewModel.KeyFieldContentOf(""));
+        Assert.Equal(new WalletViewModel.KeyFieldContent.PublicKey("edpkPASTEDpublickey"), WalletViewModel.KeyFieldContentOf(" edpkPASTEDpublickey "));
+        Assert.Equal(new WalletViewModel.KeyFieldContent.Other("xmpkSOMETHING"), WalletViewModel.KeyFieldContentOf(" xmpkSOMETHING "));   // tz6 keys are passed on as typed
+        Assert.Equal(new WalletViewModel.KeyFieldContent.AddressContent(Watch.Address), WalletViewModel.KeyFieldContentOf(Watch.Address.Value));
+        Assert.Equal(new WalletViewModel.KeyFieldContent.Other("KT1BEqzn5Wx8uJrZNvuS9DVHmLvG9td3fDLi"), WalletViewModel.KeyFieldContentOf("KT1BEqzn5Wx8uJrZNvuS9DVHmLvG9td3fDLi"));
+        Assert.Equal(new WalletViewModel.KeyFieldContent.Other("tz1notanaddress"), WalletViewModel.KeyFieldContentOf("tz1notanaddress"));
+
+        var service = new MockMultisigService();
+        var model = MakeModel(service);
+        var ours = await model.PublicKeyForKeyOrAddress(Alice.Address.Value);
+        Assert.True(ours.Key == "edpkALICE" && ours.Source == new WalletViewModel.ResolvedKeySource.OwnAccount(Alice.Alias));
+        var pasted = await model.PublicKeyForKeyOrAddress("BLpkPASTED");
+        Assert.True(pasted.Key == "BLpkPASTED" && pasted.Source == new WalletViewModel.ResolvedKeySource.Pasted());
+        // Never revealed: the typed error the sheet turns into "paste the public key instead".
+        var unrevealed = await Assert.ThrowsAsync<WalletViewModel.MultisigError.NotRevealed>(() => model.PublicKeyForKeyOrAddress(Watch.Address.Value));
+        Assert.Equal(Watch.Address, unrevealed.Address);
+        service.Revealed = new() { [Watch.Address.Value] = "p2pkWATCHrevealed" };
+        service.KeyAddresses = new() { ["p2pkWATCHrevealed"] = Watch.Address.Value };
+        var revealed = await model.PublicKeyForKeyOrAddress(Watch.Address.Value);
+        Assert.True(revealed.Key == "p2pkWATCHrevealed" && revealed.Source == new WalletViewModel.ResolvedKeySource.RevealedOnChain());
+    }
+
     /// <summary>A multisig delegates like it spends: a proposal the signers sign, then one submission.</summary>
     [Fact]
     public async Task DelegateChangesAreProposalsToo()

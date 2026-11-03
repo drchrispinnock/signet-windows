@@ -139,6 +139,11 @@ public abstract class ChainError(string message) : Exception(message), IEquatabl
     public sealed class NotALayer2Service() : ChainError("This needs the Layer 2 node.");
     /// <summary>A node answered with another chain's id than the one pinned for it (S12).</summary>
     public sealed class WrongChain(string expected, string found) : ChainError($"The node serves chain {found}, not {expected}.");
+    /// <summary>
+    /// Estimating an unrevealed tz4 account's operation: the reveal needs the key's BLS proof of
+    /// possession, which only the secret key can make (<c>ChainService.ProofOfPossession</c>).
+    /// </summary>
+    public sealed class ProofOfPossessionRequired() : ChainError("This account's first operation reveals its key with a proof of possession, which needs the secret key.");
 
     public bool Equals(ChainError? other) =>
         other is not null && other.GetType() == GetType() && other.Message == Message &&
@@ -161,6 +166,7 @@ public abstract class ChainError(string message) : Exception(message), IEquatabl
         if (Has("no ledger is connected", "was unplugged")) return new LedgerNotConnected();
         if (Has("does not hold this key")) return new LedgerWrongDevice(message);
         if (Has("does not derive the account's address")) return new KeyAddressMismatch(message);
+        if (Has("proof of possession required")) return new ProofOfPossessionRequired();
         return null;
     }
 }

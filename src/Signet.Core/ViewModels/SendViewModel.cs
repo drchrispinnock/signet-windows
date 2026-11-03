@@ -30,6 +30,7 @@ public sealed partial class SendViewModel : ObservableObject
         public sealed class NoSecretKey() : SendError("Signet has no usable secret key for this account.");
         public sealed class SendingToSelf() : SendError("That is this account's own address.");
         public sealed class PassphraseRequired() : SendError("Enter the password for this account's key.");
+        public sealed class ProofNeedsPassphrase() : SendError("This account's first operation reveals its key with a proof of possession, which the key must sign. Enter the account's password to continue.");
         public sealed class NotEstimated() : SendError("The fee has not been estimated yet; go back and try again.");
         public sealed class NotSeenYet(string hash)
             : SendError($"Operation {hash[..Math.Min(12, hash.Length)]}… has not appeared in a block yet. The node may still have it; wait, or send the same signed operation again. It cannot be paid twice.");
@@ -55,12 +56,18 @@ public sealed partial class SendViewModel : ObservableObject
         public override int GetHashCode() => HashCode.Combine(Address, Wallet);
     }
 
-    public Wallet Sender { get; }
+    /// <summary>The sender as given, plus its BLS proof of possession once one had to be made (tz4).</summary>
+    public Wallet Sender { get; private set; }
     private readonly IReadOnlyList<Wallet> wallets;
     private readonly IChainService chain;
     /// <summary>Etherlink's Michelson interface: only tz1, tz2 and tz3 accounts can be sent to there.</summary>
     public bool ImplicitAccountsOnly { get; }
     private readonly Func<Wallet, string?, SigningKey?> signerProvider;
+    /// <summary>
+    /// Makes the sender's BLS proof of possession from its key (<c>WalletViewModel.ProofOfPossession</c>),
+    /// needed to estimate the first operation of a tz4 account; null where none can be made.
+    /// </summary>
+    private readonly Func<Wallet, string?, Task<string>>? proofProvider;
     public decimal? Spendable { get; }
 
     public string RecipientText
@@ -78,8 +85,13 @@ public sealed partial class SendViewModel : ObservableObject
 
     [ObservableProperty, NotifyPropertyChangedFor(nameof(Amount), nameof(CanProceed))] private string amountText = "";
     /// <summary>Password for an encrypted sender key; asked for on the confirm step.</summary>
-    [ObservableProperty] private string passphrase = "";
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanProceed))] private string passphrase = "";
     public bool NeedsPassphrase => Sender.KeyKind == KeyKind.Encrypted;
+    /// <summary>
+    /// The estimate needs the sender's proof of possession (an unrevealed tz4 account) and the
+    /// key is encrypted, so the password is asked for on the compose step already.
+    /// </summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanProceed))] private bool needsPassphraseForProof;
     /// <summary>The sender's key is on a Ledger: the user approves on the device while we wait.</summary>
     public bool SignsOnLedger => Sender.KeyKind == KeyKind.Ledger;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(CanProceed))] private RecipientInfo? recipient;
@@ -95,7 +107,8 @@ public sealed partial class SendViewModel : ObservableObject
     private CancellationTokenSource? resolveTask;
 
     public SendViewModel(Wallet sender, IReadOnlyList<Wallet> wallets, IChainService chain, decimal? spendable,
-                         Func<Wallet, string?, SigningKey?> signerProvider, bool implicitAccountsOnly = false)
+                         Func<Wallet, string?, SigningKey?> signerProvider, bool implicitAccountsOnly = false,
+                         Func<Wallet, string?, Task<string>>? proofProvider = null)
     {
         Sender = sender;
         this.wallets = wallets;
@@ -103,6 +116,7 @@ public sealed partial class SendViewModel : ObservableObject
         Spendable = spendable;
         ImplicitAccountsOnly = implicitAccountsOnly;
         this.signerProvider = signerProvider;
+        this.proofProvider = proofProvider;
         suggestions = Candidates("");
     }
 
@@ -137,7 +151,7 @@ public sealed partial class SendViewModel : ObservableObject
         }
     }
 
-    public bool CanProceed => Recipient is not null && Amount is not null && !IsBusy && !IsResolving;
+    public bool CanProceed => Recipient is not null && Amount is not null && !IsBusy && !IsResolving && !(NeedsPassphraseForProof && Passphrase.Length == 0);
 
     /// <summary>Everything except a small reserve for the fee.</summary>
     public void UseMaximum()
@@ -229,7 +243,7 @@ public sealed partial class SendViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            var estimate = await chain.EstimateTransfer(Sender, recipient.Address, amount);
+            var estimate = await EstimateTransfer(recipient.Address, amount);
             if (Spendable is { } available && estimate.Total > available)
             {
                 ErrorMessage = new SendError.InsufficientFunds(available).Message;
@@ -240,6 +254,31 @@ public sealed partial class SendViewModel : ObservableObject
         }
         catch (Exception e) { ErrorMessage = e.Message; }
         finally { IsBusy = false; }
+    }
+
+    /// <summary>
+    /// The estimate, made again with the sender's proof of possession when the node needs one:
+    /// an unrevealed tz4 account's reveal carries a BLS proof only its key can sign, so the key is
+    /// used once here, with the password for an encrypted key, which the compose step then asks for.
+    /// </summary>
+    private async Task<TransferEstimate> EstimateTransfer(Address destination, decimal amount)
+    {
+        try
+        {
+            return await chain.EstimateTransfer(Sender, destination, amount);
+        }
+        catch (ChainError.ProofOfPossessionRequired)
+        {
+            if (proofProvider is null) throw;
+            if (NeedsPassphrase && Passphrase.Length == 0)
+            {
+                NeedsPassphraseForProof = true;
+                throw new SendError.ProofNeedsPassphrase();
+            }
+            Sender = Sender with { ProofOfPossession = await proofProvider(Sender, NeedsPassphrase ? Passphrase : null) };
+            NeedsPassphraseForProof = false;
+            return await chain.EstimateTransfer(Sender, destination, amount);
+        }
     }
 
     public void BackToCompose()

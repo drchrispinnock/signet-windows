@@ -69,7 +69,7 @@ public sealed partial class WalletViewModel : ObservableObject
     private readonly SessionKeyStore sessionKeys = new();
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SelectedWallet), nameof(CanExportSelectedKey), nameof(CanRememberSelectedKey), nameof(CanGovern))]
+    [NotifyPropertyChangedFor(nameof(SelectedWallet), nameof(CanExportSelectedKey), nameof(CanProveSelectedKey), nameof(CanRememberSelectedKey), nameof(CanGovern))]
     private string? selectedWalletID;
 
     [ObservableProperty] private bool isPresentingCreateWallet;
@@ -83,6 +83,7 @@ public sealed partial class WalletViewModel : ObservableObject
     [ObservableProperty] private bool isPresentingConnectLedger;
     [ObservableProperty] private bool isPresentingImportAccount;
     [ObservableProperty] private bool isPresentingExportKey;
+    [ObservableProperty] private bool isPresentingProofOfPossession;
     [ObservableProperty] private bool isPresentingForget;
     [ObservableProperty] private bool isPresentingRememberKey;
     [ObservableProperty] private bool isPresentingGovernance;
@@ -130,7 +131,13 @@ public sealed partial class WalletViewModel : ObservableObject
     [ObservableProperty] private DAppConnectionManager dapps;
 
     /// <summary>Export shows keys Signet holds on disk; Ledger and watch-only entries have nothing to show.</summary>
-    public bool CanExportSelectedKey => SelectedWallet?.KeyKind is KeyKind.Unencrypted or KeyKind.Encrypted;
+    public bool CanExportSelectedKey => SelectedWallet?.KeyKind is KeyKind.Unencrypted or KeyKind.Encrypted;
+    /// <summary>
+    /// Create proof of possession is for a tz4 (BLS) account whose secret key Signet holds: the
+    /// proof is the key's signature over its own public key, and Taquito's Ledger signer cannot
+    /// make one.
+    /// </summary>
+    public bool CanProveSelectedKey => SelectedWallet?.Scheme == AddressScheme.Tz4 && CanExportSelectedKey;
 
     /// <summary>Governance is for bakers whose key we can sign with.</summary>
     public bool CanGovern => SelectedWallet?.KeyKind.CanSign() == true && DelegateInfo?.IsBaker == true;
@@ -521,7 +528,15 @@ public sealed partial class WalletViewModel : ObservableObject
     {
         // Its own bridge, reaching public endpoints only (S12), sharing the operation journal.
         var bridge = new TaquitoBridge(requirePublicEndpoints: true) { OperationJournal = TaquitoBridge.Shared.OperationJournal };
-        return new DAppConnectionManager(storage, () => Wallets, SigningKeyFor, bridge);
+        return new DAppConnectionManager(storage, () => Wallets, SigningKeyFor, bridge,
+            // The block watcher runs on the chain service (the shared bridge, whose journal the
+            // dApp bridge shares), never on the dApp bridge: a read that times out discards its
+            // context, which must not take the Octez Connect session with it.
+            confirmation: (hash, network) =>
+            {
+                var service = network == Network ? chain : chainFactory(network);
+                return service.WaitForConfirmation(hash);
+            });
     }
 
     /// <summary>
@@ -1387,7 +1402,10 @@ public sealed partial class WalletViewModel : ObservableObject
         public sealed class AlreadySigned(string alias) : MultisigError($"“{alias}” has already signed this proposal.");
         public sealed class Stale() : MultisigError("The multisig has moved on since this was proposed; the signatures no longer apply.");
         public sealed class NotRevealed(Address address)
-            : MultisigError($"{address.Shortened()} has not revealed its public key on this network yet (it has never sent an operation). Ask its owner for the public key instead.");
+            : MultisigError($"{address.Shortened()} has not revealed its public key on this network yet (it has never sent an operation). Ask its owner for the public key instead.")
+        {
+            public Address Address { get; } = address;
+        }
         public sealed class NotASignerCandidate(string text) : MultisigError($"“{text[..Math.Min(20, text.Length)]}…” is neither a public key nor a tz address.");
         public sealed class KeyAddressMismatch(Address wanted, Address got)
             : MultisigError($"The node answered with a key for {got.Shortened()}, not {wanted.Shortened()}. Nothing was added; check the node or paste the public key.");
@@ -1412,24 +1430,60 @@ public sealed partial class WalletViewModel : ObservableObject
         // The node checks the key properly at origination; this only keeps obvious garbage out of the list.
         new[] { "edpk", "sppk", "p2pk", "BLpk", "mdpk" }.Any(p => key.StartsWith(p, StringComparison.Ordinal)) && key.Length > 6 && key.All(char.IsLetterOrDigit);
 
-    /// <summary>
-    /// A signer for a new multisig from what the user gave: a public key as is, or a tz address
-    /// (pasted, from the address book or one of ours) resolved to the key it has revealed on chain.
-    /// </summary>
-    public async Task<string> MultisigSignerKey(string text)
+    /// <summary>What a field that takes "a public key or a tz address" holds.</summary>
+    public abstract record KeyFieldContent
+    {
+        public sealed record Empty : KeyFieldContent;
+        public sealed record PublicKey(string Key) : KeyFieldContent;
+        /// <summary>A well-formed implicit account address (tz1 to tz6), whose key may have to be looked up.</summary>
+        public sealed record AddressContent(Address Address) : KeyFieldContent;
+        /// <summary>Neither; the text is passed on untouched and the chain or bridge will refuse it.</summary>
+        public sealed record Other(string Text) : KeyFieldContent;
+    }
+
+    public static KeyFieldContent KeyFieldContentOf(string text)
     {
         var trimmed = text.Trim();
-        if (IsPublicKey(trimmed)) return trimmed;
+        if (trimmed.Length == 0) return new KeyFieldContent.Empty();
+        if (IsPublicKey(trimmed)) return new KeyFieldContent.PublicKey(trimmed);
         var address = new Address(trimmed);
-        if (!address.IsValidAccount || address.IsContract) throw new MultisigError.NotASignerCandidate(trimmed);
-        if (Wallets.FirstOrDefault(w => w.Address == address) is { PublicKey: { } mine }) return mine;
-        var key = await Multisig.RevealedPublicKey(Network.RpcURL, address) ?? throw new MultisigError.NotRevealed(address);
-        // The node is not trusted to say whose key that is: it must hash to the address asked for.
-        if (!IsPublicKey(key)) throw new MultisigError.InvalidKey(key);
-        var derived = await Multisig.AddressForPublicKey(key);
-        if (derived != address) throw new MultisigError.KeyAddressMismatch(address, derived);
-        return key;
+        if (address.IsValidAccount && !address.IsContract) return new KeyFieldContent.AddressContent(address);
+        return new KeyFieldContent.Other(trimmed);
     }
+
+    /// <summary>Where a resolved public key came from, for the sheet to say so.</summary>
+    public abstract record ResolvedKeySource
+    {
+        public sealed record Pasted : ResolvedKeySource;
+        public sealed record OwnAccount(string Alias) : ResolvedKeySource;
+        public sealed record RevealedOnChain : ResolvedKeySource;
+    }
+
+    /// <summary>
+    /// The public key behind what the user gave: a public key as is, or a tz address (pasted, from
+    /// the address book or one of ours) resolved to our record of it or to the key it has revealed
+    /// on chain. An address that has never sent an operation has revealed nothing and fails with
+    /// <c>MultisigError.NotRevealed</c>, so the caller can ask for the public key instead.
+    /// </summary>
+    public async Task<(string Key, ResolvedKeySource Source)> PublicKeyForKeyOrAddress(string text)
+    {
+        switch (KeyFieldContentOf(text))
+        {
+            case KeyFieldContent.PublicKey(var pasted): return (pasted, new ResolvedKeySource.Pasted());
+            case KeyFieldContent.AddressContent(var address):
+                if (Wallets.FirstOrDefault(w => w.Address == address) is { PublicKey: { } mine } wallet) return (mine, new ResolvedKeySource.OwnAccount(wallet.Alias));
+                var key = await Multisig.RevealedPublicKey(Network.RpcURL, address) ?? throw new MultisigError.NotRevealed(address);
+                // The node is not trusted to say whose key that is: it must hash to the address asked for.
+                if (!IsPublicKey(key)) throw new MultisigError.InvalidKey(key);
+                var derived = await Multisig.AddressForPublicKey(key);
+                if (derived != address) throw new MultisigError.KeyAddressMismatch(address, derived);
+                return (key, new ResolvedKeySource.RevealedOnChain());
+            default: throw new MultisigError.NotASignerCandidate(text.Trim());
+        }
+    }
+
+    /// <summary>A signer for a new multisig from what the user gave (see <see cref="PublicKeyForKeyOrAddress"/>).</summary>
+    public async Task<string> MultisigSignerKey(string text) => (await PublicKeyForKeyOrAddress(text)).Key;
 
     public Task<MultisigInfo> MultisigInfo(MultisigContract contract) => Multisig.Info(Network.RpcURL, contract.Address);
 

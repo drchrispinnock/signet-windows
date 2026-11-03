@@ -155,7 +155,8 @@ public sealed partial class WalletHomeView : UserControl
         else if (model.IsPresentingImportAccount) { dialog = new ImportAccountSheet(model); reset = () => model.IsPresentingImportAccount = false; }
         else if (model.IsPresentingRenameWallet) { dialog = new RenameWalletSheet(model); reset = () => model.IsPresentingRenameWallet = false; }
         else if (model.IsPresentingAddAddress) { dialog = new AddAddressSheet(model); reset = () => model.IsPresentingAddAddress = false; }
-        else if (model.IsPresentingExportKey) { dialog = new ExportKeySheet(model); reset = () => model.IsPresentingExportKey = false; }
+        else if (model.IsPresentingExportKey) { dialog = new ExportKeySheet(model); reset = () => model.IsPresentingExportKey = false; }
+        else if (model.IsPresentingProofOfPossession) { dialog = new ProofOfPossessionSheet(model); reset = () => model.IsPresentingProofOfPossession = false; }
         else if (model.IsPresentingForget) { dialog = new ForgetAccountSheet(model); reset = () => model.IsPresentingForget = false; }
         else if (model.IsPresentingRememberKey) { dialog = new RememberKeySheet(model); reset = () => model.IsPresentingRememberKey = false; }
         else if (model.IsPresentingReceive && model.SelectedWallet is { } wallet)

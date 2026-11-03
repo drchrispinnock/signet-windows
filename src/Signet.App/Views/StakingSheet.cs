@@ -239,11 +239,12 @@ public sealed partial class StakingSheet : Sheet
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         row.Children.Add(amountText);
         row.Children.Add(new TextBlock { Text = "tz", Foreground = Secondary, VerticalAlignment = VerticalAlignment.Center });
-        row.Children.Add(MakeButton("Max", () =>
-        {
-            var max = stake ? Math.Max(0, (Balance?.Spendable ?? 0) - 0.01m) : Balance?.Staked ?? 0;
-            amountText.Text = max.ToString(CultureInfo.InvariantCulture);
-        }, true));
+        // No Max for staking: the fee comes out of the spendable balance, so staking all
+        // of it (or all but a guess at the fee) fails or leaves the account unusable.
+        // Unstaking everything is fine, since the fee is paid from the spendable part.
+        if (!stake)
+            row.Children.Add(MakeButton("Max", () =>
+                amountText.Text = (Balance?.Staked ?? 0).ToString(CultureInfo.InvariantCulture), true));
         Form.Children.Add(new TextBlock { Text = "Amount" });
         Form.Children.Add(row);
         Form.Children.Add(LabeledContent(stake ? "Spendable" : "Staked",

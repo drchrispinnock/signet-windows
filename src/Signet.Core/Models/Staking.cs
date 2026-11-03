@@ -65,6 +65,11 @@ public abstract record StakingOperation
     /// <summary><c>To</c> null = remove delegation.</summary>
     public sealed record Delegate(Address? To) : StakingOperation;
     public sealed record RegisterAsBaker : StakingOperation;
+    /// <summary>
+    /// The same self-delegation as registering: a baker the chain deactivated (no activity for a
+    /// few cycles) registers again to get its rights back.
+    /// </summary>
+    public sealed record ReactivateBaker : StakingOperation;
     public sealed record Stake(decimal Amount) : StakingOperation;
     public sealed record Unstake(decimal Amount) : StakingOperation;
     public sealed record FinalizeUnstake : StakingOperation;
@@ -77,7 +82,7 @@ public abstract record StakingOperation
     public string BridgeKind => this switch
     {
         Delegate => "setDelegate",
-        RegisterAsBaker => "registerDelegate",
+        RegisterAsBaker or ReactivateBaker => "registerDelegate",
         Stake => "stake",
         Unstake => "unstake",
         FinalizeUnstake => "finalizeUnstake",
@@ -90,7 +95,7 @@ public abstract record StakingOperation
     public IReadOnlyDictionary<string, object> BridgeArgument => this switch
     {
         Delegate d => new Dictionary<string, object> { ["delegate"] = d.To?.Value ?? "" },
-        RegisterAsBaker or FinalizeUnstake => new Dictionary<string, object>(),
+        RegisterAsBaker or ReactivateBaker or FinalizeUnstake => new Dictionary<string, object>(),
         Stake s => new Dictionary<string, object> { ["amountMutez"] = Mutez.FromTez(s.Amount) },
         Unstake u => new Dictionary<string, object> { ["amountMutez"] = Mutez.FromTez(u.Amount) },
         UpdateConsensusKey k => KeyArgument(k.PublicKey, k.Proof),
@@ -113,6 +118,7 @@ public abstract record StakingOperation
     {
         Delegate d => d.To is null ? "Remove delegation" : "Delegate",
         RegisterAsBaker => "Register as a baker",
+        ReactivateBaker => "Reactivate baker",
         Stake => "Stake",
         Unstake => "Unstake",
         FinalizeUnstake => "Finalize unstaked tez",

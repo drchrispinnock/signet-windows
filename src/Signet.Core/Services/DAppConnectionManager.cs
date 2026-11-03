@@ -24,7 +24,18 @@ public sealed partial class DAppConnectionManager : ObservableObject
         public sealed class UnsupportedNetwork(string type) : ConnectError($"The dApp wants the “{type}” network, which Signet does not have.");
         public sealed class RefusedPayload(string why) : ConnectError(why);
         public sealed class NotGranted(string why) : ConnectError(why);
+        public sealed class PreviousUnconfirmed(string hash)
+            : ConnectError($"The account's previous operation, {hash[..Math.Min(12, hash.Length)]}…, has not been seen in a block yet. Wait a moment and approve again, or open Send to watch or resend it.")
+        {
+            public string Hash { get; } = hash;
+        }
     }
+
+    /// <summary>
+    /// Watches an operation until it is in a block, on the chain service for <c>network</c>, and
+    /// returns the block level. The watcher is what clears the operation's recovery record (S15).
+    /// </summary>
+    public delegate Task<int> Confirmation(string hash, Network network);
 
     /// <summary>Where a pairing stands: the dApp has to join the relay room before it can ask anything.</summary>
     public abstract record PairingState
@@ -46,6 +57,11 @@ public sealed partial class DAppConnectionManager : ObservableObject
     [ObservableProperty] private string? lastOutcome;
     [ObservableProperty] private PairingState pairing = new PairingState.Idle();
     /// <summary>
+    /// The account's previous operation an approval is waiting to see in a block before it
+    /// signs the next one; null when nothing is being waited for.
+    /// </summary>
+    [ObservableProperty] private string? awaitingHash;
+    /// <summary>
     /// Requests whose work is done (operation injected, message signed, permission chosen) but
     /// whose reply the dApp has not received yet: id → the reply to resend (S17).
     /// </summary>
@@ -59,6 +75,9 @@ public sealed partial class DAppConnectionManager : ObservableObject
     private readonly Func<IReadOnlyList<Wallet>> walletsProvider;
     private readonly Func<Task<IReadOnlyList<DAppPermission>>>? permissionLoader;
     private readonly Func<Wallet, string?, SigningKey?> signerProvider;
+    private readonly Confirmation? confirmation;
+    /// <summary>Running watchers by operation hash, so one operation is never watched twice.</summary>
+    private readonly Dictionary<string, Task<int>> watchers = [];
     private readonly SynchronizationContext? ui = SynchronizationContext.Current;
     private Task? startTask;
     private Task? stopTask;
@@ -71,8 +90,10 @@ public sealed partial class DAppConnectionManager : ObservableObject
 
     public DAppConnectionManager(IBridgeStorage storage, Func<IReadOnlyList<Wallet>> wallets, Func<Wallet, string?, SigningKey?> signer,
                                  TaquitoBridge? bridge = null, bool diagnostics = false,
-                                 Func<Task<IReadOnlyList<DAppPermission>>>? permissionLoader = null)
+                                 Func<Task<IReadOnlyList<DAppPermission>>>? permissionLoader = null,
+                                 Confirmation? confirmation = null)
     {
+        this.confirmation = confirmation;
         this.bridge = bridge ?? new TaquitoBridge(requirePublicEndpoints: true);
         this.storage = storage;
         Diagnostics = diagnostics;
@@ -409,9 +430,13 @@ public sealed partial class DAppConnectionManager : ObservableObject
             await GrantFor(request);
             var (wallet, signer) = SignerFor(op.Source, passphrase);
             var network = DAppRequest.NetworkFor(op.NetworkType, op.RpcURL) ?? throw new ConnectError.UnsupportedNetwork(op.NetworkType);
+            await SettlePrevious(op.Source, network);
             var result = await bridge.Call("octezConnectExecute", network.RpcURL.AbsoluteString(), signer.BridgeSpec, prepared.PreparedJSON, network.ExpectedChainID);
             if (result["hash"]?.StringValue is not { Length: > 0 } hash) throw new TaquitoBridge.BridgeError.JavaScript("no operation hash");
             var injected = result["injected"]?.BoolValue ?? true;
+            // Watch it into a block in the background: that clears its recovery record, so the
+            // account's next operation (from this dApp or Send) is not held up by it.
+            _ = Watch(hash, network);
             var summary = injected
                 ? $"Sent {hash[..Math.Min(12, hash.Length)]}… for “{request.App.Name}” from {wallet.Alias}"
                 : $"Signed {hash[..Math.Min(12, hash.Length)]}… for “{request.App.Name}”; the node's answer was lost, so check the explorer before retrying";
@@ -503,6 +528,43 @@ public sealed partial class DAppConnectionManager : ObservableObject
         }
     }
 
+    // ---- Confirmation (S15) ----------------------------------------------------------------------
+
+    /// <summary>
+    /// dApps send operations back to back (an approval, then the swap). The signed bytes of
+    /// the last one stay on record until it is seen in a block, and nothing else may be signed
+    /// for that account meanwhile, so an approval waits here for that block and then goes on,
+    /// instead of failing and sending the user to Send. The wait is the one place that may
+    /// take a while; <see cref="AwaitingHash"/> tells the sheet what it is waiting for.
+    /// </summary>
+    private async Task SettlePrevious(Address source, Network network)
+    {
+        var value = await Call("pendingOperation", 30, network.RpcURL.AbsoluteString(), source.Value);
+        if (value.IsNull || value["hash"]?.StringValue is not { Length: > 0 } hash) return;
+        var watcher = Watch(hash, network) ?? throw new ConnectError.PreviousUnconfirmed(hash);
+        AwaitingHash = hash;
+        try { await watcher; }
+        catch (Exception) { throw new ConnectError.PreviousUnconfirmed(hash); }
+        finally { AwaitingHash = null; }
+    }
+
+    /// <summary>The watcher for <c>hash</c>, started if none is running; null without a confirmation service.</summary>
+    private Task<int>? Watch(string hash, Network network)
+    {
+        if (confirmation is null) return null;
+        if (watchers.TryGetValue(hash, out var running)) return running;
+        var task = Run();
+        watchers[hash] = task;
+        return task;
+
+        async Task<int> Run()
+        {
+            await Task.Yield();
+            try { return await confirmation(hash, network); }
+            finally { watchers.Remove(hash); }
+        }
+    }
+
     // ---- Helpers ---------------------------------------------------------------------------------
 
     /// <summary>The wallet for <c>source</c> and what signs for it.</summary>
@@ -552,7 +614,7 @@ public sealed partial class DAppConnectionManager : ObservableObject
     };
 
     /// <summary>Errors the user can fix and try again without the dApp hearing about it.</summary>
-    private static bool IsRetryable(Exception error) => Known(error) is ChainError.WrongPassphrase or ChainError.LedgerDeclined
+    private static bool IsRetryable(Exception error) => error is ConnectError.PreviousUnconfirmed || Known(error) is ChainError.WrongPassphrase or ChainError.LedgerDeclined
         or ChainError.LedgerAppNotOpen or ChainError.LedgerLocked or ChainError.LedgerNotConnected;
 
     private static string Friendly(Exception error) => Known(error)?.Message ?? error.Message;

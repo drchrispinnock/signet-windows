@@ -10,7 +10,7 @@ using Signet.ViewModels;
 namespace Signet.App.Views;
 
 /// <summary>
-/// Send tez: compose (recipient + amount), confirm (you → them), then the result. With Layer 2
+/// Send tez: compose (recipient + amount), confirm (you â them), then the result. With Layer 2
 /// on, the drop-down at the top left (<c>ChainSidePicker</c>) sends on Etherlink instead: the same
 /// account, through the Layer 2 Michelson node, to tz1, tz2 or tz3 accounts only. Both sides are
 /// captured when the sheet opens, each network with the chain service it talks to (S16, S31).
@@ -39,6 +39,9 @@ public sealed partial class SendSheet : Sheet
     private readonly StackPanel suggestionList = new();
     private readonly TextBox amountText = new() { PlaceholderText = "0.0", MinWidth = 160 };
     private readonly Button max = new() { Content = "Max" };
+    // The password asked for on compose when an unrevealed tz4 account must prove possession first.
+    private readonly PasswordBox proofPassphrase = new();
+    private readonly StackPanel proofPassphraseRow = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     // Confirm
     private readonly StackPanel confirm = new() { Spacing = 12 };
     private readonly Grid parties = new();
@@ -112,7 +115,8 @@ public sealed partial class SendSheet : Sheet
 
     /// <summary>A send for the side in use, on that side's chain service (never the other's).</summary>
     private SendViewModel MakeSend() =>
-        new(sender, wallets, Context.Chain, Context.Spendable, (wallet, passphrase) => model.SigningKeyFor(wallet, passphrase), Context.ImplicitAccountsOnly);
+        new(sender, wallets, Context.Chain, Context.Spendable, (wallet, passphrase) => model.SigningKeyFor(wallet, passphrase), Context.ImplicitAccountsOnly,
+            (wallet, passphrase) => model.ProofOfPossession(wallet, passphrase));
 
     // ---- Step 1 ----------------------------------------------------------------------------------
 
@@ -144,6 +148,18 @@ public sealed partial class SendSheet : Sheet
         amountRow.Children.Add(new TextBlock { Text = "tz", Foreground = Secondary, VerticalAlignment = VerticalAlignment.Center });
         amountRow.Children.Add(max);
         compose.Children.Add(amountRow);
+
+        proofPassphraseRow.Children.Add(new FontIcon { Glyph = "", FontSize = 14, Foreground = Secondary, VerticalAlignment = VerticalAlignment.Center });
+        proofPassphrase.MinWidth = 300;
+        proofPassphrase.PasswordChanged += (_, _) => send.Passphrase = proofPassphrase.Password;
+        proofPassphrase.KeyDown += async (_, e) =>
+        {
+            if (e.Key != Windows.System.VirtualKey.Enter) return;
+            e.Handled = true;
+            if (send.CanProceed) await send.ProceedToConfirm();
+        };
+        proofPassphraseRow.Children.Add(proofPassphrase);
+        compose.Children.Add(proofPassphraseRow);
     }
 
     /// <summary>The From line, the recipient prompt and Max: what differs between the two sides.</summary>
@@ -184,14 +200,16 @@ public sealed partial class SendSheet : Sheet
         else if (send.IsResolving)
         {
             recipientStatus.Children.Add(new ProgressRing { Width = 14, Height = 14, IsActive = true });
-            recipientStatus.Children.Add(new TextBlock { Text = "Looking up name…", Foreground = Secondary });
+            recipientStatus.Children.Add(new TextBlock { Text = "Looking up nameâ¦", Foreground = Secondary });
         }
         else if (send.RecipientText.Length > 0 && send.Suggestions.Count == 0 && send.ErrorMessage is null)
         {
-            recipientStatus.Children.Add(Label("Not a valid address or .tez name", ""));
+            recipientStatus.Children.Add(Label("Not a valid address or .tez name", "îº"));
         }
         if (amountText.Text != send.AmountText) amountText.Text = send.AmountText;
         if (recipientText.Text != send.RecipientText) recipientText.Text = send.RecipientText;
+        proofPassphraseRow.Visibility = send.NeedsPassphraseForProof ? Visibility.Visible : Visibility.Collapsed;
+        proofPassphrase.PlaceholderText = $"Password for “{send.Sender.Alias}”";
 
         suggestionList.Children.Clear();
         if (send.Recipient is null)
@@ -230,7 +248,7 @@ public sealed partial class SendSheet : Sheet
         var verified = recipient.IsVerified;
         var color = (Brush)Application.Current.Resources[verified ? "SystemFillColorSuccessBrush" : "SystemFillColorCautionBrush"];
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-        row.Children.Add(new FontIcon { Glyph = verified ? "" : "", FontSize = 11, Foreground = color });
+        row.Children.Add(new FontIcon { Glyph = verified ? "î¤°" : "î§", FontSize = 11, Foreground = color });
         row.Children.Add(new TextBlock
         {
             Text = verified ? (recipient.Wallet?.KeyKind == KeyKind.None ? "Address book" : "My account") : "Not verified",
@@ -255,7 +273,7 @@ public sealed partial class SendSheet : Sheet
         parties.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         confirm.Children.Add(parties);
         confirm.Children.Add(details);
-        passphraseRow.Children.Add(new TextBlock { Text = $"Password for “{send.Sender.Alias}”" });
+        passphraseRow.Children.Add(new TextBlock { Text = $"Password for â{send.Sender.Alias}â" });
         passphraseRow.Children.Add(passphrase);
         passphrase.PasswordChanged += (_, _) => send.Passphrase = passphrase.Password;
         passphrase.KeyDown += async (_, e) =>
@@ -277,7 +295,7 @@ public sealed partial class SendSheet : Sheet
         if (send.Recipient is not { } recipient || send.Amount is not { } amount) return;
         AddParty(0, send.Sender.Address, send.Sender.Alias, send.Sender.Address.Shortened(), null);
         var middle = new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 28, 0, 0) };
-        middle.Children.Add(new FontIcon { Glyph = "", FontSize = 26, Foreground = (Brush)Application.Current.Resources["AccentFillColorDefaultBrush"] });
+        middle.Children.Add(new FontIcon { Glyph = "îª", FontSize = 26, Foreground = (Brush)Application.Current.Resources["AccentFillColorDefaultBrush"] });
         middle.Children.Add(new TextBlock { Text = AssetBalance.Format(amount, "tz"), FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center });
         Grid.SetColumn(middle, 1);
         parties.Children.Add(middle);
@@ -329,15 +347,15 @@ public sealed partial class SendSheet : Sheet
         switch (send.CurrentStep)
         {
             case SendViewModel.Step.Sent sent:
-                result.Children.Add(ResultHeader("", "Sent", "Waiting for the next block…", spinning: true));
+                result.Children.Add(ResultHeader("î¤", "Sent", "Waiting for the next blockâ¦", spinning: true));
                 result.Children.Add(OperationLink(sent.Hash));
                 break;
             case SendViewModel.Step.Confirmed confirmed:
-                result.Children.Add(ResultHeader("", "Confirmed", $"Included in block {confirmed.Level.ToString("N0", CultureInfo.CurrentCulture)}", spinning: false));
+                result.Children.Add(ResultHeader("î¤°", "Confirmed", $"Included in block {confirmed.Level.ToString("N0", CultureInfo.CurrentCulture)}", spinning: false));
                 result.Children.Add(OperationLink(confirmed.Hash));
                 break;
             case SendViewModel.Step.Unknown unknown:
-                result.Children.Add(ResultHeader("", "Not confirmed by the node", send.IsBusy ? "Watching the chain…" : "The node's answer was lost", spinning: send.IsBusy));
+                result.Children.Add(ResultHeader("î§", "Not confirmed by the node", send.IsBusy ? "Watching the chainâ¦" : "The node's answer was lost", spinning: send.IsBusy));
                 result.Children.Add(OperationLink(unknown.Hash));
                 result.Children.Add(Note("The operation was signed and handed to the node, but its answer did not arrive. Signet is watching the chain for it. Sending again sends the same signed operation, so it cannot be paid twice."));
                 break;
@@ -396,13 +414,14 @@ public sealed partial class SendSheet : Sheet
 
         if (isCompose) RenderCompose();
         if (isConfirm) RenderConfirm();
+        if (isConfirm && passphrase.Password != send.Passphrase) passphrase.Password = send.Passphrase;
         if (isResult) RenderResult();
 
         passphraseRow.Visibility = isConfirm && send.NeedsPassphrase ? Visibility.Visible : Visibility.Collapsed;
         sending.Visibility = step is SendViewModel.Step.Sending ? Visibility.Visible : Visibility.Collapsed;
-        sendingText.Text = send.SignsOnLedger ? "Confirm on your Ledger…" : "Signing and sending…";
+        sendingText.Text = send.SignsOnLedger ? "Confirm on your Ledgerâ¦" : "Signing and sendingâ¦";
         ShowError(send.ErrorMessage);
-        ShowProgress(isCompose && send.IsBusy ? "Estimating the fee…" : null);
+        ShowProgress(isCompose && send.IsBusy ? "Estimating the feeâ¦" : null);
 
         // The buttons for this step.
         switch (step)

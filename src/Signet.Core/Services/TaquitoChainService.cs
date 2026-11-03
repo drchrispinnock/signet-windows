@@ -114,11 +114,23 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
 
     public async Task<TransferEstimate> EstimateTransfer(Wallet wallet, Address destination, decimal amount)
     {
+        var publicKey = PublicKeyArgument(wallet);
+        await VerifyChain();
+        var result = await TaquitoBridge.BridgeError.Typed(() => bridge.Call("estimateTransfer", Rpc, wallet.Address.Value, publicKey, destination.Value, Mutez.FromTez(amount)));
+        return EstimateFrom(result, amount);
+    }
+
+    /// <summary>
+    /// The <c>publicKey</c> argument of the bridge's estimates: the key alone, or, for a tz4 account
+    /// whose proof of possession has been made, the key and the proof the reveal will carry.
+    /// </summary>
+    public static object PublicKeyArgument(Wallet wallet)
+    {
         if (wallet.PublicKey is not { } publicKey)
             throw new TaquitoBridge.BridgeError.JavaScript($"Account “{wallet.Alias}” has no public key, so its fees cannot be estimated.");
-        await VerifyChain();
-        var result = await bridge.Call("estimateTransfer", Rpc, wallet.Address.Value, publicKey, destination.Value, Mutez.FromTez(amount));
-        return EstimateFrom(result, amount);
+        if (wallet.Scheme == AddressScheme.Tz4 && wallet.ProofOfPossession is { } proof)
+            return new Dictionary<string, string> { ["publicKey"] = publicKey, ["proof"] = proof };
+        return publicKey;
     }
 
     /// <summary>An estimate as the bridge reports it: fee, burn and the limits to send with (S14, S20).</summary>
@@ -148,11 +160,10 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
 
     public async Task<TransferEstimate> EstimateEtherlinkDeposit(Wallet wallet, decimal amount)
     {
-        if (wallet.PublicKey is not { } publicKey)
-            throw new TaquitoBridge.BridgeError.JavaScript($"Account “{wallet.Alias}” has no public key, so its fees cannot be estimated.");
+        var publicKey = PublicKeyArgument(wallet);
         if (!Network.CanDepositToL2 || Network.L2BridgeHelper is not { } helper || Network.L2Rollup is not { } rollup) throw new ChainError.NoEtherlinkBridge();
         await VerifyChain();
-        var result = await bridge.Call("estimateEtherlinkDeposit", Rpc, wallet.Address.Value, publicKey, helper.Value, rollup, wallet.Address.Value, Mutez.FromTez(amount));
+        var result = await TaquitoBridge.BridgeError.Typed(() => bridge.Call("estimateEtherlinkDeposit", Rpc, wallet.Address.Value, publicKey, helper.Value, rollup, wallet.Address.Value, Mutez.FromTez(amount)));
         return EstimateFrom(result, amount);
     }
 
@@ -223,10 +234,9 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
     public async Task<TransferEstimate> EstimateEtherlinkLink(Wallet wallet)
     {
         if (Network.LayerNumber != 2) throw new ChainError.NotALayer2Service();
-        if (wallet.PublicKey is not { } publicKey)
-            throw new TaquitoBridge.BridgeError.JavaScript($"Account “{wallet.Alias}” has no public key, so its fees cannot be estimated.");
+        var publicKey = PublicKeyArgument(wallet);
         await VerifyChain();
-        var result = await bridge.Call("estimateEtherlinkLink", Rpc, wallet.Address.Value, publicKey, Network.EtherlinkGateway.Value);
+        var result = await TaquitoBridge.BridgeError.Typed(() => bridge.Call("estimateEtherlinkLink", Rpc, wallet.Address.Value, publicKey, Network.EtherlinkGateway.Value));
         return EstimateFrom(result);
     }
 
@@ -327,13 +337,12 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
 
     public async Task<TransferEstimate> EstimateStaking(StakingOperation operation, Wallet wallet)
     {
-        if (wallet.PublicKey is not { } publicKey)
-            throw new TaquitoBridge.BridgeError.JavaScript($"Account “{wallet.Alias}” has no public key, so its fees cannot be estimated.");
+        var publicKey = PublicKeyArgument(wallet);
         await VerifyChain();
         if (RawContents(operation) is { } contents)
-            return EstimateFrom(await bridge.Call("estimateRawOperation", Rpc, wallet.Address.Value, publicKey, JsonSerializer.Serialize(contents)));
-        var r = await bridge.Call("estimateStakingOperation", Rpc, wallet.Address.Value, publicKey, operation.BridgeKind,
-                                  JsonSerializer.Serialize(operation.BridgeArgument));
+            return EstimateFrom(await TaquitoBridge.BridgeError.Typed(() => bridge.Call("estimateRawOperation", Rpc, wallet.Address.Value, publicKey, JsonSerializer.Serialize(contents))));
+        var r = await TaquitoBridge.BridgeError.Typed(() => bridge.Call("estimateStakingOperation", Rpc, wallet.Address.Value, publicKey, operation.BridgeKind,
+                                  JsonSerializer.Serialize(operation.BridgeArgument)));
         var amount = operation is StakingOperation.Stake s ? s.Amount : 0;
         return EstimateFrom(r, amount);
     }

@@ -188,6 +188,97 @@ public class SendOutcomeTests
         Assert.Equal(new SendViewModel.Step.Confirmed("ooLost", 42), send.CurrentStep);
     }
 
+    /// <summary>
+    /// A chain that needs a tz4 sender's proof of possession before it can estimate (an
+    /// unrevealed BLS account) and records every estimate's wallet.
+    /// </summary>
+    private sealed class ProofChain : TestChainService
+    {
+        public List<Wallet> Estimated { get; } = [];
+        public override Task<TezBalance> TezBalanceFor(Address address) => Task.FromResult(new TezBalance(100));
+        public override Task<TransferEstimate> EstimateTransfer(Wallet wallet, Address destination, decimal amount)
+        {
+            Estimated.Add(wallet);
+            if (wallet.ProofOfPossession != "BLsigProof") throw new ChainError.ProofOfPossessionRequired();
+            return Task.FromResult(new TransferEstimate(0.001m, 0, amount + 0.001m, 0, 0, new OperationLimits("1000", 0, 0)));
+        }
+    }
+
+    private static readonly Wallet Bls = new("BLS", new Address("tz4E128TU3t1TdLCJEY4oHg8gZzZNoNBknwh"), publicKey: "BLpkTest", keyKind: KeyKind.Unencrypted);
+
+    [Fact]
+    public async Task MakesTheProofOfPossessionAnUnrevealedTz4SenderNeeds()
+    {
+        var chain = new ProofChain();
+        var proofRequests = 0;
+        var send = new SendViewModel(Bls, [SendViewModelTests.Alice], chain, 100,
+                                     (w, _) => new SigningKey.Secret("BLskSECRET", null, w.Address),
+                                     proofProvider: (w, passphrase) => { proofRequests++; Assert.Null(passphrase); return Task.FromResult("BLsigProof"); });
+        send.Choose(SendViewModelTests.Alice);
+        await Task.Delay(300, TestContext.Current.CancellationToken);
+        send.AmountText = "1";
+        await send.ProceedToConfirm();
+        Assert.IsType<SendViewModel.Step.Confirm>(send.CurrentStep);
+        Assert.Null(send.ErrorMessage);
+        Assert.Equal(1, proofRequests);
+        Assert.Equal([null, "BLsigProof"], chain.Estimated.Select(w => w.ProofOfPossession));
+        Assert.Equal("BLsigProof", send.Sender.ProofOfPossession);
+        Assert.False(send.NeedsPassphraseForProof);
+    }
+
+    [Fact]
+    public async Task AsksForThePasswordBeforeProvingPossessionWithAnEncryptedTz4Key()
+    {
+        var chain = new ProofChain();
+        var vault = Bls with { KeyKind = KeyKind.Encrypted };
+        var proofRequests = 0;
+        var send = new SendViewModel(vault, [SendViewModelTests.Alice], chain, 100,
+                                     (w, p) => new SigningKey.Secret("BLeskSECRET", p, w.Address),
+                                     proofProvider: (w, passphrase) =>
+                                     {
+                                         proofRequests++;
+                                         return passphrase == "open sesame" ? Task.FromResult("BLsigProof") : throw new ChainError.WrongPassphrase();
+                                     });
+        send.Choose(SendViewModelTests.Alice);
+        await Task.Delay(300, TestContext.Current.CancellationToken);
+        send.AmountText = "1";
+        // Without the password the sheet stays on compose and asks for it; the key is not touched.
+        await send.ProceedToConfirm();
+        Assert.IsType<SendViewModel.Step.Compose>(send.CurrentStep);
+        Assert.True(send.NeedsPassphraseForProof);
+        Assert.Equal(new SendViewModel.SendError.ProofNeedsPassphrase().Message, send.ErrorMessage);
+        Assert.Equal(0, proofRequests);
+        Assert.False(send.CanProceed);
+        // A wrong password is reported as such.
+        send.Passphrase = "wrong";
+        Assert.True(send.CanProceed);
+        await send.ProceedToConfirm();
+        Assert.IsType<SendViewModel.Step.Compose>(send.CurrentStep);
+        Assert.Equal(new ChainError.WrongPassphrase().Message, send.ErrorMessage);
+        Assert.Equal(1, proofRequests);
+        // The right one makes the proof, estimates and moves on; the confirm step keeps it for signing.
+        send.Passphrase = "open sesame";
+        await send.ProceedToConfirm();
+        Assert.IsType<SendViewModel.Step.Confirm>(send.CurrentStep);
+        Assert.False(send.NeedsPassphraseForProof);
+        Assert.Equal("open sesame", send.Passphrase);
+        Assert.Equal([null, null, null, "BLsigProof"], chain.Estimated.Select(w => w.ProofOfPossession));
+    }
+
+    /// <summary>Without a way to make the proof the estimate's error is shown as it is.</summary>
+    [Fact]
+    public async Task ReportsAMissingProofWhenNoneCanBeMade()
+    {
+        var send = new SendViewModel(Bls, [SendViewModelTests.Alice], new ProofChain(), 100,
+                                     (w, _) => new SigningKey.Secret("BLskSECRET", null, w.Address));
+        send.Choose(SendViewModelTests.Alice);
+        await Task.Delay(300, TestContext.Current.CancellationToken);
+        send.AmountText = "1";
+        await send.ProceedToConfirm();
+        Assert.IsType<SendViewModel.Step.Compose>(send.CurrentStep);
+        Assert.Equal(new ChainError.ProofOfPossessionRequired().Message, send.ErrorMessage);
+    }
+
     private sealed class NoLimits : TestChainService
     {
         public override Task<TezBalance> TezBalanceFor(Address address) => Task.FromResult(new TezBalance(100));

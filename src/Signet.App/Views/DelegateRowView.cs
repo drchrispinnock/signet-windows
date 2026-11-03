@@ -118,12 +118,12 @@ public sealed partial class DelegateRowView : UserControl
                 var why = kind == KeyKind.Remote ? "it signs remotely" : "Signet holds only its public key";
                 return (baker.Deactivated ? "Deactivated. " : "") + $"Watch only: {why}. Baking shows its keys and parameters.";
             }
-            return baker.Deactivated ? "Deactivated; see Baking in the menu" : "Self-delegated; keys and staking parameters under Baking";
+            return baker.Deactivated ? "Deactivated; reactivate under Baking in the menu" : "Self-delegated; keys and staking parameters under Baking";
         }
         if (info.Delegate is not null)
             return info.DelegateAcceptsStaking switch
             {
-                true => "This baker accepts staked tez",
+                true => "This baker accepts staking",
                 false => "This baker does not accept staking",
                 null => "Tap to stake or change delegate",
             };

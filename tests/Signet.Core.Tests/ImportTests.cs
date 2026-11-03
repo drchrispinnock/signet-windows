@@ -81,6 +81,34 @@ public class ImportTests
         await Assert.ThrowsAsync<ChainError.WrongPassphrase>(() => new BridgeKeyImporter().Decrypt(encrypted, "nope"));
     }
 
+    /// <summary>
+    /// Create proof of possession is offered for a tz4 account whose secret key we hold, and
+    /// signs through the same path as the Baking sheet's consensus-key proof.
+    /// </summary>
+    [Fact]
+    public async Task ProofOfPossessionIsForOurOwnBLSKeys()
+    {
+        var tz4 = new Address("tz4HVR6aty9KwsQFHh81C1G7gBdhxT8kuytm");
+        (Wallet, bool)[] cases =
+        [
+            (new Wallet("bls", tz4, publicKey: "BLpkX", keyKind: KeyKind.Unencrypted), true),
+            (new Wallet("bls vault", tz4, publicKey: "BLpkX", keyKind: KeyKind.Encrypted), true),
+            (new Wallet("bls ledger", tz4, publicKey: "BLpkX", keyKind: KeyKind.Ledger), false),
+            (new Wallet("bls watch", tz4, keyKind: KeyKind.None), false),
+            (new Wallet("ed", new Address("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"), publicKey: "edpkX", keyKind: KeyKind.Unencrypted), false),
+        ];
+        foreach (var (wallet, expected) in cases)
+        {
+            var model = new WalletViewModel(wallets: [wallet], chain: new MockChainService());
+            Assert.True(model.CanProveSelectedKey == expected, wallet.Alias);
+        }
+        var store = new InMemoryWalletStore();
+        store.AddWithSecretKey(new Wallet("bls", tz4, publicKey: "BLpkX", keyKind: KeyKind.Unencrypted), "BLskCLEAR");
+        var stored = new WalletViewModel(chain: new MockChainService(), walletStore: store);
+        Assert.True(stored.CanProveSelectedKey);
+        Assert.Equal("BLsigMockProof", await stored.ProofOfPossession(stored.SelectedWallet!, null));
+    }
+
     [Fact]
     public async Task ExportNeedsThePasswordForEncryptedKeys()
     {
