@@ -497,3 +497,153 @@ public class NetworkLinkSettingsTests
         Assert.True(Network.Shadownet.Offers(Network.Service.Faucet) && Network.Custom.Offers(Network.Service.Faucet));
     }
 }
+
+/// <summary>
+/// Etherlink's operations join the Recent transactions list, tagged as layer 2, while Layer 2
+/// is on and the key is usable there; the layer 1 list stands alone otherwise.
+/// </summary>
+public class EtherlinkHistoryTests
+{
+    private static readonly Wallet Me = WalletViewModel.SampleWallets[0];
+    private static readonly Wallet Tz4 = new("bls", new Address("tz4HVR6aty9KwsQFHh81C1G7gBdhxT8kuytm"), keyKind: KeyKind.Unencrypted);
+    private static readonly DateTimeOffset Epoch = DateTimeOffset.FromUnixTimeSeconds(1_790_000_000);
+
+    private static TezosTransaction Row(string hash, string id, int minutesAgo) =>
+        new(id, hash, 100, Epoch.AddMinutes(-minutesAgo), TezosTransaction.TransactionKind.Transaction, TezosTransaction.TransactionDirection.Incoming,
+            MockChainService.CaptainStake, null, 1, 0, null, true);
+
+    /// <summary>Answers each layer with its own rows; TzKT ids are per indexer, so both use "1".</summary>
+    private sealed class TwoLayers(Network network, bool layer2Fails = false) : TestChainService
+    {
+        public override Task<TezBalance> TezBalanceFor(Address address) => Task.FromResult(new TezBalance(12));
+        public override Task<decimal> EtherlinkBalanceFor(Address address) => Task.FromResult(3m);
+        public override Task<IReadOnlyList<AssetBalance>> TokenBalancesFor(Address address)
+        {
+            if (network.LayerNumber == 2)
+            {
+                if (layer2Fails) throw new HttpRequestException("cannot connect to host");
+                return Task.FromResult<IReadOnlyList<AssetBalance>>([new AssetBalance("KT1l2:0", new AssetBalance.AssetKind.Token("KT1l2", "0"), "Rollup Coin", "ROLL", 2)]);
+            }
+            return Task.FromResult<IReadOnlyList<AssetBalance>>([new AssetBalance("KT1l1:0", new AssetBalance.AssetKind.Token("KT1l1", "0"), "Base Coin", "BASE", 1)]);
+        }
+        public override Task<IReadOnlyList<NFT>> NftsFor(Address address)
+        {
+            if (network.LayerNumber == 2)
+            {
+                if (layer2Fails) throw new HttpRequestException("cannot connect to host");
+                return Task.FromResult<IReadOnlyList<NFT>>([new NFT("KT1l2:1", "KT1l2", "1", "Rollup Art", 1, thumbnailURL: null)]);
+            }
+            return Task.FromResult<IReadOnlyList<NFT>>([new NFT("KT1l1:1", "KT1l1", "1", "Base Art", 1, thumbnailURL: null)]);
+        }
+        public override Task<IReadOnlyList<TezosTransaction>> RecentTransactionsFor(Address address, int limit)
+        {
+            if (network.LayerNumber == 2)
+            {
+                if (layer2Fails) throw new HttpRequestException("cannot connect to host");
+                return Task.FromResult<IReadOnlyList<TezosTransaction>>([Row("ooL2new", "1", 5), Row("ooL2old", "2", 60)]);
+            }
+            return Task.FromResult<IReadOnlyList<TezosTransaction>>([Row("ooL1", "1", 30)]);
+        }
+    }
+
+    private static WalletViewModel Model(IReadOnlyList<Wallet> wallets, bool layer2Fails = false) =>
+        new(wallets, chainFactory: n => new TwoLayers(n, layer2Fails), stateStore: new InMemoryAppStateStore());
+
+    [Fact]
+    public void TaggingKeepsTheRowAndMakesTheIdDistinct()
+    {
+        var tagged = Row("ooX", "7", 1).OnLayer2();
+        Assert.True(tagged.IsLayer2 && tagged.Layer == 2 && tagged.Id == "l2:7" && tagged.Hash == "ooX");
+        Assert.False(Row("ooX", "7", 1).IsLayer2);
+    }
+
+    [Fact]
+    public void MergedHistoryIsNewestFirstAndCut()
+    {
+        var merged = WalletViewModel.MergedHistory(2, [Row("a", "1", 30)], [Row("b", "1", 5).OnLayer2(), Row("c", "2", 60).OnLayer2()]);
+        Assert.Equal(["b", "a"], merged.Select(t => t.Hash));
+        Assert.Equal(2, merged.Select(t => t.Id).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task EtherlinkRowsJoinTheListOnlyWhileLayer2IsOn()
+    {
+        var model = Model([Me, Tz4]);
+        await model.Refresh();
+        Assert.Equal(["ooL1"], model.Transactions.Select(t => t.Hash));
+
+        model.SetL2Enabled(true, Network.Mainnet);
+        await model.Refresh();
+        Assert.Equal(["ooL2new", "ooL1", "ooL2old"], model.Transactions.Select(t => t.Hash));
+        Assert.Equal([true, false, true], model.Transactions.Select(t => t.IsLayer2));
+        Assert.Equal(3, model.Transactions.Select(t => t.Id).Distinct().Count());
+
+        // A key the rollup refuses has no Etherlink history.
+        model.Select(Tz4);
+        await model.Refresh();
+        Assert.Equal(["ooL1"], model.Transactions.Select(t => t.Hash));
+
+        model.Select(Me);
+        model.SetL2Enabled(false, Network.Mainnet);
+        await model.Refresh();
+        Assert.Equal(["ooL1"], model.Transactions.Select(t => t.Hash));
+    }
+
+    [Fact]
+    public async Task TheLayerTogglesCutTheListOnlyWhileLayer2IsOn()
+    {
+        var model = Model([Me]);
+        model.SetL2Enabled(true, Network.Mainnet);
+        await model.Refresh();
+        Assert.True(model.FiltersLayers && model.ShownLayers.SetEquals([1, 2]));
+        Assert.Equal(["ooL2new", "ooL1", "ooL2old"], model.VisibleTransactions.Select(t => t.Hash));
+        Assert.Equal(["BASE", "ROLL"], model.VisibleTokens.Select(t => t.Symbol));
+        Assert.Equal(["Base Art", "Rollup Art"], model.VisibleNFTs.Select(n => n.Name));
+        Assert.Null(model.LayerEmptyText("tokens"));
+        model.ShownLayers = new HashSet<int> { 2 };
+        Assert.Equal(["ooL2new", "ooL2old"], model.VisibleTransactions.Select(t => t.Hash));
+        Assert.True(model.VisibleTokens.Select(t => t.Symbol).SequenceEqual(["ROLL"]) && model.VisibleNFTs.Select(n => n.Name).SequenceEqual(["Rollup Art"]));
+        Assert.Equal("No tokens on Etherlink in this account.", model.LayerEmptyText("tokens"));
+        model.ShownLayers = new HashSet<int> { 1 };
+        Assert.Equal(["ooL1"], model.VisibleTransactions.Select(t => t.Hash));
+        Assert.True(model.VisibleTokens.Select(t => t.Symbol).SequenceEqual(["BASE"]) && model.VisibleNFTs.Select(n => n.Name).SequenceEqual(["Base Art"]));
+        model.ShownLayers = new HashSet<int>();
+        Assert.True(model.VisibleTransactions.Count == 0 && model.Transactions.Count == 3);
+        Assert.True(model.VisibleTokens.Count == 0 && model.VisibleNFTs.Count == 0 && model.Tokens.Count == 2 && model.Nfts.Count == 2);
+        Assert.Equal("Select Tezos or Etherlink to show NFTs.", model.LayerEmptyText("NFTs"));
+
+        // Without Layer 2 the toggles are gone and the choice does not apply.
+        model.SetL2Enabled(false, Network.Mainnet);
+        await model.Refresh();
+        Assert.True(!model.FiltersLayers && model.VisibleTransactions.Select(t => t.Hash).SequenceEqual(["ooL1"]));
+        Assert.True(model.VisibleTokens.Select(t => t.Symbol).SequenceEqual(["BASE"]) && model.VisibleNFTs.Select(n => n.Name).SequenceEqual(["Base Art"]));
+        Assert.Null(model.LayerEmptyText("tokens"));
+    }
+
+    [Fact]
+    public async Task EtherlinkHoldingsJoinTheTabsTaggedAndDistinct()
+    {
+        var model = Model([Me, Tz4]);
+        model.SetL2Enabled(true, Network.Mainnet);
+        await model.Refresh();
+        Assert.True(model.Tokens.Select(t => t.Id).SequenceEqual(["KT1l1:0", "l2:KT1l2:0"]) && model.Tokens.Select(t => t.IsLayer2).SequenceEqual([false, true]));
+        Assert.True(model.Nfts.Select(n => n.Id).SequenceEqual(["KT1l1:1", "l2:KT1l2:1"]) && model.Nfts.Select(n => n.IsLayer2).SequenceEqual([false, true]));
+        Assert.IsType<Portfolio.PortfolioState.Complete>(model.PortfolioState);
+
+        // A key the rollup refuses has nothing on Etherlink.
+        model.Select(Tz4);
+        await model.Refresh();
+        Assert.True(model.Tokens.Select(t => t.Id).SequenceEqual(["KT1l1:0"]) && model.Nfts.Select(n => n.Id).SequenceEqual(["KT1l1:1"]));
+    }
+
+    [Fact]
+    public async Task AnUnreachableEtherlinkIndexerLeavesTheLayer1List()
+    {
+        var model = Model([Me], layer2Fails: true);
+        model.SetL2Enabled(true, Network.Mainnet);
+        await model.Refresh();
+        Assert.True(model.Transactions.Select(t => t.Hash).SequenceEqual(["ooL1"]) && model.ErrorMessage is null);
+        Assert.True(model.Tokens.Select(t => t.Id).SequenceEqual(["KT1l1:0"]) && model.Nfts.Select(n => n.Id).SequenceEqual(["KT1l1:1"]));
+        Assert.IsType<Portfolio.PortfolioState.Complete>(model.PortfolioState);
+    }
+}

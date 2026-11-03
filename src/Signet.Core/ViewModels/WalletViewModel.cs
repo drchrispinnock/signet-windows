@@ -156,12 +156,12 @@ public sealed partial class WalletViewModel : ObservableObject
     [ObservableProperty] private IReadOnlyList<string> domains = [];
     [ObservableProperty] private IReadOnlyList<AssetBalance> assets = [];
     /// <summary>Fungible (DeFi) tokens, shown on the Assets tab rather than in the balance list.</summary>
-    [ObservableProperty] private IReadOnlyList<AssetBalance> tokens = [];
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(VisibleTokens))] private IReadOnlyList<AssetBalance> tokens = [];
     [ObservableProperty] private TezBalance? tezBalance;
-    [ObservableProperty] private IReadOnlyList<NFT> nfts = [];
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(VisibleNFTs))] private IReadOnlyList<NFT> nfts = [];
     /// <summary>Whether <c>Tokens</c> and <c>Nfts</c> are the whole story (S26).</summary>
     [ObservableProperty] private Portfolio.PortfolioState portfolioState = new Portfolio.PortfolioState.Complete();
-    [ObservableProperty] private IReadOnlyList<TezosTransaction> transactions = [];
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(VisibleTransactions))] private IReadOnlyList<TezosTransaction> transactions = [];
     [ObservableProperty, NotifyPropertyChangedFor(nameof(CanGovern), nameof(CanGovernEtherlink))] private DelegateInfo? delegateInfo;
     /// <summary>
     /// Bakers the selected account votes for in Etherlink governance (their voting key), as of
@@ -172,6 +172,78 @@ public sealed partial class WalletViewModel : ObservableObject
 
     public enum ActivityTab { Transactions, Assets, Nfts }
     [ObservableProperty] private ActivityTab activityTabSelection = ActivityTab.Transactions;
+
+    /// <summary>
+    /// Which layers the activity tabs show while Layer 2 is on: the Tezos and Etherlink
+    /// toggles beside the activity picker, both on to begin with. Ignored without Layer 2,
+    /// when everything loaded is layer 1's anyway.
+    /// </summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(VisibleTransactions), nameof(VisibleTokens), nameof(VisibleNFTs))]
+    private IReadOnlySet<int> shownLayers = new HashSet<int> { 1, 2 };
+
+    /// <summary>Whether the layer toggles apply: Layer 2 is on for the network in use.</summary>
+    public bool FiltersLayers => Network.HasL2;
+
+    /// <summary>The rows the Recent transactions list shows: everything loaded, cut to the chosen layers while Layer 2 is on.</summary>
+    public IReadOnlyList<TezosTransaction> VisibleTransactions => Visible(Transactions, t => t.Layer);
+    /// <summary>The Assets tab's tokens, cut the same way.</summary>
+    public IReadOnlyList<AssetBalance> VisibleTokens => Visible(Tokens, t => t.Layer);
+    /// <summary>The NFTs tab's tokens, cut the same way.</summary>
+    public IReadOnlyList<NFT> VisibleNFTs => Visible(Nfts, n => n.Layer);
+
+    private IReadOnlyList<T> Visible<T>(IReadOnlyList<T> items, Func<T, int> layer) =>
+        FiltersLayers ? items.Where(item => ShownLayers.Contains(layer(item))).ToList() : items;
+
+    /// <summary>
+    /// What an activity tab says when the toggles leave it empty: nothing on the chosen chain,
+    /// or no chain chosen. null when the toggles are off or both are on, so the tab's own
+    /// wording stands.
+    /// </summary>
+    public string? LayerEmptyText(string noun)
+    {
+        if (!FiltersLayers) return null;
+        if (ShownLayers.Count == 0) return $"Select Tezos or Etherlink to show {noun}.";
+        if (ShownLayers.Count == 1 && ShownLayers.Contains(1)) return $"No {noun} on Tezos in this account.";
+        if (ShownLayers.Count == 1 && ShownLayers.Contains(2)) return $"No {noun} on Etherlink in this account.";
+        return null;
+    }
+
+    /// <summary>
+    /// Etherlink's side of the account's history, for the Recent transactions list: the same
+    /// TzKT shape read from Etherlink's indexer through the Layer 2 service, each row tagged as
+    /// layer 2. Nothing without Layer 2 on, for a key the rollup refuses, or when Etherlink's
+    /// indexer cannot be read, in which case the layer 1 list stands alone.
+    /// </summary>
+    private static async Task<IReadOnlyList<TezosTransaction>> EtherlinkHistory(Address address, Network network, IChainService? chain, int limit)
+    {
+        if (!network.HasL2 || !address.IsUsableOnEtherlink || chain is null) return [];
+        try { return (await chain.RecentTransactionsFor(address, limit)).Select(t => t.OnLayer2()).ToList(); }
+        catch (Exception) { return []; }
+    }
+
+    /// <summary>
+    /// Etherlink's side of the account's holdings, for the Assets and NFTs tabs: the same TzKT
+    /// token listing read from Etherlink's indexer through the Layer 2 service, each tagged as
+    /// layer 2. Empty without Layer 2 on, for a key the rollup refuses, or when Etherlink's
+    /// indexer cannot be read, in which case layer 1's holdings stand alone.
+    /// </summary>
+    private static async Task<Portfolio> EtherlinkPortfolio(Address address, Network network, IChainService? chain)
+    {
+        if (!network.HasL2 || !address.IsUsableOnEtherlink || chain is null) return Portfolio.Empty;
+        try
+        {
+            var portfolio = await chain.PortfolioFor(address);
+            return portfolio.State is Portfolio.PortfolioState.Unavailable ? Portfolio.Empty : portfolio.OnLayer2();
+        }
+        catch (Exception) { return Portfolio.Empty; }
+    }
+
+    /// <summary>
+    /// Both layers' histories as one list, newest first, cut to <c>limit</c>. Rows of the same moment
+    /// keep their order, layer 1 before layer 2.
+    /// </summary>
+    public static IReadOnlyList<TezosTransaction> MergedHistory(int limit, params IReadOnlyList<TezosTransaction>[] lists) =>
+        lists.SelectMany(l => l).OrderByDescending(t => t.Timestamp).Take(limit).ToList();
     [ObservableProperty] private bool isLoading;
     /// <summary>True when the node has no record of the selected address (never funded on this network).</summary>
     [ObservableProperty] private bool accountNotOnChain;
@@ -213,6 +285,10 @@ public sealed partial class WalletViewModel : ObservableObject
             OnPropertyChanged(nameof(CurrentMultisigProposals));
             OnPropertyChanged(nameof(CanGovern));
             OnPropertyChanged(nameof(CanGovernEtherlink));
+            OnPropertyChanged(nameof(FiltersLayers));
+            OnPropertyChanged(nameof(VisibleTransactions));
+            OnPropertyChanged(nameof(VisibleTokens));
+            OnPropertyChanged(nameof(VisibleNFTs));
             NodeMonitor.Network = value;
             L2Monitor.Network = value;
             chain = chainFactory(value);
@@ -692,6 +768,9 @@ public sealed partial class WalletViewModel : ObservableObject
         var delegation = Start(() => chain.DelegateInfoFor(address));
         var etherlink = EtherlinkRow(address, mine.Network, chain);
         var votesFor = EtherlinkVotesForAddress(address, mine.Network, chain);
+        var layer2 = Layer2Chain;
+        var etherlinkHistory = EtherlinkHistory(address, mine.Network, layer2, RecentTransactionLimit);
+        var etherlinkHoldings = EtherlinkPortfolio(address, mine.Network, layer2);
         try
         {
             var tezBalance = await tez;
@@ -700,8 +779,9 @@ public sealed partial class WalletViewModel : ObservableObject
             if (await etherlink is { } row) snapshot.Assets.Add(row);
             try { snapshot.Portfolio = await holdings; }
             catch (Exception) { snapshot.Portfolio = new Portfolio([], [], new Portfolio.PortfolioState.Unavailable("Could not read the account's tokens.")); }
+            snapshot.Portfolio = snapshot.Portfolio.Adding(await etherlinkHoldings);
             snapshot.Domains = await names;
-            snapshot.Transactions = await history;
+            snapshot.Transactions = MergedHistory(RecentTransactionLimit, await history, await etherlinkHistory);
             try { snapshot.DelegateInfo = await delegation; } catch (Exception) { }
             snapshot.EtherlinkVotesFor = await votesFor;
         }
@@ -716,7 +796,7 @@ public sealed partial class WalletViewModel : ObservableObject
         {
             snapshot.Error = e.Message;
         }
-        Observe(holdings, names, history, delegation, etherlink, votesFor);
+        Observe(holdings, names, history, delegation, etherlink, votesFor, etherlinkHistory, etherlinkHoldings);
 
         // Publish only into the context the load was started for.
         if (CurrentContext != mine) return;

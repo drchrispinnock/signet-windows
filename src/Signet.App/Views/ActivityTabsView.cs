@@ -3,6 +3,7 @@ using System.Globalization;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Signet.App.Services;
 using Signet.Models;
@@ -17,6 +18,7 @@ public sealed partial class ActivityTabsView : UserControl
     private readonly WalletViewModel model;
     private readonly SelectorBar tabs = new() { MaxWidth = 400, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly ContentControl body = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
+    private readonly LayerToggles toggles;
 
     private static readonly (WalletViewModel.ActivityTab Tab, string Title)[] Tabs =
     [
@@ -34,11 +36,18 @@ public sealed partial class ActivityTabsView : UserControl
         {
             if (tabs.SelectedItem?.Tag is WalletViewModel.ActivityTab tab) model.ActivityTabSelection = tab;
         };
+        toggles = new LayerToggles(model) { HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+        var header = new Grid { ColumnSpacing = 12 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(toggles, 1);
+        header.Children.Add(tabs);
+        header.Children.Add(toggles);
         var grid = new Grid { RowSpacing = 10 };
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         Grid.SetRow(body, 1);
-        grid.Children.Add(tabs);
+        grid.Children.Add(header);
         grid.Children.Add(body);
         Content = grid;
         model.PropertyChanged += Changed;
@@ -57,21 +66,24 @@ public sealed partial class ActivityTabsView : UserControl
             return;
         }
         if (e.PropertyName is nameof(WalletViewModel.ActivityTabSelection) or nameof(WalletViewModel.Transactions) or nameof(WalletViewModel.Tokens)
-            or nameof(WalletViewModel.Nfts) or nameof(WalletViewModel.PortfolioState) or nameof(WalletViewModel.Wallets))
+            or nameof(WalletViewModel.Nfts) or nameof(WalletViewModel.PortfolioState) or nameof(WalletViewModel.Wallets)
+            or nameof(WalletViewModel.ShownLayers) or nameof(WalletViewModel.FiltersLayers))
             Update();
     }
 
     private bool CurrentListIsEmpty => model.ActivityTabSelection switch
     {
-        WalletViewModel.ActivityTab.Transactions => model.Transactions.Count == 0,
-        WalletViewModel.ActivityTab.Assets => model.Tokens.Count == 0,
-        _ => model.Nfts.Count == 0,
+        WalletViewModel.ActivityTab.Transactions => model.VisibleTransactions.Count == 0,
+        WalletViewModel.ActivityTab.Assets => model.VisibleTokens.Count == 0,
+        _ => model.VisibleNFTs.Count == 0,
     };
 
     private readonly List<TransactionRowView> transactionRows = [];
 
     private void Update()
     {
+        toggles.Visibility = model.FiltersLayers ? Visibility.Visible : Visibility.Collapsed;
+        toggles.Sync();
         body.Content = model.ActivityTabSelection switch
         {
             WalletViewModel.ActivityTab.Transactions => TransactionList(),
@@ -92,9 +104,9 @@ public sealed partial class ActivityTabsView : UserControl
     private UIElement TransactionList()
     {
         transactionRows.Clear();
-        if (model.Transactions.Count == 0) return EmptyNote(model.IsLoading ? "Loading…" : "No transactions yet.");
+        if (model.VisibleTransactions.Count == 0) return EmptyNote(model.IsLoading ? "Loading…" : model.LayerEmptyText("transactions") ?? "No transactions yet.");
         var list = new StackPanel();
-        foreach (var tx in model.Transactions)
+        foreach (var tx in model.VisibleTransactions)
         {
             var row = new TransactionRowView(model, tx);
             transactionRows.Add(row);
@@ -119,14 +131,14 @@ public sealed partial class ActivityTabsView : UserControl
         var grid = new Grid();
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        if (model.Tokens.Count == 0)
+        if (model.VisibleTokens.Count == 0)
         {
-            grid.Children.Add(EmptyNote(model.IsLoading ? "Loading…" : state is Portfolio.PortfolioState.Unavailable ? "Token data is unavailable." : "No tokens in this account."));
+            grid.Children.Add(EmptyNote(model.IsLoading ? "Loading…" : state is Portfolio.PortfolioState.Unavailable ? "Token data is unavailable." : model.LayerEmptyText("tokens") ?? "No tokens in this account."));
         }
         else
         {
             var list = new StackPanel();
-            foreach (var token in model.Tokens)
+            foreach (var token in model.VisibleTokens)
             {
                 list.Children.Add(TokenRow(token));
                 list.Children.Add(Divider(56));
@@ -196,18 +208,22 @@ public sealed partial class ActivityTabsView : UserControl
         Grid.SetColumn(names, 1);
         row.Children.Add(names);
 
-        var amount = new TextBlock { Text = token.FormattedAmount, VerticalAlignment = VerticalAlignment.Center };
+        var amount = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
+        if (token.IsLayer2) amount.Children.Add(EtherlinkMark());
+        amount.Children.Add(new TextBlock { Text = token.FormattedAmount, VerticalAlignment = VerticalAlignment.Center });
         Grid.SetColumn(amount, 2);
         row.Children.Add(amount);
 
-        ToolTipService.SetToolTip(row, contract is null ? token.Name : $"{token.Name}\n{contract}");
+        // The explorer the token's contract is on: Etherlink's for a layer 2 token.
+        var explorer = token.IsLayer2 ? model.Network.Layer2 : model.Network;
+        ToolTipService.SetToolTip(row, (token.IsLayer2 ? "On Etherlink\n" : "") + (contract is null ? token.Name : $"{token.Name}\n{contract}"));
         if (contract is not null)
         {
             var menu = new MenuFlyout();
             var copy = new MenuFlyoutItem { Text = "Copy contract address" };
             copy.Click += (_, _) => Pasteboard.SetString(contract);
             menu.Items.Add(copy);
-            if (model.Network.ExplorerURLForContract(contract) is { } url)
+            if (explorer?.ExplorerURLForContract(contract) is { } url)
             {
                 var view = new MenuFlyoutItem { Text = "View in explorer" };
                 view.Click += async (_, _) => await Windows.System.Launcher.LaunchUriAsync(url);
@@ -229,16 +245,16 @@ public sealed partial class ActivityTabsView : UserControl
         stack.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         if (PortfolioStateNote(state) is { } note) stack.Children.Add(note);
         UIElement content;
-        if (model.Nfts.Count == 0)
+        if (model.VisibleNFTs.Count == 0)
         {
-            content = EmptyNote(model.IsLoading ? "Loading…" : state is Portfolio.PortfolioState.Unavailable ? "NFT data is unavailable." : "No NFTs in this account.");
+            content = EmptyNote(model.IsLoading ? "Loading…" : state is Portfolio.PortfolioState.Unavailable ? "NFT data is unavailable." : model.LayerEmptyText("NFTs") ?? "No NFTs in this account.");
         }
         else
         {
             var tiles = new ItemsRepeater
             {
                 Layout = new UniformGridLayout { MinItemWidth = 140, MinItemHeight = 166, MinColumnSpacing = 12, MinRowSpacing = 16, ItemsStretch = UniformGridLayoutItemsStretch.None },
-                ItemsSource = model.Nfts.Select(NFTTile).ToList(),
+                ItemsSource = model.VisibleNFTs.Select(NFTTile).ToList(),
             };
             content = new ScrollViewer { Content = tiles, Padding = new Thickness(0, 2, 0, 2) };
         }
@@ -267,6 +283,14 @@ public sealed partial class ActivityTabsView : UserControl
                 Background = new SolidColorBrush(Windows.UI.Color.FromArgb(153, 0, 0, 0)),
                 Child = new TextBlock { Text = $"×{nft.Balance.ToString("0.##", CultureInfo.CurrentCulture)}", FontSize = 10, FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) },
             });
+        if (nft.IsLayer2)
+            square.Children.Add(new Border
+            {
+                HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(6),
+                Padding = new Thickness(3), CornerRadius = new CornerRadius(11),
+                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(153, 0, 0, 0)),
+                Child = EtherlinkMark(16),
+            });
         if (nft.ImageURLs.Count > 0)
             ImageLoader.Load(image, nft.ImageURLs, 260, ok =>
             {
@@ -277,8 +301,75 @@ public sealed partial class ActivityTabsView : UserControl
         var tile = new StackPanel { Spacing = 6, Width = 140 };
         tile.Children.Add(square);
         tile.Children.Add(new TextBlock { Text = nft.Name, FontSize = 12, Foreground = secondary, TextTrimming = TextTrimming.CharacterEllipsis });
-        ToolTipService.SetToolTip(tile, $"{nft.Name}\n{nft.Contract} #{nft.TokenId}");
+        ToolTipService.SetToolTip(tile, (nft.IsLayer2 ? "On Etherlink\n" : "") + $"{nft.Name}\n{nft.Contract} #{nft.TokenId}");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(tile, nft.Name + (nft.IsLayer2 ? ", on Etherlink" : ""));
         return tile;
+    }
+
+    /// <summary>
+    /// A small Etherlink logo beside a layer 2 row's figure or on its tile: the same mark as the
+    /// dashboard's Etherlink balance row, so a list reads "on Etherlink".
+    /// </summary>
+    internal static Image EtherlinkMark(double size = 14)
+    {
+        var mark = ChainSideExtensions.SmallLogo("Assets/EtherlinkLogo.svg", size);
+        mark.VerticalAlignment = VerticalAlignment.Center;
+        ToolTipService.SetToolTip(mark, "On Etherlink");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAccessibilityView(mark, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
+        return mark;
+    }
+}
+
+/// <summary>
+/// Two logo buttons, Tezos and Etherlink, each lit while that layer's holdings and operations
+/// are shown. Beside the activity picker while Layer 2 is on, so every tab can be cut to one chain.
+/// </summary>
+public sealed partial class LayerToggles : UserControl
+{
+    private readonly WalletViewModel model;
+    private readonly ToggleButton tezos;
+    private readonly ToggleButton etherlink;
+    private bool syncing;
+
+    public LayerToggles(WalletViewModel model)
+    {
+        this.model = model;
+        tezos = Toggle(1, "Assets/TezosToken.svg", "Tezos");
+        etherlink = Toggle(2, "Assets/EtherlinkLogo.svg", "Etherlink");
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        row.Children.Add(tezos);
+        row.Children.Add(etherlink);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(row, "Chains shown");
+        Content = row;
+        Sync();
+    }
+
+    private ToggleButton Toggle(int layer, string logo, string name)
+    {
+        var button = new ToggleButton { Content = ChainSideExtensions.SmallLogo(logo, 16), Padding = new Thickness(6, 3, 6, 3), MinWidth = 0 };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, name);
+        button.Click += (_, _) =>
+        {
+            if (syncing) return;
+            var shown = new HashSet<int>(model.ShownLayers);
+            if (button.IsChecked == true) shown.Add(layer); else shown.Remove(layer);
+            model.ShownLayers = shown;
+        };
+        return button;
+    }
+
+    /// <summary>Lights each button for the layers the model shows.</summary>
+    public void Sync()
+    {
+        syncing = true;
+        foreach (var (button, layer, name) in new[] { (tezos, 1, "Tezos"), (etherlink, 2, "Etherlink") })
+        {
+            var on = model.ShownLayers.Contains(layer);
+            button.IsChecked = on;
+            ((FrameworkElement)button.Content).Opacity = on ? 1 : 0.45;
+            ToolTipService.SetToolTip(button, on ? $"Showing {name}. Click to hide its transactions, tokens and NFTs." : $"Show {name}");
+        }
+        syncing = false;
     }
 }
 
@@ -335,9 +426,13 @@ public sealed partial class TransactionRowView : UserControl
         row.Children.Add(middle);
 
         var right = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
+        // The amount, the delegator's balance, or the kind of call; a layer 2 row wears the Etherlink mark.
+        var figure = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, HorizontalAlignment = HorizontalAlignment.Right };
+        if (transaction.IsLayer2) figure.Children.Add(ActivityTabsView.EtherlinkMark());
+        right.Children.Add(figure);
         if (transaction.Amount > 0)
         {
-            right.Children.Add(new TextBlock
+            figure.Children.Add(new TextBlock
             {
                 Text = SignedAmount, FontWeight = FontWeights.Medium, HorizontalAlignment = HorizontalAlignment.Right,
                 Foreground = transaction.Direction == TezosTransaction.TransactionDirection.Incoming
@@ -346,12 +441,12 @@ public sealed partial class TransactionRowView : UserControl
         }
         else if (transaction.Kind == TezosTransaction.TransactionKind.Delegation && transaction.DelegatedBalance is > 0 and var balance)
         {
-            right.Children.Add(new TextBlock { Text = AssetBalance.Format(balance, "tz"), Foreground = secondary, HorizontalAlignment = HorizontalAlignment.Right });
+            figure.Children.Add(new TextBlock { Text = AssetBalance.Format(balance, "tz"), Foreground = secondary, HorizontalAlignment = HorizontalAlignment.Right });
             right.Children.Add(new TextBlock { Text = "delegated balance", FontSize = 10, Foreground = tertiary, HorizontalAlignment = HorizontalAlignment.Right });
         }
         else
         {
-            right.Children.Add(new TextBlock { Text = transaction.Kind == TezosTransaction.TransactionKind.Delegation ? "Delegation" : "Call", Foreground = secondary, HorizontalAlignment = HorizontalAlignment.Right });
+            figure.Children.Add(new TextBlock { Text = transaction.Kind == TezosTransaction.TransactionKind.Delegation ? "Delegation" : "Call", Foreground = secondary, HorizontalAlignment = HorizontalAlignment.Right });
         }
         if (transaction.Direction != TezosTransaction.TransactionDirection.Incoming && transaction.Fee > 0)
             right.Children.Add(new TextBlock { Text = $"fee {AssetBalance.Format(transaction.Fee, "tz")}", FontSize = 10, Foreground = tertiary, HorizontalAlignment = HorizontalAlignment.Right });
@@ -363,12 +458,18 @@ public sealed partial class TransactionRowView : UserControl
         row.PointerExited += (_, _) => row.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         row.Tapped += async (_, _) =>
         {
-            if (model.Network.ExplorerURLForOperation(transaction.Hash) is { } url) await Windows.System.Launcher.LaunchUriAsync(url);
+            if (ExplorerNetwork?.ExplorerURLForOperation(transaction.Hash) is { } url) await Windows.System.Launcher.LaunchUriAsync(url);
         };
         ToolTipService.SetToolTip(row, HelpText);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(row, $"{Headline}, {Subtitle}, {(transaction.Amount > 0 ? SignedAmount : "")}");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(row, $"{Headline}, {Subtitle}, {(transaction.Amount > 0 ? SignedAmount : "")}{(transaction.IsLayer2 ? ", on Etherlink" : "")}");
         Content = row;
     }
+
+    /// <summary>
+    /// The network the row's explorer link belongs to: Etherlink's for a layer 2 row (none if
+    /// Layer 2 has since been turned off), else the one in use.
+    /// </summary>
+    private Network? ExplorerNetwork => transaction.IsLayer2 ? model.Network.Layer2 : model.Network;
 
     private (string Name, bool IsOurs) Party =>
         transaction.Counterparty is { } address ? model.DisplayName(address, transaction.CounterpartyAlias) : ("Unknown", false);
@@ -452,8 +553,9 @@ public sealed partial class TransactionRowView : UserControl
         get
         {
             var lines = new List<string> { transaction.Hash, $"Block {transaction.Level.ToString("N0", CultureInfo.CurrentCulture)}", transaction.Timestamp.ToLocalTime().ToString("g", CultureInfo.CurrentCulture) };
+            if (transaction.IsLayer2) lines.Insert(0, "On Etherlink");
             if (transaction.Counterparty is { } address) lines.Add(address.Value);
-            if (model.Network.ExplorerURLForOperation(transaction.Hash) is not null) lines.Add("Click to view in the explorer");
+            if (ExplorerNetwork?.ExplorerURLForOperation(transaction.Hash) is not null) lines.Add("Click to view in the explorer");
             return string.Join("\n", lines);
         }
     }

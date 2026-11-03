@@ -33,9 +33,22 @@ public sealed record AssetBalance(string Id, AssetBalance.AssetKind Kind, string
 
     public string FormattedAmount => Format(Amount, Symbol);
 
+    /// <summary>
+    /// Where the token lives: 1 on Tezos, 2 on Etherlink's Michelson interface (read from
+    /// Etherlink's TzKT). The dashboard's own rows (tez, Etherlink, Shielded) are layer 1.
+    /// </summary>
+    public int Layer { get; init; } = 1;
+    public bool IsLayer2 => Layer == 2;
+
+    /// <summary>
+    /// The same token tagged as Etherlink's, its id prefixed so it cannot collide with a
+    /// layer 1 token of the same contract and token id.
+    /// </summary>
+    public AssetBalance OnLayer2() => this with { Layer = 2, Id = "l2:" + Id };
+
     // The breakdown and logos are part of the value: an unchanged refresh must compare equal (no redraw).
     public bool Equals(AssetBalance? other) =>
-        other is not null && Id == other.Id && Kind == other.Kind && Name == other.Name && Symbol == other.Symbol && Amount == other.Amount &&
+        other is not null && Id == other.Id && Layer == other.Layer && Kind == other.Kind && Name == other.Name && Symbol == other.Symbol && Amount == other.Amount &&
         Standard == other.Standard && Unavailable == other.Unavailable && Details.SequenceEqual(other.Details) && IconURLs.SequenceEqual(other.IconURLs);
     public override int GetHashCode() => HashCode.Combine(Id, Kind, Amount);
 

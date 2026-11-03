@@ -24,6 +24,19 @@ public sealed record TezosTransaction(
     public enum TransactionDirection { Incoming, Outgoing, SelfTransfer }
 
     /// <summary>
+    /// Where it happened: 1 on Tezos, 2 on Etherlink's Michelson interface (the same shape of
+    /// row, read from Etherlink's TzKT). Rows from both layers share one list.
+    /// </summary>
+    public int Layer { get; init; } = 1;
+    public bool IsLayer2 => Layer == 2;
+
+    /// <summary>
+    /// The same row tagged as Etherlink's. Indexer ids are only unique within one indexer, so
+    /// the id is prefixed to keep it distinct from a layer 1 row with the same number.
+    /// </summary>
+    public TezosTransaction OnLayer2() => this with { Layer = 2, Id = "l2:" + Id };
+
+    /// <summary>
     /// The contract that carried this out on our behalf: an internal operation a multisig (or any
     /// contract we called) emitted, which the indexer lists under our account with the contract
     /// as sender and us as initiator. <c>null</c> for operations we sent ourselves.

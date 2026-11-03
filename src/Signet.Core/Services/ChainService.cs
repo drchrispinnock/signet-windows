@@ -92,6 +92,15 @@ public sealed record Portfolio(IReadOnlyList<AssetBalance> Tokens, IReadOnlyList
 
     public static readonly Portfolio Empty = new([], [], new PortfolioState.Complete());
 
+    /// <summary>Every holding tagged as Etherlink's.</summary>
+    public Portfolio OnLayer2() => new(Tokens.Select(t => t.OnLayer2()).ToList(), Nfts.Select(n => n.OnLayer2()).ToList(), State);
+
+    /// <summary>
+    /// This (layer 1) portfolio with Etherlink's holdings appended. The state stays layer 1's:
+    /// an unavailable layer 1 indexer keeps the last known lists, Etherlink's included.
+    /// </summary>
+    public Portfolio Adding(Portfolio other) => new([.. Tokens, .. other.Tokens], [.. Nfts, .. other.Nfts], State);
+
     public bool Equals(Portfolio? other) =>
         other is not null && Tokens.SequenceEqual(other.Tokens) && Nfts.SequenceEqual(other.Nfts) && State == other.State;
     public override int GetHashCode() => HashCode.Combine(Tokens.Count, Nfts.Count, State);
