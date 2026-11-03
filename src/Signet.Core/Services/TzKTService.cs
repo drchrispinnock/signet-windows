@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using Signet.Models;
 
 namespace Signet.Services;
@@ -12,16 +13,20 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
     private readonly HttpClient http = http ?? Http.Shared;
 
     /// <summary>One row of <c>/v1/tokens/balances</c>.</summary>
-    public sealed record TokenBalance(string Balance, TokenBalance.TokenInfo Token)
+    /// <param name="LastTime">When this balance last changed (ISO 8601), for ordering.</param>
+    /// <param name="FirstTime">When it first appeared (ISO 8601).</param>
+    public sealed record TokenBalance(string Balance, TokenBalance.TokenInfo Token, string? LastTime = null, string? FirstTime = null)
     {
         public sealed record TokenInfo(TokenInfo.ContractInfo Contract, string TokenId, string? Standard, TokenInfo.MetadataInfo? Metadata)
         {
             public sealed record ContractInfo(string Address);
 
             /// <param name="Icon">Fungible tokens often put their logo here instead of thumbnailUri.</param>
+            /// <param name="IsTransferable">TZIP-21: false for tokens the contract will not move (soulbound); absent means true.</param>
             public sealed record MetadataInfo(
                 string? Name, string? Symbol, string? Decimals, string? ThumbnailUri, string? DisplayUri, string? ArtifactUri,
-                string? Icon, IReadOnlyList<MetadataInfo.Format>? Formats)
+                string? Icon, IReadOnlyList<MetadataInfo.Format>? Formats,
+                [property: JsonConverter(typeof(LenientBoolConverter))] bool? IsTransferable = null)
             {
                 public sealed record Format(string? Uri, string? MimeType);
 
@@ -37,6 +42,32 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
     }
 
     private static readonly JsonSerializerOptions DecodeOptions = new(JsonSerializerDefaults.Web);
+
+    /// <summary>
+    /// A boolean in the standard; some minters write the words. Anything else reads as absent,
+    /// never as a decoding failure for the whole page.
+    /// </summary>
+    public sealed class LenientBoolConverter : JsonConverter<bool?>
+    {
+        public override bool? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            switch (reader.TokenType)
+            {
+                case JsonTokenType.True: return true;
+                case JsonTokenType.False: return false;
+                case JsonTokenType.String:
+                    return reader.GetString()?.Trim().ToLowerInvariant() switch { "true" => true, "false" => false, _ => null };
+                default:
+                    reader.Skip();
+                    return null;
+            }
+        }
+
+        public override void Write(Utf8JsonWriter writer, bool? value, JsonSerializerOptions options)
+        {
+            if (value is { } flag) writer.WriteBooleanValue(flag); else writer.WriteNullValue();
+        }
+    }
 
     private async Task<byte[]> GetJSON(Uri url, TimeSpan timeout)
     {
@@ -149,10 +180,27 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
                 row.Token.TokenId,
                 NonEmpty(metadata.Name?.Trim()) ?? $"#{row.Token.TokenId}",
                 decimal.TryParse(row.Balance, NumberStyles.Number, CultureInfo.InvariantCulture, out var b) ? b : 1,
-                images);
+                images)
+            {
+                Date = DateTimeOffset.TryParse(row.LastTime ?? row.FirstTime, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date) ? date : null,
+                ArtifactMime = ArtifactMime(metadata),
+                ArtifactURLs = metadata.ArtifactUri is { } artifact ? IPFS.CandidateURLs(artifact) : [],
+                IsTransferable = metadata.IsTransferable ?? true,
+            };
         })
         .OfType<NFT>()
         .ToList();
+
+    /// <summary>
+    /// The MIME type of the token's artifact: the format naming <c>artifactUri</c>, else the first
+    /// format listed. null when the metadata says nothing.
+    /// </summary>
+    public static string? ArtifactMime(TokenBalance.TokenInfo.MetadataInfo metadata)
+    {
+        var formats = metadata.Formats ?? [];
+        var format = (metadata.ArtifactUri is { } uri ? formats.FirstOrDefault(f => f.Uri == uri) : null) ?? formats.FirstOrDefault();
+        return NonEmpty(format?.MimeType?.Trim().ToLowerInvariant());
+    }
 
     /// <summary>
     /// Every URL worth trying for the tile, best first: displayUri is a sized-down render meant

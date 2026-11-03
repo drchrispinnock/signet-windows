@@ -200,4 +200,18 @@ public sealed class MockChainService : IChainService
         CheckPassphrase(wallet, signer);
         return Task.FromResult(new SentOperation($"ooMockEtherlink{operation.Entrypoint}"));
     }
+
+    public Task<TokenTransferEstimate> EstimateTokenTransfer(TokenTransferRequest request, Wallet wallet)
+    {
+        if (!request.IsValid) throw new ChainError.InvalidTokenTransfer();
+        var operations = request.Contracts.Select(_ => new BatchLimits.Operation("1500", 3000, 50)).ToList();
+        return Task.FromResult(new TokenTransferEstimate(operations.Count * 0.0015m, operations.Count * 0.0125m, new BatchLimits(operations)));
+    }
+
+    public Task<SentOperation> SendTokenTransfer(TokenTransferRequest request, Wallet wallet, SigningKey signer, BatchLimits limits)
+    {
+        CheckPassphrase(wallet, signer);
+        if (limits.Operations.Count != request.Contracts.Count) throw new ChainError.InvalidTokenTransfer();
+        return Task.FromResult(new SentOperation($"ooMockTokens{request.Count}"));
+    }
 }

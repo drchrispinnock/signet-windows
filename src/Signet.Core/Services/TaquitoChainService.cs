@@ -477,6 +477,28 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
         return SentOperation.From(result) ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected governance payload: {result}");
     }
 
+    // ---- FA2 tokens ------------------------------------------------------------------------------
+
+    public async Task<TokenTransferEstimate> EstimateTokenTransfer(TokenTransferRequest request, Wallet wallet)
+    {
+        if (!request.IsValid) throw new ChainError.InvalidTokenTransfer();
+        var publicKey = PublicKeyArgument(wallet);
+        await VerifyChain();
+        var result = await TaquitoBridge.BridgeError.Typed(() => bridge.Call("estimateTokenTransfer", Rpc, wallet.Address.Value, publicKey, request.To.Value, request.TransfersJSON));
+        if (Mutez.ToTez(result["feeMutez"]?.StringValue) is not { } fee || Mutez.ToTez(result["burnMutez"]?.StringValue) is not { } burn ||
+            BatchLimits.From(result["limits"]) is not { } limits || limits.Operations.Count != request.Contracts.Count)
+            throw new TaquitoBridge.BridgeError.JavaScript($"unexpected estimate payload: {result}");
+        return new TokenTransferEstimate(fee, burn, limits);
+    }
+
+    public async Task<SentOperation> SendTokenTransfer(TokenTransferRequest request, Wallet wallet, SigningKey signer, BatchLimits limits)
+    {
+        if (!request.IsValid) throw new ChainError.InvalidTokenTransfer();
+        await VerifyChain();
+        var result = await Signing(() => bridge.Call("sendTokenTransfer", Rpc, signer.BridgeSpec, request.To.Value, request.TransfersJSON, limits.Json));
+        return SentOperation.From(result) ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected token transfer payload: {result}");
+    }
+
     public async Task<IReadOnlyList<AssetBalance>> TokenBalancesFor(Address address) =>
         Network.TzktURL is { } tzkt ? await new TzKTService(tzkt, http).FungibleTokensFor(address) : [];
 

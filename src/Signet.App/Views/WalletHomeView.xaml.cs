@@ -62,7 +62,7 @@ public sealed partial class WalletHomeView : UserControl
                 ErrorLine.Text = model.ErrorMessage ?? "";
                 ErrorLine.Visibility = model.ErrorMessage is null ? Visibility.Collapsed : Visibility.Visible;
                 break;
-            case { } name when name.StartsWith("IsPresenting", StringComparison.Ordinal):
+            case { } name when name.StartsWith("IsPresenting", StringComparison.Ordinal) || name is nameof(WalletViewModel.NftOperation) or nameof(WalletViewModel.NftDownload):
                 _ = PresentSheets();
                 break;
             case nameof(WalletViewModel.Dapps):
@@ -156,6 +156,12 @@ public sealed partial class WalletHomeView : UserControl
         else if (model.IsPresentingRenameWallet) { dialog = new RenameWalletSheet(model); reset = () => model.IsPresentingRenameWallet = false; }
         else if (model.IsPresentingAddAddress) { dialog = new AddAddressSheet(model); reset = () => model.IsPresentingAddAddress = false; }
         else if (model.IsPresentingExportKey) { dialog = new ExportKeySheet(model); reset = () => model.IsPresentingExportKey = false; }
+        else if (model.NftOperation is { } nftOperation && model.SelectedWallet is not null)
+        {
+            dialog = new TransferNFTSheet(model, nftOperation);
+            reset = () => model.NftOperation = null;
+        }
+        else if (model.NftDownload is { } nftDownload) { dialog = new DownloadNFTsSheet(model.NftDownloader, nftDownload); reset = () => model.NftDownload = null; }
         else if (model.IsPresentingProofOfPossession) { dialog = new ProofOfPossessionSheet(model); reset = () => model.IsPresentingProofOfPossession = false; }
         else if (model.IsPresentingForget) { dialog = new ForgetAccountSheet(model); reset = () => model.IsPresentingForget = false; }
         else if (model.IsPresentingRememberKey) { dialog = new RememberKeySheet(model); reset = () => model.IsPresentingRememberKey = false; }

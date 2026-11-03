@@ -19,6 +19,7 @@ public sealed partial class ActivityTabsView : UserControl
     private readonly SelectorBar tabs = new() { MaxWidth = 400, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly ContentControl body = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
     private readonly LayerToggles toggles;
+    private readonly NFTGridView nftGrid;
 
     private static readonly (WalletViewModel.ActivityTab Tab, string Title)[] Tabs =
     [
@@ -30,6 +31,7 @@ public sealed partial class ActivityTabsView : UserControl
     public ActivityTabsView(WalletViewModel model)
     {
         this.model = model;
+        nftGrid = new NFTGridView(new NFTActions(model.TokenNetwork, model.CanTransferTokens, operation => model.NftOperation = operation, download => model.NftDownload = download));
         foreach (var (tab, title) in Tabs)
             tabs.Items.Add(new SelectorBarItem { Text = title, Tag = tab, IsSelected = tab == model.ActivityTabSelection });
         tabs.SelectionChanged += (_, _) =>
@@ -154,7 +156,7 @@ public sealed partial class ActivityTabsView : UserControl
     }
 
     /// <summary>A line under the Assets and NFTs tabs when the list is not the whole story (S26).</summary>
-    private static FrameworkElement? PortfolioStateNote(Portfolio.PortfolioState state)
+    internal static FrameworkElement? PortfolioStateNote(Portfolio.PortfolioState state)
     {
         var text = state switch
         {
@@ -236,74 +238,11 @@ public sealed partial class ActivityTabsView : UserControl
 
     // ---- NFTs ------------------------------------------------------------------------------------
 
-    /// <summary>Grid of NFT thumbnails.</summary>
+    /// <summary>The NFTs tab: kept across refreshes so its selection survives them.</summary>
     private UIElement NFTGrid()
     {
-        var state = model.PortfolioState;
-        var stack = new Grid { RowSpacing = 10 };
-        stack.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        stack.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        if (PortfolioStateNote(state) is { } note) stack.Children.Add(note);
-        UIElement content;
-        if (model.VisibleNFTs.Count == 0)
-        {
-            content = EmptyNote(model.IsLoading ? "Loading…" : state is Portfolio.PortfolioState.Unavailable ? "NFT data is unavailable." : model.LayerEmptyText("NFTs") ?? "No NFTs in this account.");
-        }
-        else
-        {
-            var tiles = new ItemsRepeater
-            {
-                Layout = new UniformGridLayout { MinItemWidth = 140, MinItemHeight = 166, MinColumnSpacing = 12, MinRowSpacing = 16, ItemsStretch = UniformGridLayoutItemsStretch.None },
-                ItemsSource = model.VisibleNFTs.Select(NFTTile).ToList(),
-            };
-            content = new ScrollViewer { Content = tiles, Padding = new Thickness(0, 2, 0, 2) };
-        }
-        Grid.SetRow((FrameworkElement)content, 1);
-        stack.Children.Add(content);
-        return stack;
-    }
-
-    private static UIElement NFTTile(NFT nft)
-    {
-        var secondary = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
-        var square = new Grid { Width = 140, Height = 140 };
-        square.Children.Add(new Border { Background = (Brush)Application.Current.Resources["ControlAltFillColorTertiaryBrush"], CornerRadius = new CornerRadius(10) });
-        var placeholder = new ProgressRing { Width = 20, Height = 20, IsActive = nft.ImageURLs.Count > 0 };
-        var failed = new FontIcon { Glyph = "", FontSize = 22, Foreground = secondary, Visibility = nft.ImageURLs.Count > 0 ? Visibility.Collapsed : Visibility.Visible };
-        square.Children.Add(placeholder);
-        square.Children.Add(failed);
-        var image = new Image { Stretch = Stretch.UniformToFill, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        square.Children.Add(new Border { CornerRadius = new CornerRadius(10), Child = image });
-        square.Children.Add(new Border { CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1), BorderBrush = (Brush)Application.Current.Resources["ControlStrokeColorDefaultBrush"] });
-        if (nft.Balance > 1)
-            square.Children.Add(new Border
-            {
-                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(6),
-                Padding = new Thickness(6, 2, 6, 2), CornerRadius = new CornerRadius(8),
-                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(153, 0, 0, 0)),
-                Child = new TextBlock { Text = $"×{nft.Balance.ToString("0.##", CultureInfo.CurrentCulture)}", FontSize = 10, FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) },
-            });
-        if (nft.IsLayer2)
-            square.Children.Add(new Border
-            {
-                HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(6),
-                Padding = new Thickness(3), CornerRadius = new CornerRadius(11),
-                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(153, 0, 0, 0)),
-                Child = EtherlinkMark(16),
-            });
-        if (nft.ImageURLs.Count > 0)
-            ImageLoader.Load(image, nft.ImageURLs, 260, ok =>
-            {
-                placeholder.IsActive = false;
-                failed.Visibility = ok ? Visibility.Collapsed : Visibility.Visible;
-            });
-
-        var tile = new StackPanel { Spacing = 6, Width = 140 };
-        tile.Children.Add(square);
-        tile.Children.Add(new TextBlock { Text = nft.Name, FontSize = 12, Foreground = secondary, TextTrimming = TextTrimming.CharacterEllipsis });
-        ToolTipService.SetToolTip(tile, (nft.IsLayer2 ? "On Etherlink\n" : "") + $"{nft.Name}\n{nft.Contract} #{nft.TokenId}");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(tile, nft.Name + (nft.IsLayer2 ? ", on Etherlink" : ""));
-        return tile;
+        nftGrid.Update(model.VisibleNFTs, model.IsLoading, model.PortfolioState, model.LayerEmptyText("NFTs"));
+        return nftGrid;
     }
 
     /// <summary>

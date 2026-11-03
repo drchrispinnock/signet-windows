@@ -74,6 +74,12 @@ public interface IChainService
     Task<TransferEstimate> EstimateEtherlinkGovernance(EtherlinkGovernance.Operation operation, Address contract, Wallet wallet);
     /// <summary>Signs and injects the call with exactly the approved <c>limits</c> (S14).</summary>
     Task<SentOperation> SendEtherlinkGovernance(EtherlinkGovernance.Operation operation, Address contract, Wallet wallet, SigningKey signer, OperationLimits limits);
+
+    // FA2 tokens (NFT Transfer and Burn, 0.9.13): one `transfer` call per contract in one
+    // operation group, estimated with a read-only signer and sent with exactly the approved
+    // per-operation limits (S14).
+    Task<TokenTransferEstimate> EstimateTokenTransfer(TokenTransferRequest request, Wallet wallet);
+    Task<SentOperation> SendTokenTransfer(TokenTransferRequest request, Wallet wallet, SigningKey signer, BatchLimits limits);
 }
 
 /// <summary>
@@ -96,10 +102,15 @@ public sealed record Portfolio(IReadOnlyList<AssetBalance> Tokens, IReadOnlyList
     public Portfolio OnLayer2() => new(Tokens.Select(t => t.OnLayer2()).ToList(), Nfts.Select(n => n.OnLayer2()).ToList(), State);
 
     /// <summary>
-    /// This (layer 1) portfolio with Etherlink's holdings appended. The state stays layer 1's:
-    /// an unavailable layer 1 indexer keeps the last known lists, Etherlink's included.
+    /// This (layer 1) portfolio with Etherlink's holdings added: tokens appended, NFTs of both
+    /// layers newest first so they intermingle. The state stays layer 1's: an unavailable
+    /// layer 1 indexer keeps the last known lists, Etherlink's included.
     /// </summary>
-    public Portfolio Adding(Portfolio other) => new([.. Tokens, .. other.Tokens], [.. Nfts, .. other.Nfts], State);
+    public Portfolio Adding(Portfolio other) => new([.. Tokens, .. other.Tokens], NewestFirst([.. Nfts, .. other.Nfts]), State);
+
+    /// <summary><c>nfts</c> by date, newest first; undated ones keep their place after the dated (the sort is stable).</summary>
+    public static IReadOnlyList<NFT> NewestFirst(IReadOnlyList<NFT> nfts) =>
+        nfts.OrderBy(n => n.Date is null ? 1 : 0).ThenByDescending(n => n.Date ?? DateTimeOffset.MinValue).ToList();
 
     public bool Equals(Portfolio? other) =>
         other is not null && Tokens.SequenceEqual(other.Tokens) && Nfts.SequenceEqual(other.Nfts) && State == other.State;
@@ -154,6 +165,9 @@ public abstract class ChainError(string message) : Exception(message), IEquatabl
     public sealed class NoEtherlinkBridge() : ChainError("Signet knows no Etherlink bridge for this network.");
     /// <summary>Asked of a layer 1 service: alias status and linking live on the Layer 2 node.</summary>
     public sealed class NotALayer2Service() : ChainError("This needs the Layer 2 node.");
+    /// <summary>A token transfer with no tokens, a bad contract, token id or amount, or an amount of 0.</summary>
+    public sealed class InvalidTokenTransfer()
+        : ChainError($"Choose at least one token and a whole number of editions, up to {TokenTransferRequest.MaxTokens} tokens at once.");
     /// <summary>A node answered with another chain's id than the one pinned for it (S12).</summary>
     public sealed class WrongChain(string expected, string found) : ChainError($"The node serves chain {found}, not {expected}.");
     /// <summary>

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Signet.Models;
 using Signet.Services;
@@ -54,7 +55,7 @@ public class NFTClassificationTests
 {
     public static readonly byte[] Fixture = Encoding.UTF8.GetBytes("""
     [
-      { "balance": "1", "token": { "contract": { "address": "KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton" }, "tokenId": "634799", "standard": "fa2",
+      { "balance": "1", "lastTime": "2026-10-21T16:48:10Z", "token": { "contract": { "address": "KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton" }, "tokenId": "634799", "standard": "fa2",
         "metadata": { "name": "United in Baking", "symbol": "OBJKT", "decimals": "0",
                       "thumbnailUri": "ipfs://QmThumb", "displayUri": "ipfs://QmDisplay", "artifactUri": "ipfs://QmArt",
                       "formats": [ { "uri": "ipfs://QmArt", "mimeType": "image/jpeg" } ] } } },
@@ -67,7 +68,10 @@ public class NFTClassificationTests
         "metadata": { "name": "Aubergine", "decimals": "6", "symbol": "GINE", "thumbnailUri": "https://gateway.pinata.cloud/ipfs/Qmaf8" } } },
       { "balance": "1", "token": { "contract": { "address": "KT1video" }, "tokenId": "7", "standard": "fa2",
         "metadata": { "name": "Clip", "decimals": "0", "artifactUri": "ipfs://QmMovie",
-                      "formats": [ { "uri": "ipfs://QmMovie", "mimeType": "video/mp4" } ] } } }
+                      "formats": [ { "uri": "ipfs://QmMovie", "mimeType": "video/mp4" } ] } } },
+      { "balance": "1", "firstTime": "2026-10-21T16:00:00Z", "token": { "contract": { "address": "KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton" }, "tokenId": "44684", "standard": "fa2",
+        "metadata": { "name": "NFT", "decimals": "0", "thumbnailUri": "ipfs://QmDisplay", "artifactUri": "ipfs://QmMovie2",
+                      "formats": [ { "uri": "ipfs://QmMovie2", "mimeType": "video/mp4" } ] } } }
     ]
     """);
 
@@ -75,10 +79,14 @@ public class NFTClassificationTests
     public void PicksNFTsAndBestImages()
     {
         var rows = TzKTService.Decode(Fixture);
-        Assert.Equal(5, rows.Count);
+        Assert.Equal(6, rows.Count);
         var nfts = TzKTService.Nfts(rows);
 
-        Assert.Equal(["United in Baking", "Captain Stake"], nfts.Select(n => n.Name));
+        Assert.Equal(["United in Baking", "Captain Stake", "NFT"], nfts.Select(n => n.Name));
+        Assert.True(nfts[0].Date == DateTimeOffset.Parse("2026-10-21T16:48:10Z", CultureInfo.InvariantCulture) && nfts[0].ArtifactMime == "image/jpeg" && !nfts[0].IsMoving);
+        Assert.True(nfts[1].Date is null && nfts[1].ArtifactMime == "image/png");
+        // A video with only a marketplace's placeholder still is shown as that still, marked as a video.
+        Assert.True(nfts[2].Date == DateTimeOffset.Parse("2026-10-21T16:00:00Z", CultureInfo.InvariantCulture) && nfts[2].IsMoving && nfts[2].ImageURLs.Count == IPFS.Gateways.Count);
         Assert.Equal("KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton:634799", nfts[0].Id);
         // displayUri comes first, then thumbnailUri and the image artifact as fallbacks, one URL per gateway each.
         Assert.Equal("https://ipfs.filebase.io/ipfs/QmDisplay", nfts[0].ThumbnailURL?.AbsoluteString());
@@ -89,6 +97,22 @@ public class NFTClassificationTests
         Assert.Equal("https://ipfs.filebase.io/ipfs/QmOnlyArt", nfts[1].ThumbnailURL?.AbsoluteString());
         Assert.Equal(20m, nfts[1].Balance);
         // Fungible tokens, image-less tokens and video-only artifacts are not shown.
+    }
+
+    /// <summary>Both layers' NFTs intermingle newest first; undated ones follow in their own order.</summary>
+    [Fact]
+    public void MergedNFTsAreNewestFirstAcrossLayers()
+    {
+        static NFT Nft(string name, int? daysAgo) => new(name, "KT1x", name, name, 1, thumbnailURL: null)
+        {
+            Date = daysAgo is { } d ? DateTimeOffset.FromUnixTimeSeconds(1_790_000_000 - d * 86_400L) : null,
+        };
+        var layer1 = new Portfolio([], [Nft("a", 1), Nft("c", 10), Nft("u1", null)], new Portfolio.PortfolioState.Complete());
+        var layer2 = new Portfolio([], [Nft("b", 0), Nft("d", 5), Nft("u2", null)], new Portfolio.PortfolioState.Complete()).OnLayer2();
+        var merged = layer1.Adding(layer2);
+        Assert.Equal(["b", "a", "d", "c", "u1", "u2"], merged.Nfts.Select(n => n.Name));
+        Assert.Equal([true, false, true, false, false, true], merged.Nfts.Select(n => n.IsLayer2));
+        Assert.IsType<Portfolio.PortfolioState.Complete>(merged.State);
     }
 
     [Fact, Trait(Category.Name, Category.Network)]

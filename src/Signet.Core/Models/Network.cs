@@ -198,6 +198,24 @@ public sealed record Network
     /// <summary>Where to look a contract up, if this network has an explorer.</summary>
     public Uri? ExplorerURLForContract(string address) => ExplorerLink(address, "contract");
 
+    /// <summary>
+    /// Where to look a token up, if this network has an explorer: tzkt.io front ends have a
+    /// token page; others get the contract. (Upstream <c>explorerURL(token:id:)</c>.)
+    /// </summary>
+    public Uri? ExplorerURLForToken(string contract, string id)
+    {
+        if (ExplorerURL is null) return null;
+        if (!IsTzKTFrontEnd(ExplorerURL)) return ExplorerURLForContract(contract);
+        return ExplorerURL.AppendingPathComponent(contract).AppendingPathComponent("tokens").AppendingPathComponent(id);
+    }
+
+    /// <summary>
+    /// The token's page on objkt.com, the marketplace that lists every mainnet token; null
+    /// elsewhere (testnets have no marketplace, and Etherlink's Michelson side is not indexed there).
+    /// </summary>
+    public Uri? ObjktURL(string contract, string id) =>
+        IsMainnet && LayerNumber == 1 ? new Uri($"https://objkt.com/tokens/{contract}/{id}") : null;
+
     // tzkt.io front ends (mainnet and the testnets) take the hash as a path; self-hosted TzKT
     // front ends use the hash route.
     private Uri? ExplorerLink(string item, string route)
