@@ -10,8 +10,7 @@ namespace Signet.Services;
 /// and any custom nodes. Serialised exactly as upstream's <c>Codable</c> struct: camelCase keys,
 /// sorted, absent values omitted.
 ///
-/// Shielded transactions are not ported; their maps (<c>shieldedEnabled</c>, <c>shieldedSettings</c>)
-/// are carried through unread, so a wallet directory shared with the Mac app keeps them.
+/// Shielded transactions: <c>shieldedEnabled</c> and <c>shieldedSettings</c>, as upstream.
 /// </summary>
 public sealed record AppState
 {
@@ -47,11 +46,17 @@ public sealed record AppState
     [JsonPropertyName("serviceURLs"), JsonPropertyOrder(6)]
     public IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>? ServiceURLs { get; init; }
 
+    /// <summary>Shielded transactions on by network name, only where the user turned them on.</summary>
     [JsonPropertyName("shieldedEnabled"), JsonPropertyOrder(7)]
-    public JsonNode? ShieldedEnabled { get; init; }
+    public IReadOnlyDictionary<string, bool>? ShieldedEnabled { get; init; }
 
+    /// <summary>
+    /// TzEL services by network name, then by <c>ShieldedConfig.Setting</c> raw value: where the
+    /// user replaced what we ship, or filled in a network we ship nothing for. Written by the
+    /// model as fields are applied (<c>Remember</c> leaves it alone), read back by <c>Resolved</c>.
+    /// </summary>
     [JsonPropertyName("shieldedSettings"), JsonPropertyOrder(8)]
-    public JsonNode? ShieldedSettings { get; init; }
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>? ShieldedSettings { get; init; }
 
     /// <summary>
     /// <c>base</c> with everything saved for it applied: its node, its Layer 2 switch and node, and
@@ -63,6 +68,14 @@ public sealed record AppState
         if (NodeURLs?.GetValueOrDefault(@base.Name) is { } saved && Network.NodeURL(saved) is { } url) network = network.UsingNode(url);
         var l2Node = (L2NodeURLs?.GetValueOrDefault(@base.Name) is { } l2Saved ? Network.NodeURL(l2Saved) : null) ?? @base.L2DefaultRPCURL;
         network = network.UsingL2(L2Enabled?.GetValueOrDefault(@base.Name) ?? false, l2Node);
+        network = network.UsingShielded(ShieldedEnabled?.GetValueOrDefault(@base.Name) ?? false);
+        var fields = ShieldedFields(@base);
+        var shielded = ShieldedConfig.From(fields);
+        // The shipped producer address stays the bundled resource unless it was replaced.
+        if (@base.ShieldedDefault is { } shipped && shielded is not null &&
+            fields.GetValueOrDefault(ShieldedConfig.Setting.ProducerAddress) == shipped.Text(ShieldedConfig.Setting.ProducerAddress))
+            shielded = shielded with { ProducerResource = shipped.ProducerResource, ProducerFields = shipped.ProducerFields };
+        network = network.UsingShielded(shielded);
         foreach (var service in Enum.GetValues<Network.Service>())
         {
             if (ServiceURLs?.GetValueOrDefault(@base.Name)?.GetValueOrDefault(service.RawValue()) is not { } link) continue;
@@ -84,7 +97,41 @@ public sealed record AppState
     /// Records <c>net</c>'s node, Layer 2 choices and links, each only where it differs from the
     /// defaults, so the maps stay sparse and <c>null</c> when nothing is custom.
     /// </summary>
-    public AppState Remember(Network net) => RememberNode(net).RememberL2(net).RememberServices(net).RememberEtherlinkGovernance(net);
+    public AppState Remember(Network net) => RememberNode(net).RememberL2(net).RememberShielded(net).RememberServices(net).RememberEtherlinkGovernance(net);
+
+    /// <summary>Shielded transactions are off by default everywhere; only "on" is saved.</summary>
+    public AppState RememberShielded(Network net)
+    {
+        var flags = new SortedDictionary<string, bool>(ShieldedEnabled?.ToDictionary() ?? [], StringComparer.Ordinal);
+        if (net.ShieldedEnabled) flags[net.Name] = true;
+        else flags.Remove(net.Name);
+        return this with { ShieldedEnabled = flags.Count == 0 ? null : flags };
+    }
+
+    /// <summary>Every TzEL item of <c>base</c> as text: what we ship, overlaid with what the user saved (when valid).</summary>
+    public IReadOnlyDictionary<ShieldedConfig.Setting, string> ShieldedFields(Network @base)
+    {
+        var fields = new Dictionary<ShieldedConfig.Setting, string>();
+        foreach (var setting in ShieldedConfig.AllSettings)
+        {
+            if (@base.ShieldedDefault?.Text(setting) is { Length: > 0 } shipped) fields[setting] = shipped;
+            if (ShieldedSettings?.GetValueOrDefault(@base.Name)?.GetValueOrDefault(setting.RawValue()) is { } saved && setting.Normalised(saved) is { } valid)
+                fields[setting] = valid;
+        }
+        return fields;
+    }
+
+    /// <summary>Saves one item for <c>base</c> (null or what we ship: forget the saved text).</summary>
+    public AppState SettingShieldedField(string? text, ShieldedConfig.Setting setting, Network @base)
+    {
+        var all = new SortedDictionary<string, IReadOnlyDictionary<string, string>>(ShieldedSettings?.ToDictionary() ?? [], StringComparer.Ordinal);
+        var fields = new SortedDictionary<string, string>(all.GetValueOrDefault(@base.Name)?.ToDictionary() ?? [], StringComparer.Ordinal);
+        if (text is null || text == @base.ShieldedDefault?.Text(setting)) fields.Remove(setting.RawValue());
+        else fields[setting.RawValue()] = text;
+        if (fields.Count == 0) all.Remove(@base.Name);
+        else all[@base.Name] = fields;
+        return this with { ShieldedSettings = all.Count == 0 ? null : all };
+    }
 
     public AppState RememberNode(Network net)
     {
@@ -146,7 +193,10 @@ public sealed record AppState
         (ServiceURLs ?? new Dictionary<string, IReadOnlyDictionary<string, string>>()).Count == (other.ServiceURLs?.Count ?? 0) &&
         (ServiceURLs ?? new Dictionary<string, IReadOnlyDictionary<string, string>>()).All(p => other.ServiceURLs!.TryGetValue(p.Key, out var o) && SameMap(p.Value, o)) &&
         SameNestedMap(EtherlinkGovernance, other.EtherlinkGovernance) &&
-        JsonNode.DeepEquals(ShieldedEnabled, other.ShieldedEnabled) && JsonNode.DeepEquals(ShieldedSettings, other.ShieldedSettings);
+        (ShieldedEnabled ?? new Dictionary<string, bool>()).OrderBy(p => p.Key, StringComparer.Ordinal).SequenceEqual(
+            (other.ShieldedEnabled ?? new Dictionary<string, bool>()).OrderBy(p => p.Key, StringComparer.Ordinal)) &&
+        (ShieldedEnabled is null) == (other.ShieldedEnabled is null) &&
+        SameNestedMap(ShieldedSettings, other.ShieldedSettings);
 
     private static bool SameNestedMap(IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>? a, IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>? b) =>
         (a is null) == (b is null) && (a?.Count ?? 0) == (b?.Count ?? 0) &&

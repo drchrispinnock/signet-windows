@@ -15,6 +15,7 @@
   <ItemGroup>
     <!-- The bundle is built and committed upstream; ship it as is, never copy or edit it here. -->
     <EmbeddedResource Include="..\..\upstream\Signet\Resources\taquito-bridge.js" LogicalName="taquito-bridge.js" />
+    <EmbeddedResource Include="..\..\upstream\Signet\Resources\tzel-shadownet-producer.json" LogicalName="tzel-shadownet-producer.json" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Signet.Core.Tests" />

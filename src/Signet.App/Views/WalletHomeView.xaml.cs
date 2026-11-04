@@ -214,6 +214,11 @@ public sealed partial class WalletHomeView : UserControl
         }
         else if (model.IsPresentingSubmitMultisig) { dialog = new SubmitMultisigSheet(model); reset = () => model.IsPresentingSubmitMultisig = false; }
         else if (model.IsPresentingNetworks){ dialog = new NetworksSheet(model); reset = () => model.IsPresentingNetworks = false; }
+        else if (model.IsPresentingShieldSettings) { dialog = new ShieldSettingsSheet(model); reset = () => { model.IsPresentingShieldSettings = false; _ = model.Refresh(); }; }
+        else if (model.IsPresentingShield && model.SelectedWallet is not null) { dialog = new ShieldSheet(model); reset = () => model.IsPresentingShield = false; }
+        else if (model.IsPresentingUnshield && model.SelectedWallet is not null) { dialog = new UnshieldSheet(model); reset = () => model.IsPresentingUnshield = false; }
+        else if (model.IsPresentingSendShielded && model.SelectedWallet is not null) { dialog = new SendShieldedSheet(model); reset = () => model.IsPresentingSendShielded = false; }
+        else if (model.IsPresentingShieldedAddress && model.SelectedWallet is not null) { dialog = new ShieldedAddressSheet(model); reset = () => model.IsPresentingShieldedAddress = false; }
         else if (settingsRequested) { dialog = new SettingsView(model); reset = () => settingsRequested = false; }
         else if (updateRequested) { dialog = new UpdateSheet(); reset = () => updateRequested = false; }
         else

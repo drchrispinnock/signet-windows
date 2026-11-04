@@ -44,6 +44,14 @@ public abstract class TestChainService : IChainService
     public virtual Task<GovernanceInfo> GovernanceInfoFor(Address address) => Task.FromResult(new GovernanceInfo());
     public virtual Task<string> PerformGovernance(GovernanceOperation operation, Wallet wallet, SigningKey signer) => Task.FromResult("ooTest");
     public virtual Task<IReadOnlyList<Address>> EtherlinkVotingRightsFor(Address address, Address contract) => Task.FromResult<IReadOnlyList<Address>>([]);
+    public virtual Task<TransferEstimate> EstimateShieldDeposit(Wallet wallet, ShieldDeposit deposit) =>
+        Task.FromResult(new TransferEstimate(0.001m, 0, deposit.Amount + 0.001m, 0, 0, new OperationLimits("1000", 0, 0)));
+    public virtual Task<SentOperation> SendShieldDeposit(Wallet wallet, SigningKey signer, ShieldDeposit deposit, OperationLimits limits) =>
+        Task.FromResult(new SentOperation("ooShieldDeposit"));
+    public virtual Task<TransferEstimate> EstimateOutboxExecution(Wallet wallet, OutboxExecution execution) =>
+        Task.FromResult(new TransferEstimate(0.001m, 0, 0.001m, 0, 0, new OperationLimits("1000", 0, 0)));
+    public virtual Task<SentOperation> SendOutboxExecution(Wallet wallet, SigningKey signer, OutboxExecution execution, OperationLimits limits) =>
+        Task.FromResult(new SentOperation("ooOutbox"));
     public virtual Task<TokenTransferEstimate> EstimateTokenTransfer(TokenTransferRequest request, Wallet wallet) =>
         Task.FromResult(new TokenTransferEstimate(0.001m, 0, new BatchLimits([new BatchLimits.Operation("1000", 0, 0)])));
     public virtual Task<SentOperation> SendTokenTransfer(TokenTransferRequest request, Wallet wallet, SigningKey signer, BatchLimits limits) =>

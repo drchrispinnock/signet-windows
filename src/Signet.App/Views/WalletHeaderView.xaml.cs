@@ -172,7 +172,14 @@ public static class OperationsMenuItems
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("dApps…", () => model.IsPresentingConnectDApp = true, VirtualKey.D, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift));
         if (model.CanBridge) menu.Items.Add(Item("Bridge…", () => model.IsPresentingBridge = true));
-        // Upstream's Shield, Unshield, Send shielded and Shielded address belong with TzEL, which this port leaves out.
+        if (model.CanShield)
+        {
+            menu.Items.Add(new MenuFlyoutSeparator());
+            menu.Items.Add(Item("Shield tez…", () => model.IsPresentingShield = true));
+            menu.Items.Add(Item("Unshield tez…", () => model.IsPresentingUnshield = true));
+            menu.Items.Add(Item("Send shielded…", () => model.IsPresentingSendShielded = true));
+            menu.Items.Add(Item("Shielded address…", () => model.IsPresentingShieldedAddress = true));
+        }
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Create multisig…", () => model.IsPresentingCreateMultisig = true));
         menu.Items.Add(Item("Add multisig…", () => model.IsPresentingAddMultisig = true));
@@ -183,7 +190,7 @@ public static class OperationsMenuItems
         if (model.CanGovern) menu.Items.Add(Item("Governance…", () => model.IsPresentingGovernance = true));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Networks…", () => model.IsPresentingNetworks = true));
-        // Upstream's "Shielded settings…" belongs with TzEL, which this port leaves out.
+        menu.Items.Add(Item("Shielded settings…", () => model.IsPresentingShieldSettings = true));
         var settings = Item("Settings…", openSettings);
         settings.KeyboardAcceleratorTextOverride = "Ctrl+,";
         menu.Items.Add(settings);

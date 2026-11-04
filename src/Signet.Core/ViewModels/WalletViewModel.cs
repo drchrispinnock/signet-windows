@@ -70,7 +70,7 @@ public sealed partial class WalletViewModel : ObservableObject
     private readonly SessionKeyStore sessionKeys = new();
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SelectedWallet), nameof(CanExportSelectedKey), nameof(CanProveSelectedKey), nameof(CanRememberSelectedKey), nameof(CanGovern), nameof(CanGovernEtherlink))]
+    [NotifyPropertyChangedFor(nameof(SelectedWallet), nameof(CanExportSelectedKey), nameof(CanProveSelectedKey), nameof(CanRememberSelectedKey), nameof(CanGovern), nameof(CanGovernEtherlink), nameof(CanShield))]
     private string? selectedWalletID;
 
     [ObservableProperty] private bool isPresentingCreateWallet;
@@ -285,6 +285,7 @@ public sealed partial class WalletViewModel : ObservableObject
             OnPropertyChanged(nameof(CurrentMultisigProposals));
             OnPropertyChanged(nameof(CanGovern));
             OnPropertyChanged(nameof(CanGovernEtherlink));
+            OnPropertyChanged(nameof(CanShield));
             OnPropertyChanged(nameof(FiltersLayers));
             OnPropertyChanged(nameof(VisibleTransactions));
             OnPropertyChanged(nameof(VisibleTokens));
@@ -313,6 +314,10 @@ public sealed partial class WalletViewModel : ObservableObject
         Transactions = [];
         DelegateInfo = null;
         EtherlinkVotesFor = [];
+        ShieldedWallet = null;
+        ShieldedPools = [];
+        ShieldedWithdrawals = [];
+        ShieldedTransfers = [];
         TezBalance = null;
         AccountNotOnChain = false;
         PortfolioState = new Portfolio.PortfolioState.Complete();
@@ -730,6 +735,7 @@ public sealed partial class WalletViewModel : ObservableObject
         public IReadOnlyList<TezosTransaction> Transactions = [];
         public DelegateInfo? DelegateInfo;
         public IReadOnlyList<Address> EtherlinkVotesFor = [];
+        public ShieldedSnapshot? Shielded;
         public bool NotOnChain;
         public string? Error;
     }
@@ -750,6 +756,10 @@ public sealed partial class WalletViewModel : ObservableObject
         }
         var chain = this.chain;
         var address = mine.Address;
+        if (mine.Network.CanShield) await AdoptLegacyShieldedWallet();
+        if (CurrentContext != mine) return;
+        var shieldedStore = mine.Network.CanShield ? ShieldedStoreFor(mine.Network.Chain) : null;
+        var shieldedRollup = mine.Network.Shielded is { } shieldedConfig ? shieldedRollupFactory(shieldedConfig) : null;
         IsLoading = true;
         ErrorMessage = null;
 
@@ -771,12 +781,18 @@ public sealed partial class WalletViewModel : ObservableObject
         var layer2 = Layer2Chain;
         var etherlinkHistory = EtherlinkHistory(address, mine.Network, layer2, RecentTransactionLimit);
         var etherlinkHoldings = EtherlinkPortfolio(address, mine.Network, layer2);
+        var shielded = ShieldedSnapshotFor(address, mine.Network, shieldedStore, shieldedRollup, shieldedBridge);
         try
         {
             var tezBalance = await tez;
             snapshot.TezBalance = tezBalance;
             snapshot.Assets = [new AssetBalance("tez", new AssetBalance.AssetKind.Tez(), "Tezos", "tz", tezBalance.Total) { Details = tezBalance.Breakdown }];
             if (await etherlink is { } row) snapshot.Assets.Add(row);
+            if (await shielded is { } shieldedSnapshot)
+            {
+                snapshot.Assets.Add(shieldedSnapshot.Row);
+                snapshot.Shielded = shieldedSnapshot;
+            }
             try { snapshot.Portfolio = await holdings; }
             catch (Exception) { snapshot.Portfolio = new Portfolio([], [], new Portfolio.PortfolioState.Unavailable("Could not read the account's tokens.")); }
             snapshot.Portfolio = snapshot.Portfolio.Adding(await etherlinkHoldings);
@@ -796,7 +812,7 @@ public sealed partial class WalletViewModel : ObservableObject
         {
             snapshot.Error = e.Message;
         }
-        Observe(holdings, names, history, delegation, etherlink, votesFor, etherlinkHistory, etherlinkHoldings);
+        Observe(holdings, names, history, delegation, etherlink, votesFor, etherlinkHistory, etherlinkHoldings, shielded);
 
         // Publish only into the context the load was started for.
         if (CurrentContext != mine) return;
@@ -812,6 +828,13 @@ public sealed partial class WalletViewModel : ObservableObject
         // Records compare by content (NFT, AssetBalance and BakerRecord include their lists).
         TezBalance = snapshot.TezBalance;
         if (!Assets.SequenceEqual(snapshot.Assets)) Assets = snapshot.Assets;
+        if (snapshot.Shielded is { } shieldedNow)
+        {
+            ShieldedWallet = shieldedNow.Wallet;
+            ShieldedPools = shieldedNow.Pools;
+            ShieldedWithdrawals = shieldedNow.Withdrawals;
+            ShieldedTransfers = shieldedNow.Transfers;
+        }
         PortfolioState = snapshot.Portfolio.State;
         // An unavailable indexer keeps the last known lists (they are from this same context).
         if (snapshot.Portfolio.State is not Portfolio.PortfolioState.Unavailable)

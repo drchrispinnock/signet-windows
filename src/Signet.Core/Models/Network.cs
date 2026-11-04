@@ -25,9 +25,13 @@ public sealed record Network
                    FaucetKindValue faucetKind = FaucetKindValue.Teztnets, Uri? explorerURL = null, string? expectedChainID = null,
                    Uri? l2RPCURL = null, string? expectedL2ChainID = null, string? l2BridgeHelper = null, string? l2Rollup = null,
                    Uri? l2TzKTURL = null, Uri? l2ExplorerURL = null,
-                   IReadOnlyDictionary<EtherlinkGovernance.Process, string>? etherlinkGovernance = null)
+                   IReadOnlyDictionary<EtherlinkGovernance.Process, string>? etherlinkGovernance = null,
+                   bool shieldedAvailable = false, ShieldedConfig? shielded = null)
     {
         Name = name;
+        ShieldedAvailable = shieldedAvailable;
+        Shielded = shielded;
+        ShieldedDefault = shielded;
         DefaultEtherlinkGovernance = new EtherlinkGovernance.Contracts(
             (etherlinkGovernance ?? new Dictionary<EtherlinkGovernance.Process, string>()).ToDictionary(p => p.Key, p => new Address(p.Value)));
         EtherlinkGovernanceContracts = DefaultEtherlinkGovernance;
@@ -114,6 +118,27 @@ public sealed record Network
     /// </summary>
     public EtherlinkGovernance.Contracts EtherlinkGovernanceContracts { get; init; }
     public EtherlinkGovernance.Contracts DefaultEtherlinkGovernance { get; }
+
+    /// <summary>Shielded transactions (TzEL) on or off for this network; off by default, switched in Shielded settings.</summary>
+    public bool ShieldedEnabled { get; init; }
+    /// <summary>Whether the network has shielded transactions at all (Shadownet and Quantumnet, October 2026).</summary>
+    public bool ShieldedAvailable { get; }
+    /// <summary>
+    /// Where the network's TzEL rollup, operator and proving service are (<c>ShieldedConfig</c>).
+    /// Shipped for Shadownet; null where Signet cannot shield yet. <c>Shielded</c> is the
+    /// deployment in use (each item replaceable in Shielded settings), <c>ShieldedDefault</c> the one we ship.
+    /// </summary>
+    public ShieldedConfig? Shielded { get; init; }
+    public ShieldedConfig? ShieldedDefault { get; }
+
+    /// <summary>Shielded transactions are on and Signet knows the network's TzEL services.</summary>
+    public bool CanShield => ShieldedEnabled && Shielded is not null;
+
+    /// <summary>The same network with shielded transactions switched on or off.</summary>
+    public Network UsingShielded(bool enabled) => this with { ShieldedEnabled = enabled };
+
+    /// <summary>The same network with its TzEL services at <c>config</c> (null: not known).</summary>
+    public Network UsingShielded(ShieldedConfig? config) => this with { Shielded = config };
 
     /// <summary>Etherlink governance can be shown here: Layer 2 is on and at least one process has a contract.</summary>
     public bool CanGovernEtherlink => HasL2 && !EtherlinkGovernanceContracts.IsEmpty;
@@ -311,7 +336,9 @@ public sealed record Network
         l2BridgeHelper: "KT19aBsSWvWtvEkbiqReJnD8UzQMWcD8SHUD",
         l2Rollup: "sr19fMYrr5C4qqvQqQrDSjtP31GcrWjodzvg",
         l2TzKTURL: new Uri("https://api.shadownet.etherlink.tzkt.io"),
-        l2ExplorerURL: new Uri("https://shadownet.etherlink.tzkt.io"));
+        l2ExplorerURL: new Uri("https://shadownet.etherlink.tzkt.io"),
+        shieldedAvailable: true,
+        shielded: ShieldedConfig.Shadownet);
 
     public static readonly Network Bakingnet = new(
         name: "Bakingnet",
@@ -371,7 +398,8 @@ public sealed record Network
         tzktURL: new Uri("https://quantumnet-tzkt.pqpark.dal.nomadic-labs.com"),
         faucetURL: new Uri("https://quantumnet-faucet.pqpark.dal.nomadic-labs.com/api"),
         faucetKind: FaucetKindValue.Pqpark,
-        explorerURL: new Uri("https://quantumnet-tzkt.pqpark.dal.nomadic-labs.com"));
+        explorerURL: new Uri("https://quantumnet-tzkt.pqpark.dal.nomadic-labs.com"),
+        shieldedAvailable: true);
 
     /// <summary>A network of the user's own: any node they point it at. Defaults to a local node.</summary>
     public static readonly Network Custom = new(

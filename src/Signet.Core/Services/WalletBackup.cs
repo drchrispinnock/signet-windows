@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using Signet.Models;
 
 namespace Signet.Services;
 
@@ -62,11 +63,18 @@ public sealed record WalletBackup(string WalletDirectory, string BackupDirectory
 
     /// <summary>
     /// Files worth saving: the three octez-client wallet files, the contract aliases, Signet's state,
-    /// the multisig proposals and the operation journal. This list is HEAD's (without the shielded
-    /// files); the rest of this class is still the <c>3b33fe1</c> version.
+    /// the multisig proposals, the operation journal and the shielded wallets. This list is HEAD's;
+    /// the rest of this class is still the <c>3b33fe1</c> version.
     /// </summary>
     public static readonly IReadOnlyList<string> Files =
-        [.. TezosClientStore.WalletFiles, TezosClientStore.ContractsFile, "state", FileMultisigProposalStore.FileName, OperationJournal.FileName];
+        [.. TezosClientStore.WalletFiles, TezosClientStore.ContractsFile, "state", FileMultisigProposalStore.FileName, OperationJournal.FileName, .. ShieldedFiles];
+
+    /// <summary>
+    /// The shielded (TzEL) wallet file of every network (master keys, notes, the operator
+    /// token, the address book). The 2 MB signing trees beside it are left out; they are
+    /// rebuilt from the master key.
+    /// </summary>
+    public static IReadOnlyList<string> ShieldedFiles => Network.All.Select(n => FileShieldedWalletStore.WalletFile(n.Chain)).ToList();
 
     /// <param name="force">Write a generation even if the latest one already matches (explicit user action).</param>
     public Outcome Run(DateTimeOffset? now = null, bool force = false)

@@ -53,7 +53,15 @@ public partial class App : Application
         return MakeWalletModel();
     }
 
-    private static WalletViewModel MakeWalletModel() => new(
+    private static WalletViewModel MakeWalletModel()
+    {
+        var model = MakeLiveModel();
+        // Shielded wallets live beside the keys, in tzel-<chain>.json; the rollup services are live.
+        model.ConfigureShielded(WalletViewModel.FileShieldedStore);
+        return model;
+    }
+
+    private static WalletViewModel MakeLiveModel() => new(
         chainFactory: network => new TaquitoChainService(network),
         keyGenerator: new KeyGenerator(),
         keyImporter: new BridgeKeyImporter(),

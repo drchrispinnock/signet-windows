@@ -441,18 +441,6 @@ public sealed partial class BakingSheet : Sheet
         Form.Children.Add(Note("Set the limit to 0 to stop accepting new stake. Changes take effect after a few cycles."));
     }
 
-    private static Grid FieldWithUnit(TextBox field, string unit)
-    {
-        var row = new Grid { ColumnSpacing = 8 };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.Children.Add(field);
-        var label = new TextBlock { Text = unit, Foreground = Secondary, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
-        Grid.SetColumn(label, 1);
-        row.Children.Add(label);
-        return row;
-    }
-
     private StakingParameters? ParsedParameters
     {
         get

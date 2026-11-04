@@ -49,6 +49,14 @@ public interface IChainService
     /// <summary>Signs and injects the deposit with exactly the approved <c>limits</c> (S14).</summary>
     Task<SentOperation> SendEtherlinkDeposit(Wallet wallet, SigningKey signer, decimal amount, OperationLimits limits);
 
+    // Shielded tez (TzEL): the layer 1 deposit into a pool, and executing an unshield's outbox message.
+    Task<TransferEstimate> EstimateShieldDeposit(Wallet wallet, ShieldDeposit deposit);
+    /// <summary>Signs and injects the deposit with exactly the approved <c>limits</c> (S14).</summary>
+    Task<SentOperation> SendShieldDeposit(Wallet wallet, SigningKey signer, ShieldDeposit deposit, OperationLimits limits);
+    Task<TransferEstimate> EstimateOutboxExecution(Wallet wallet, OutboxExecution execution);
+    /// <summary>Signs and injects the outbox execution with exactly the approved <c>limits</c> (S14).</summary>
+    Task<SentOperation> SendOutboxExecution(Wallet wallet, SigningKey signer, OutboxExecution execution, OperationLimits limits);
+
     // Etherlink alias (0.9.3), on a Layer 2 (Michelson interface) service only: whether the
     // account's EVM-side address exists on chain yet, and the gateway call that creates it.
     Task<EtherlinkAliasStatus> EtherlinkAliasStatusFor(Address address);
@@ -118,6 +126,18 @@ public sealed record Portfolio(IReadOnlyList<AssetBalance> Tokens, IReadOnlyList
 }
 
 public sealed record SignedPayload(string PublicKey, string Signature);
+
+/// <summary>
+/// A layer 1 deposit into a TzEL deposit pool: the ticketer to call, the rollup it feeds, the
+/// pool (<c>pubkey_hash</c>, hex) and the tez to attach.
+/// </summary>
+public sealed record ShieldDeposit(Address Ticketer, string Rollup, string PubkeyHash, decimal Amount);
+
+/// <summary>
+/// A rollup outbox message to execute on layer 1: the rollup, the cemented commitment the
+/// rollup node proved it against and that proof (hex).
+/// </summary>
+public sealed record OutboxExecution(string Rollup, string CementedCommitment, string OutputProof);
 
 /// <summary>
 /// Whether a tz account's address on Etherlink's EVM side exists on chain. The address itself

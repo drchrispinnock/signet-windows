@@ -76,6 +76,20 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
         return reply.Body;
     }
 
+    /// <summary>
+    /// The account that sent operation <c>hash</c>, as TzKT records it; null when it cannot be told.
+    /// Used to find which account funded a version 1 shielded wallet's first deposit.
+    /// </summary>
+    public async Task<Address?> SenderOfOperation(string hash)
+    {
+        if (hash.Length >= 64 || !hash.All(char.IsAsciiLetterOrDigit)) return null;
+        var reply = await Http.Get(http, BaseURL.AppendingPathComponent($"v1/operations/{hash}"), TimeSpan.FromSeconds(15));
+        if (!reply.IsSuccess || JsonNode.Parse(reply.Body) is not JsonArray { Count: > 0 } rows ||
+            rows[0]?["sender"]?["address"] is not JsonValue v || !v.TryGetValue<string>(out var address) || !new Address(address).IsValidAccount)
+            return null;
+        return new Address(address);
+    }
+
     public const int PageSize = 200;
     /// <summary>At most this many pages per snapshot; beyond that the portfolio is reported as partial.</summary>
     public const int MaxPages = 5;

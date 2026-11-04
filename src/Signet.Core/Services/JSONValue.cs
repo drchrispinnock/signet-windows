@@ -75,6 +75,21 @@ public abstract record JSONValue
 
     public JSONValue? this[string key] => ObjectValue is { } o && o.TryGetValue(key, out var v) ? v : null;
 
+    /// <summary>
+    /// The value as JSON text. (The derived records synthesize their own <c>ToString</c>, so code that
+    /// hands a value back to the bridge uses this.)
+    /// </summary>
+    public string JsonText => this switch
+    {
+        Null => "null",
+        Bool b => b.Value ? "true" : "false",
+        Number n => n.Value.ToString("R", CultureInfo.InvariantCulture),
+        String s => JsonSerializer.Serialize(s.Value),
+        Array a => "[" + string.Join(",", a.Items.Select(i => i.JsonText)) + "]",
+        Object o => "{" + string.Join(",", o.Members.Select(m => JsonSerializer.Serialize(m.Key) + ":" + m.Value.JsonText)) + "}",
+        _ => "null",
+    };
+
     public override string ToString() => this switch
     {
         Null => "null",

@@ -477,6 +477,42 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
         return SentOperation.From(result) ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected governance payload: {result}");
     }
 
+    // ---- Shielded tez (TzEL) ---------------------------------------------------------------------
+
+    public async Task<TransferEstimate> EstimateShieldDeposit(Wallet wallet, ShieldDeposit deposit)
+    {
+        var publicKey = PublicKeyArgument(wallet);
+        await VerifyChain();
+        var result = await TaquitoBridge.BridgeError.Typed(() => bridge.Call("estimateShieldDeposit", Rpc, wallet.Address.Value, publicKey, deposit.Ticketer.Value,
+                                                                              deposit.Rollup, deposit.PubkeyHash, Mutez.FromTez(deposit.Amount)));
+        return EstimateFrom(result, deposit.Amount);
+    }
+
+    public async Task<SentOperation> SendShieldDeposit(Wallet wallet, SigningKey signer, ShieldDeposit deposit, OperationLimits limits)
+    {
+        await VerifyChain();
+        var result = await Signing(() => bridge.Call("sendShieldDeposit", Rpc, signer.BridgeSpec, deposit.Ticketer.Value, deposit.Rollup, deposit.PubkeyHash,
+                                                     Mutez.FromTez(deposit.Amount), limits.Json));
+        return SentOperation.From(result) ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected deposit payload: {result}");
+    }
+
+    public async Task<TransferEstimate> EstimateOutboxExecution(Wallet wallet, OutboxExecution execution)
+    {
+        var publicKey = PublicKeyArgument(wallet);
+        await VerifyChain();
+        var result = await TaquitoBridge.BridgeError.Typed(() => bridge.Call("estimateOutboxExecution", Rpc, wallet.Address.Value, publicKey, execution.Rollup,
+                                                                              execution.CementedCommitment, execution.OutputProof));
+        return EstimateFrom(result);
+    }
+
+    public async Task<SentOperation> SendOutboxExecution(Wallet wallet, SigningKey signer, OutboxExecution execution, OperationLimits limits)
+    {
+        await VerifyChain();
+        var result = await Signing(() => bridge.Call("sendOutboxExecution", Rpc, signer.BridgeSpec, execution.Rollup, execution.CementedCommitment,
+                                                     execution.OutputProof, limits.Json));
+        return SentOperation.From(result) ?? throw new TaquitoBridge.BridgeError.JavaScript($"unexpected outbox execution payload: {result}");
+    }
+
     // ---- FA2 tokens ------------------------------------------------------------------------------
 
     public async Task<TokenTransferEstimate> EstimateTokenTransfer(TokenTransferRequest request, Wallet wallet)

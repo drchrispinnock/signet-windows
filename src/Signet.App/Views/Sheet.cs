@@ -88,6 +88,19 @@ public abstract partial class Sheet : ContentDialog
     protected static string WalletFolder(ViewModels.WalletViewModel model) =>
         model.WalletDirectory ?? Signet.Services.TezosClientStore.DefaultDirectory;
 
+    /// <summary>A short field and its unit beside it.</summary>
+    protected static Grid FieldWithUnit(TextBox field, string unit)
+    {
+        var row = new Grid { ColumnSpacing = 8 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.Children.Add(field);
+        var label = new TextBlock { Text = unit, Foreground = Secondary, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
+        Grid.SetColumn(label, 1);
+        row.Children.Add(label);
+        return row;
+    }
+
     protected static TextBlock Note(string text) => new() { Text = text, Style = (Style)Application.Current.Resources["NoteText"] };
 
     protected static TextBlock Caution(string text) => new() { Text = text, Style = (Style)Application.Current.Resources["CautionText"] };
