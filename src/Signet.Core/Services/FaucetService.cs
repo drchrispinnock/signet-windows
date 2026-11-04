@@ -108,8 +108,8 @@ public sealed class FaucetService(Uri baseURL, Network.FaucetKindValue kind = Ne
     {
         var url = BaseURL.AppendingPathComponent(path);
         var reply = body is null
-            ? await Http.Get(http, url, TimeSpan.FromSeconds(20))
-            : await Http.PostJSON(http, url, body.ToJsonString(), TimeSpan.FromSeconds(20));
+            ? await Http.Get(http, url, TimeSpan.FromSeconds(20), 64 << 10, BoundedHTTP.JSONLimits.Record)
+            : await Http.PostJSON(http, url, body.ToJsonString(), TimeSpan.FromSeconds(20), 64 << 10, BoundedHTTP.JSONLimits.Record);
         if (!reply.IsSuccess)
         {
             JsonObject? obj = null;

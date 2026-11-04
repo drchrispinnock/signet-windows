@@ -55,10 +55,13 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
     /// <c>GET /chains/main/blocks/head/context/contracts/&lt;pkh&gt;/&lt;field&gt;</c> → <c>"&lt;mutez&gt;"</c>, from the
     /// network's node or the node at <c>at</c> (the Etherlink one).
     /// </summary>
+    /// <summary>The most a balance, chain id or view reply may be (S19).</summary>
+    public const int SmallReplyBytes = 16 << 10;
+
     private async Task<string> RpcMutez(string field, Address address, Uri? at = null)
     {
         var url = (at ?? Network.RpcURL).AppendingPathComponent($"chains/main/blocks/head/context/contracts/{address.Value}/{field}");
-        var reply = await Http.Get(http, url);
+        var reply = await Http.Get(http, url, limit: SmallReplyBytes, json: BoundedHTTP.JSONLimits.Small);
         if (!reply.IsSuccess) throw new RPCError(reply.Status, field, address, reply.Text);
         return JSONString(reply.Body) ?? throw new FormatException("The node's balance reply could not be parsed.");
     }
@@ -66,7 +69,7 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
     /// <summary><c>GET &lt;node&gt;/&lt;path&gt;</c> → a JSON string, such as <c>chains/main/chain_id</c>.</summary>
     private async Task<string> RpcString(string path, Uri node)
     {
-        var reply = await Http.Get(http, node.AppendingPathComponent(path));
+        var reply = await Http.Get(http, node.AppendingPathComponent(path), limit: SmallReplyBytes, json: BoundedHTTP.JSONLimits.Small);
         if (!reply.IsSuccess) throw new HttpRequestException($"The node returned HTTP {reply.Status} for {path}.");
         return JSONString(reply.Body) ?? throw new FormatException("The node's reply could not be parsed.");
     }
@@ -198,7 +201,7 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
             ["unparsing_mode"] = "Readable",
         };
         var reply = await Http.PostJSON(http, Network.RpcURL.AppendingPathComponent("chains/main/blocks/head/helpers/scripts/run_script_view"),
-                                        body.ToJsonString(), TimeSpan.FromSeconds(20));
+                                        body.ToJsonString(), TimeSpan.FromSeconds(20), SmallReplyBytes, BoundedHTTP.JSONLimits.Small);
         if (!reply.IsSuccess) throw new HttpRequestException($"The node returned HTTP {reply.Status} for the alias view.");
         return AliasStatus(reply.Body, address);
     }

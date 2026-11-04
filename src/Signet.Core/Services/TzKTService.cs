@@ -10,6 +10,11 @@ namespace Signet.Services;
 /// <summary>Token balances from the TzKT indexer, and the NFTs picked out of them.</summary>
 public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
 {
+    /// <summary>The most a page of operations, tokens or bakers may be (S19).</summary>
+    public const int PageBytes = 4 << 20;
+    /// <summary>The most one account, operation or big map record may be.</summary>
+    public const int RecordBytes = 256 << 10;
+
     public Uri BaseURL { get; } = baseURL;
     private readonly HttpClient http = http ?? Http.Shared;
 
@@ -110,7 +115,7 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
     public async Task<IReadOnlyDictionary<string, string>?> TokenInfo(string contract, string tokenId)
     {
         if (!TokenMetadataResolver.IsContract(contract) || !TokenMetadataResolver.IsTokenID(tokenId)) return null;
-        var reply = await Http.Get(http, BaseURL.AppendingPathComponent($"v1/contracts/{contract}/bigmaps/token_metadata/keys/{tokenId}"), TimeSpan.FromSeconds(15));
+        var reply = await Http.Get(http, BaseURL.AppendingPathComponent($"v1/contracts/{contract}/bigmaps/token_metadata/keys/{tokenId}"), TimeSpan.FromSeconds(15), RecordBytes, BoundedHTTP.JSONLimits.Record);
         if (!reply.IsSuccess || reply.Body.Length == 0 || reply.Body.Length > 1 << 20) return null;
         return ParseTokenInfo(reply.Body);
     }
@@ -161,7 +166,7 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
 
     private async Task<byte[]> GetJSON(Uri url, TimeSpan timeout)
     {
-        var reply = await Http.Get(http, url, timeout);
+        var reply = await Http.Get(http, url, timeout, PageBytes, BoundedHTTP.JSONLimits.Page);
         if (!reply.IsSuccess) throw new HttpRequestException($"TzKT returned HTTP {reply.Status}");
         return reply.Body;
     }
@@ -173,7 +178,7 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
     public async Task<Address?> SenderOfOperation(string hash)
     {
         if (hash.Length >= 64 || !hash.All(char.IsAsciiLetterOrDigit)) return null;
-        var reply = await Http.Get(http, BaseURL.AppendingPathComponent($"v1/operations/{hash}"), TimeSpan.FromSeconds(15));
+        var reply = await Http.Get(http, BaseURL.AppendingPathComponent($"v1/operations/{hash}"), TimeSpan.FromSeconds(15), PageBytes, BoundedHTTP.JSONLimits.Page);
         if (!reply.IsSuccess || JsonNode.Parse(reply.Body) is not JsonArray { Count: > 0 } rows ||
             rows[0]?["sender"]?["address"] is not JsonValue v || !v.TryGetValue<string>(out var address) || !new Address(address).IsValidAccount)
             return null;
@@ -335,7 +340,7 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
     /// <summary>TzProfiles data as TzKT indexes it (<c>extras.profile</c>), falling back to TzKT's own alias.</summary>
     public async Task<AccountProfile?> AccountProfileFor(Address address)
     {
-        var reply = await Http.Get(http, BaseURL.AppendingPathComponent($"v1/accounts/{address.Value}"), TimeSpan.FromSeconds(15));
+        var reply = await Http.Get(http, BaseURL.AppendingPathComponent($"v1/accounts/{address.Value}"), TimeSpan.FromSeconds(15), RecordBytes, BoundedHTTP.JSONLimits.Record);
         if (reply.Status is 204 or 404) return null;
         if (!reply.IsSuccess) throw new HttpRequestException($"TzKT returned HTTP {reply.Status}");
         return Profile(reply.Body);

@@ -22,13 +22,20 @@ public static class Http
         public string Text => Encoding.UTF8.GetString(Body);
     }
 
-    public static Task<Reply> Get(HttpClient client, Uri url, TimeSpan? timeout = null) =>
-        Send(client, new HttpRequestMessage(HttpMethod.Get, url), timeout);
+    /// <summary>The cap when a caller names none: an indexer page (upstream's <c>TzKTService.pageBytes</c>).</summary>
+    public const int DefaultLimit = 4 << 20;
 
-    public static Task<Reply> PostJSON(HttpClient client, Uri url, string json, TimeSpan? timeout = null) =>
-        Send(client, new HttpRequestMessage(HttpMethod.Post, url) { Content = new StringContent(json, Encoding.UTF8, "application/json") }, timeout);
+    public static Task<Reply> Get(HttpClient client, Uri url, TimeSpan? timeout = null, int limit = DefaultLimit, BoundedHTTP.JSONLimits? json = null) =>
+        Send(client, new HttpRequestMessage(HttpMethod.Get, url), timeout, limit, json ?? BoundedHTTP.JSONLimits.Page);
 
-    public static async Task<Reply> Send(HttpClient client, HttpRequestMessage request, TimeSpan? timeout = null)
+    public static Task<Reply> PostJSON(HttpClient client, Uri url, string body, TimeSpan? timeout = null, int limit = DefaultLimit, BoundedHTTP.JSONLimits? json = null) =>
+        Send(client, new HttpRequestMessage(HttpMethod.Post, url) { Content = new StringContent(body, Encoding.UTF8, "application/json") }, timeout, limit, json ?? BoundedHTTP.JSONLimits.Page);
+
+    /// <summary>
+    /// Sends <c>request</c> and reads the reply through <c>BoundedHTTP</c> (S19): at most <c>limit</c> bytes,
+    /// and within <c>json</c>'s budget when one is given (null: the body is not JSON, or not checked).
+    /// </summary>
+    public static async Task<Reply> Send(HttpClient client, HttpRequestMessage request, TimeSpan? timeout = null, int limit = DefaultLimit, BoundedHTTP.JSONLimits? json = null)
     {
         using var _ = request;
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -37,8 +44,8 @@ public static class Http
         using var cancel = new CancellationTokenSource(timeout ?? DefaultTimeout);
         try
         {
-            using var response = await client.SendAsync(request, cancel.Token);
-            return new Reply((int)response.StatusCode, await response.Content.ReadAsByteArrayAsync(cancel.Token));
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel.Token);
+            return new Reply((int)response.StatusCode, await BoundedHTTP.Read(response, limit, json, cancel.Token));
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested)
         {

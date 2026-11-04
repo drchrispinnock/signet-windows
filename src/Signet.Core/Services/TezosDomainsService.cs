@@ -18,7 +18,7 @@ public sealed class TezosDomainsService(Uri endpoint, HttpClient? http = null)
     private async Task<JsonObject> Query(string query, JsonObject variables)
     {
         var body = new JsonObject { ["query"] = query, ["variables"] = variables }.ToJsonString();
-        var reply = await Http.PostJSON(http, Endpoint, body, TimeSpan.FromSeconds(15));
+        var reply = await Http.PostJSON(http, Endpoint, body, TimeSpan.FromSeconds(15), 16 << 10, BoundedHTTP.JSONLimits.Small);
         if (!reply.IsSuccess) throw new DomainsError($"HTTP {reply.Status}");
         try { return JsonNode.Parse(reply.Body) as JsonObject ?? throw new DomainsError("not a JSON object"); }
         catch (JsonException e) { throw new DomainsError(e.Message); }

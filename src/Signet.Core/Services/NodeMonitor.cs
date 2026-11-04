@@ -230,7 +230,7 @@ public sealed partial class NodeMonitor : ObservableObject
     public static async Task<ProbeReply> HttpProbe(Uri url)
     {
         var clock = Stopwatch.StartNew();
-        var reply = await Http.Get(Http.Shared, url, TimeSpan.FromSeconds(8));
+        var reply = await Http.Get(Http.Shared, url, TimeSpan.FromSeconds(8), 16 << 10, BoundedHTTP.JSONLimits.Unchecked);
         return new ProbeReply(reply.Body, reply.Status, clock.Elapsed.TotalSeconds);
     }
 }
