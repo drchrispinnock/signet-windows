@@ -118,18 +118,35 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 ## Status
 
-The pin is upstream `86b28df` (origin/main, 2026-11-03). Every feature commit up to it is ported,
-TzEL included; what is still missing is infrastructure, listed under **Backlog** below (in
-particular upstream `6a4a2b0`, a fix to `ArtworkCache`, which has no Windows counterpart yet, and
-the Linux/FreeBSD build commits `698121e`, `7dc82dc`, `461d097`, `436631a`, `78a6098`, which need
-nothing here). Ported:
+The pin is upstream `86b28df` (origin/main, 2026-11-03), and everything up to it is ported: every
+feature (TzEL included), the infrastructure behind them, and every upstream test suite (the
+Linux/FreeBSD build commits `698121e`, `7dc82dc`, `461d097`, `436631a`, `78a6098` need nothing
+here). Ported:
 - Models, `Network` and `AppState` in full, the shielded members included.
 - The `TaquitoBridge` host (`JSONValue` with `IntValue`, `BridgeError.Typed`, the journal and
-  Ledger session natives). Not yet: the call policy (S30: signing calls, read deadlines, context
-  discard) and log rotation during writes (S11).
+  Ledger session natives) with upstream's call policy (S30): `SigningCalls`/`CallKind`, `Sign`
+  refuses a read, a read has a 60 s deadline (`CallWithin` for another) after which its HTTP work
+  is cancelled and the context discarded (a generation counter drops late timers, fetches and
+  Ledger replies), and string arguments are capped at 2 MB. Windows difference: calls are not
+  serialised through one gate as upstream's are, so a read that times out while a signing call is
+  in flight fails alone and the context is kept. `bridge.log` rotates to `bridge.log.1` past 5 MB
+  (S11), and every line also goes to a `systemLog` sink (the debugger's output by default).
 - `KeyGenerator`, `KeyImporter`, `SessionKeys`, `TezosClientStore` (journal, `contracts`, removal
   snapshots, address-checked secrets), `WalletStore`, `AppStateStore` (nodes, Layer 2 and service links),
-  `WalletDirectorySettings`, `EndpointPolicy` (host classification only), `QRCode`.
+  `WalletDirectorySettings`, `EndpointPolicy`, `QRCode`, `DeveloperSettings`. `ImportWallets`
+  follows a link or junction before refusing the directory itself (upstream compares device and inode).
+- `BoundedHTTP` (S19): `Http.Get`/`PostJSON`/`Send` stream every native reply under a byte cap and a
+  JSON budget, with upstream's caps per reader (TzKT pages 4 MB and records 256 KB, node replies and
+  Tezos Domains 16 KB, the faucet 64 KB, the node probe 16 KB unchecked).
+- `WalletBackup` at HEAD (S05, S09, S28): a locked, recovered snapshot (`SnapshotFiles`), a
+  `.signet-backup` manifest naming the source wallet, a uniquely named staging folder, and pruning of
+  complete generations of this wallet only. The manifest's `source` is a Windows path, so a backup
+  folder is not shared with a Mac.
+- Artwork: Core's `ImageLoader` (upstream's actor: candidates in order with the disk consulted
+  candidate by candidate, `6a4a2b0`; public HTTPS through the pinned client; the 8 MB cut-off and
+  too-large memory; six loads at a time) and `ArtworkCache` in `%LOCALAPPDATA%\Signet\artwork`.
+  Core has no codec, so the loader deals in encoded thumbnails (`ImageLoader.Thumbnail`: a PNG, or
+  an SVG document kept as it came) and the app installs Windows Imaging Component as its `Decoder`.
 - The chain layer with approved limits (S14), `SentOperation`, `Portfolio` (S26) and chain pinning
   (S12): `ChainService`, `MockChainService`, `TaquitoChainService`, `TzKTService`, `NodeMonitor`
   and the rest as before; `TokenMetadataResolver` (metadata the indexer lacks, read from the
@@ -178,7 +195,7 @@ nothing here). Ported:
   Add address, Export, Forget, Remember key, Receive and Faucet.
 - `NetworksSheet` (node per network with the chain check, `NodeIdentity`; TzKT, explorer and
   faucet links; Enable Layer 2 and the Layer 2 Michelson node) and `SettingsView` (appearance, launch disclaimer, wallet
-  directory, backups, updates; no Developer section yet). Settings is a dialog opened from the
+  directory, backups, updates, Developer). Settings is a dialog opened from the
   burger menu or Ctrl+, rather than a separate window; `Appearance` is applied by `AppearanceApplier`.
 - Send: `SendViewModel` and `SendSheet` (compose, confirm, result; Tezos and Etherlink sides),
   with `OperationJournal` behind the bridge's `operationRead`/`operationSave`/
@@ -214,7 +231,7 @@ nothing here). Ported:
   `ConnectCallback` resolves the host itself, refuses any local or private answer and connects to
   the checked address (upstream runs curl with `--resolve`); no proxy, no redirects. Every bridge
   fetch is capped at 32 MB and 60 s, and the log is redacted (`Redacted`, `RedactedLine`, S11).
-  Upstream's read deadlines are approximated by `WaitAsync` on the manager's own calls. The pairing
+  The manager's calls carry upstream's read deadlines (`CallWithin`). The pairing
   code field is a `PasswordBox`, from upstream `6c1b7d3` (after the pin, ported early). `Program.cs`
   replaces the generated `Main` (`DISABLE_XAML_GENERATED_MAIN`): it registers `signet://` with
   `ActivationRegistrationManager.RegisterForProtocolActivation` at every launch (so the scheme
@@ -226,8 +243,7 @@ nothing here). Ported:
   proposals, S29 revealed keys) and the sheets Create, Add, Sign and Submit multisig, enabled in
   the burger menu. `multisig-proposals.json` is written in the Mac's `JSONEncoder` form (sorted
   keys, uppercase UUIDs, ISO 8601 dates, LF), so a wallet folder moves between the two.
-  `WalletBackup.Files` is HEAD's list (contracts, proposals, journal; no shielded files), though
-  the rest of `WalletBackup` is still old. Upstream's live `ShadownetMultisigTests` is
+  Upstream's live `ShadownetMultisigTests` is
   `QuantumnetMultisigTests` here (the Shadownet faucet needs proof of work). Quantumnet refuses
   classic keys inside a contract (`non_quantum_resistant_signature_algorithm`), so that test's
   signers are tz5 keys and a tz1 pays; a multisig there needs tz5 signers.
@@ -253,19 +269,11 @@ nothing here). Ported:
   its return type). Upstream's `SendSheet.SideContext`/`capture` is `SendSideContext.Capture`
   in Core, so `SendSideContextTests` runs headless. The live tests (`ShadownetBridgeTests`,
   `EtherlinkLiveTests`) fund through the Shadownet faucet's proof of work and pass, about 40 s each.
-Every menu item is ported. **Backlog** (infrastructure, not features):
-- `ImageLoader` is still the app's `BitmapImage` loader: no `ArtworkCache` on disk (nor `6a4a2b0`),
-  no 8 MB "too large" skip, and artwork is fetched by WinUI rather than the pinned public client
-  (the candidates themselves are already S13-filtered by `IPFS`).
-- `BoundedHTTP` (S19) for the native readers (TzKT, nodes, faucet); the rollup client has its own byte cap.
-- The bridge call policy (S30: signing calls, read deadlines, context discard) and log rotation (S11).
-- `WalletBackup` is still the `3b33fe1` version (no manifest or locked snapshot, S05/S28); its
-  file list is HEAD's, the shielded wallets included.
-- Settings has no Developer section (`DeveloperSettings`, dApp diagnostics).
-- Upstream test suites not yet ported: `AuditRepairTests`, `AuditRepairTests2`, `ArtworkCacheTests`,
-  `ConfirmationWatcherTests`, `RefreshContextTests`, `WalletLockMeasurementTests`, `DAppStartupTests`,
-  `UpdaterTests` and a few small ones; `dotnet test`'s skipped list has the rest.
-The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
+Every menu item is ported, and every upstream test suite has a class of the same name. The skipped
+tests each give their reason: Mac-only checks (Sparkle's Info.plist keys, the in-app test host,
+POSIX modes), tests on the user's real wallet state, the lock benchmark, a curl configuration
+Windows does not use, cancellation `WaitForConfirmation` does not take, and image decoding (Core
+has no codec). The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
 
 Windows-specific porting notes:
 - `UserDefaults` is a C# class of that name backed by `%LOCALAPPDATA%\Signet\preferences.json`.
@@ -283,7 +291,8 @@ Windows-specific porting notes:
   built in code (`Views/Foo.cs`, no XAML); the window shell and `WalletHomeView` have XAML.
 - There is no menu bar: upstream's Operations menu is the burger menu only, and its shortcuts
   (Ctrl+N, Ctrl+Shift+I, Ctrl+Shift+N, Ctrl+R) are installed on the window.
-- `Services/ImageLoader.cs` (app) uses `BitmapImage`, trying each URL in turn; no disk cache yet.
+- `Services/ArtworkImages.cs` (app) puts Core's `ImageLoader` thumbnails into an `Image`
+  (`BitmapImage`, or `SvgImageSource` for an SVG) and keeps the pictures in memory.
 - The token, Etherlink and shield logos are linked from `upstream/Signet/Resources/Assets.xcassets`
   in `Signet.App.csproj`, never copied.
 - `dotnet publish` of the app drops `Signet.pri` and the `.xbf` files and the result crashes with
