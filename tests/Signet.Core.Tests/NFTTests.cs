@@ -20,7 +20,7 @@ public class IPFSTests
     [Fact]
     public void OffersEveryGatewayForIPFSButOnlyOneForHTTPS()
     {
-        var ipfs = IPFS.CandidateURLs("ipfs://QmCid");
+        var ipfs = IPFS.CandidateURLs("ipfs://QmNrhZHUaEqxhyLfqoq1mtHSipkWHeT31LNHb1QEbDHgnc");
         Assert.Equal(IPFS.Gateways.Count, ipfs.Count);
         Assert.Equal(IPFS.Gateways.Select(g => g.Host), ipfs.Select(u => u.Host));
         Assert.Single(IPFS.CandidateURLs("https://example.com/x.png"));
@@ -57,21 +57,21 @@ public class NFTClassificationTests
     [
       { "balance": "1", "lastTime": "2026-10-21T16:48:10Z", "token": { "contract": { "address": "KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton" }, "tokenId": "634799", "standard": "fa2",
         "metadata": { "name": "United in Baking", "symbol": "OBJKT", "decimals": "0",
-                      "thumbnailUri": "ipfs://QmThumb", "displayUri": "ipfs://QmDisplay", "artifactUri": "ipfs://QmArt",
-                      "formats": [ { "uri": "ipfs://QmArt", "mimeType": "image/jpeg" } ] } } },
+                      "thumbnailUri": "ipfs://QmXxvrULyrWH18e6kUinPNXt5PAwv6h7MPcmWbSw4DwDuP", "displayUri": "ipfs://QmNrhZHUaEqxhyLfqoq1mtHSipkWHeT31LNHb1QEbDHgnc", "artifactUri": "ipfs://Qmaf8m2vtegsvoWybB2AL1wJ4Q79SwornWx8T7DbkYRhv9",
+                      "formats": [ { "uri": "ipfs://Qmaf8m2vtegsvoWybB2AL1wJ4Q79SwornWx8T7DbkYRhv9", "mimeType": "image/jpeg" } ] } } },
       { "balance": "20", "token": { "contract": { "address": "KT1F139Vd1mcqYejDnzQQkVQcQboPc4EUbqx" }, "tokenId": "0", "standard": "fa2",
-        "metadata": { "name": "Captain Stake", "decimals": "0", "artifactUri": "ipfs://QmOnlyArt",
-                      "formats": [ { "uri": "ipfs://QmOnlyArt", "mimeType": "image/png" } ] } } },
+        "metadata": { "name": "Captain Stake", "decimals": "0", "artifactUri": "ipfs://QmNNgpMfD227yefhGREQHHYAdB62hrTihUWJJnKuSHNxxx",
+                      "formats": [ { "uri": "ipfs://QmNNgpMfD227yefhGREQHHYAdB62hrTihUWJJnKuSHNxxx", "mimeType": "image/png" } ] } } },
       { "balance": "1", "token": { "contract": { "address": "KT1GBZmSxmnKJXGMdMLbugPfLyUPmuLSMwKS" }, "tokenId": "143032", "standard": "fa2",
         "metadata": { "name": "captstake.tez", "decimals": "0", "symbol": "TD" } } },
       { "balance": "30000000000", "token": { "contract": { "address": "KT1FfjhvJZppBFQuUzNAdFPR1Z2jpD4XiXrF" }, "tokenId": "0", "standard": "fa2",
         "metadata": { "name": "Aubergine", "decimals": "6", "symbol": "GINE", "thumbnailUri": "https://gateway.pinata.cloud/ipfs/Qmaf8" } } },
       { "balance": "1", "token": { "contract": { "address": "KT1video" }, "tokenId": "7", "standard": "fa2",
-        "metadata": { "name": "Clip", "decimals": "0", "artifactUri": "ipfs://QmMovie",
-                      "formats": [ { "uri": "ipfs://QmMovie", "mimeType": "video/mp4" } ] } } },
+        "metadata": { "name": "Clip", "decimals": "0", "artifactUri": "ipfs://Qmb9QUXYn1PW8e7E2CwpBMgEur7gFAPPpq2Zh7H2D7eQcT",
+                      "formats": [ { "uri": "ipfs://Qmb9QUXYn1PW8e7E2CwpBMgEur7gFAPPpq2Zh7H2D7eQcT", "mimeType": "video/mp4" } ] } } },
       { "balance": "1", "firstTime": "2026-10-21T16:00:00Z", "token": { "contract": { "address": "KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton" }, "tokenId": "44684", "standard": "fa2",
-        "metadata": { "name": "NFT", "decimals": "0", "thumbnailUri": "ipfs://QmDisplay", "artifactUri": "ipfs://QmMovie2",
-                      "formats": [ { "uri": "ipfs://QmMovie2", "mimeType": "video/mp4" } ] } } }
+        "metadata": { "name": "NFT", "decimals": "0", "thumbnailUri": "ipfs://QmNrhZHUaEqxhyLfqoq1mtHSipkWHeT31LNHb1QEbDHgnc", "artifactUri": "ipfs://QmbQHn7wSXcqgzrvJJ8BA1tKzR5n2BWdbXnFTXz2EKWfHM",
+                      "formats": [ { "uri": "ipfs://QmbQHn7wSXcqgzrvJJ8BA1tKzR5n2BWdbXnFTXz2EKWfHM", "mimeType": "video/mp4" } ] } } }
     ]
     """);
 
@@ -89,12 +89,12 @@ public class NFTClassificationTests
         Assert.True(nfts[2].Date == DateTimeOffset.Parse("2026-10-21T16:00:00Z", CultureInfo.InvariantCulture) && nfts[2].IsMoving && nfts[2].ImageURLs.Count == IPFS.Gateways.Count);
         Assert.Equal("KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton:634799", nfts[0].Id);
         // displayUri comes first, then thumbnailUri and the image artifact as fallbacks, one URL per gateway each.
-        Assert.Equal("https://ipfs.filebase.io/ipfs/QmDisplay", nfts[0].ThumbnailURL?.AbsoluteString());
+        Assert.Equal("https://ipfs.filebase.io/ipfs/QmNrhZHUaEqxhyLfqoq1mtHSipkWHeT31LNHb1QEbDHgnc", nfts[0].ThumbnailURL?.AbsoluteString());
         Assert.Equal(3 * IPFS.Gateways.Count, nfts[0].ImageURLs.Count);
-        Assert.Equal(new[] { "QmDisplay", "QmThumb", "QmArt" }.SelectMany(cid => Enumerable.Repeat(cid, IPFS.Gateways.Count)),
+        Assert.Equal(new[] { "QmNrhZHUaEqxhyLfqoq1mtHSipkWHeT31LNHb1QEbDHgnc", "QmXxvrULyrWH18e6kUinPNXt5PAwv6h7MPcmWbSw4DwDuP", "Qmaf8m2vtegsvoWybB2AL1wJ4Q79SwornWx8T7DbkYRhv9" }.SelectMany(cid => Enumerable.Repeat(cid, IPFS.Gateways.Count)),
                      nfts[0].ImageURLs.Select(IPFS.GatewayPath));
         // An image artifact is acceptable when there is nothing else.
-        Assert.Equal("https://ipfs.filebase.io/ipfs/QmOnlyArt", nfts[1].ThumbnailURL?.AbsoluteString());
+        Assert.Equal("https://ipfs.filebase.io/ipfs/QmNNgpMfD227yefhGREQHHYAdB62hrTihUWJJnKuSHNxxx", nfts[1].ThumbnailURL?.AbsoluteString());
         Assert.Equal(20m, nfts[1].Balance);
         // Fungible tokens, image-less tokens and video-only artifacts are not shown.
     }
