@@ -333,3 +333,100 @@ public class FileAppStateStoreTests
         Assert.Equal("pq", model.SelectedWallet?.Alias);
     }
 }
+
+/// <summary>S09, S10: wallet files are replaced as one journalled unit under the wallet lock.</summary>
+public class TezosClientStoreIntegrityTests
+{
+    private static readonly Wallet A = new("a", new Address("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"), publicKey: "edpkA", keyKind: KeyKind.Unencrypted);
+
+    /// <summary>Windows has no POSIX modes (see <c>TestSupport</c>), so what is left is the cleanup.</summary>
+    [Fact]
+    public void FilesAreCreatedPrivateAndTheDirectoryIsHardened()
+    {
+        var dir = TestSupport.MakeDir("integrity");
+        new TezosClientStore(dir).AddWithSecretKey(A, "edskA");
+        foreach (var file in TezosClientStore.WalletFiles) Assert.True(File.Exists(Path.Combine(dir, file)));
+        // No temporary or journal is left behind.
+        Assert.DoesNotContain(Directory.GetFiles(dir).Select(Path.GetFileName), n => n!.Contains(".tmp") || n == TezosClientStore.JournalFile);
+    }
+
+    [Fact]
+    public void AnUnfinishedChangeIsRolledBackBeforeTheNextRead()
+    {
+        var dir = TestSupport.MakeDir("integrity");
+        var store = new TezosClientStore(dir);
+        store.AddWithSecretKey(A, "edskA");
+        var before = TezosClientStore.WalletFiles.Select(f => File.ReadAllBytes(Path.Combine(dir, f))).ToList();
+        // Simulate a crash after the first of three files was replaced: the journal still names
+        // all three with their previous contents, and public_key_hashs already has the new alias.
+        var files = new System.Text.Json.Nodes.JsonObject();
+        foreach (var (file, data) in TezosClientStore.WalletFiles.Zip(before)) files[file] = Convert.ToBase64String(data);
+        files[TezosClientStore.ContractsFile] = null;
+        File.WriteAllText(Path.Combine(dir, TezosClientStore.JournalFile), new System.Text.Json.Nodes.JsonObject { ["version"] = 1, ["files"] = files }.ToJsonString());
+        TestSupport.WriteText(dir, "public_key_hashs", """[{"name":"a","value":"tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"},{"name":"b","value":"tz2BFTyPeYRzxd5aiBchbXN3WCZhx7BqbMBq"}]""");
+        TestSupport.WriteText(dir, "contracts", """[{"name":"orphan","value":"KT1BEqzn5Wx8uJrZNvuS9DVHmLvG9td3fDLi"}]""");
+        // Windows' temporaries are AtomicFile's "<name>.tmp-<guid>".
+        TestSupport.WriteText(dir, "secret_keys.tmp-deadbeef", "junk");
+
+        Assert.Equal(["a"], store.Load().Select(w => w.Alias));
+        Assert.Equal(before, TezosClientStore.WalletFiles.Select(f => File.ReadAllBytes(Path.Combine(dir, f))));
+        Assert.False(File.Exists(Path.Combine(dir, "contracts")));
+        Assert.False(File.Exists(Path.Combine(dir, TezosClientStore.JournalFile)));
+        Assert.False(File.Exists(Path.Combine(dir, "secret_keys.tmp-deadbeef")));
+        // A journal that cannot be read is an error, never silently ignored.
+        TestSupport.WriteText(dir, TezosClientStore.JournalFile, "{");
+        Assert.ThrowsAny<TezosClientStore.StoreError>(() => store.Load());
+    }
+
+    [Fact]
+    public void RenameAndRemoveAreJournaledAsOneUnit()
+    {
+        var dir = TestSupport.MakeDir("integrity");
+        var store = new TezosClientStore(dir);
+        store.AddWithSecretKey(A, "edskA");
+        store.Rename("a", "b");
+        var renamed = store.Load().First();
+        Assert.True(renamed.Alias == "b" && renamed.PublicKey == "edpkA" && renamed.KeyKind == KeyKind.Unencrypted);
+        store.Remove(renamed, store.RemovalSnapshot(renamed));
+        Assert.Empty(store.Load());
+        foreach (var file in TezosClientStore.WalletFiles)
+            Assert.Empty(JsonSerializer.Deserialize<JsonElement[]>(File.ReadAllBytes(Path.Combine(dir, file)))!);
+        Assert.False(File.Exists(Path.Combine(dir, TezosClientStore.JournalFile)));
+    }
+
+    [Fact]
+    public void ProposalUpdatesMergeWhatIsOnDisk()
+    {
+        var dir = TestSupport.MakeDir("integrity");
+        FileMultisigProposalStore one = new(dir), two = new(dir);
+        static MultisigProposal Proposal(int n) =>
+            new("m", "KT1BEqzn5Wx8uJrZNvuS9DVHmLvG9td3fDLi", "Shadownet", "NetX", n, 2, ["edpk1", "edpk2"], new MultisigAction.SetDelegate(null), $"05{n}");
+        // Each instance holds a stale in-memory view; neither write may drop the other's proposal.
+        MultisigProposal first = Proposal(1), second = Proposal(2);
+        one.Update(p => p.Add(first));
+        two.Update(p => p.Add(second));
+        Assert.Equal([1, 2], one.Load().Select(p => p.Counter).Order());
+        one.Update(p => { var i = p.FindIndex(x => x.Id == first.Id); p[i] = p[i] with { Signatures = [.. p[i].Signatures, new MultisigSignature("edpk1", "edsig1")] }; });
+        two.Update(p => { var i = p.FindIndex(x => x.Id == second.Id); p[i] = p[i] with { Signatures = [.. p[i].Signatures, new MultisigSignature("edpk2", "edsig2")] }; });
+        var stored = two.Load();
+        Assert.True(stored.First(p => p.Id == first.Id).Signatures.Count == 1 && stored.First(p => p.Id == second.Id).Signatures.Count == 1);
+        // Oversized entries another program wrote are left out (S19).
+        var huge = Proposal(3) with { Bytes = new string('0', FileMultisigProposalStore.MaxBytesHex + 2) };
+        File.WriteAllText(Path.Combine(dir, FileMultisigProposalStore.FileName), new System.Text.Json.Nodes.JsonArray(first.ToJson(), huge.ToJson()).ToJsonString());
+        Assert.Equal([1], one.Load().Select(p => p.Counter));
+    }
+
+    /// <summary>Upstream holds the lock from a Python child; here another handle on the lock file stands in for another process.</summary>
+    [Fact]
+    public async Task AHeldLockMakesCallersWaitThenFail()
+    {
+        var dir = TestSupport.MakeDir("integrity");
+        var held = new FileStream(Path.Combine(dir, TezosClientStore.LockFile), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var release = Task.Delay(1500, TestContext.Current.CancellationToken).ContinueWith(_ => held.Dispose(), TestContext.Current.CancellationToken);
+        var started = DateTime.UtcNow;
+        // Taking the lock waits for the holder (well under the 5 s timeout) rather than failing at once.
+        TezosClientStore.WithWalletLock(dir, () => 0);
+        Assert.True(DateTime.UtcNow - started > TimeSpan.FromSeconds(1));
+        await release;
+    }
+}

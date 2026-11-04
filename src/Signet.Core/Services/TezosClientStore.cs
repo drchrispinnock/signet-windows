@@ -259,7 +259,16 @@ public sealed class TezosClientStore(string? directory = null) : IWalletStore
     /// </summary>
     public int ImportWallets(string directory)
     {
-        if (PathUtility.SamePath(Path.GetFullPath(directory), Path.GetFullPath(Directory))) throw new StoreError.SameDirectory();
+        static string ResolvedPath(string path)
+        {
+            // A link or junction at the end is followed to the folder it names (upstream compares
+            // device and inode), so a directory reached through a link is still recognised as itself.
+            var info = new DirectoryInfo(Path.GetFullPath(path));
+            try { if (info.Exists && info.LinkTarget is not null && info.ResolveLinkTarget(returnFinalTarget: true) is { } target) return Path.GetFullPath(target.FullName); }
+            catch (IOException) { }
+            return info.FullName;
+        }
+        if (PathUtility.SamePath(ResolvedPath(directory), ResolvedPath(Directory))) throw new StoreError.SameDirectory();
         var snapshot = SnapshotFiles(directory, WalletFiles);
         var sourceFiles = snapshot.Select(s => (File: s.File, Rows: ParseRaw(s.Data, s.File))).ToList();
         if (sourceFiles.FirstOrDefault(f => f.File == PublicKeyHashesFile).Rows is not { } sourceHashes) return 0;

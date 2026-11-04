@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using Signet.Models;
 using Signet.Services;
+using Signet.ViewModels;
 
 namespace Signet.Tests;
 
@@ -271,5 +272,273 @@ public class BridgeErrorConversionTests
         // Other errors never enter the conversion, and a success comes back untouched.
         await Assert.ThrowsAsync<ChainError.AccountNotOnChain>(() => TaquitoBridge.BridgeError.Typed<int>(() => throw new ChainError.AccountNotOnChain(new Address("tz1"))));
         Assert.Equal(7, await TaquitoBridge.BridgeError.Typed(() => Task.FromResult(7)));
+    }
+}
+
+/// <summary>A key importer whose password check runs a caller's code first, so a test can change the model while Forget waits.</summary>
+internal sealed class InterferingImporter(Func<Task> during) : IKeyImporter
+{
+    private readonly MockKeyImporter fallback = new();
+    public Task<InspectedSecretKey> Inspect(string secretKey, string? passphrase) => fallback.Inspect(secretKey, passphrase);
+    public Task<MnemonicCheck> Check(string mnemonic) => fallback.Check(mnemonic);
+    public Task<KeyMaterial> KeyFromMnemonic(string mnemonic, string? passphrase, string derivationPath, MnemonicCurve curve) => fallback.KeyFromMnemonic(mnemonic, passphrase, derivationPath, curve);
+    public Task<KeyMaterial> KeyFromFundraiser(string email, string password, string mnemonic) => fallback.KeyFromFundraiser(email, password, mnemonic);
+    public async Task<string> Decrypt(string secretKey, string passphrase)
+    {
+        await during();
+        return await fallback.Decrypt(secretKey, passphrase);
+    }
+}
+
+/// <summary>S07: a session-only Forget removes only the entry it verified.</summary>
+public class SessionKeyRemovalTests
+{
+    internal static readonly KeyMaterial Paper = new(AddressScheme.Tz1, "edpkuPAPER", "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb", "edeskPAPER");
+    private static readonly KeyMaterial Other = new(AddressScheme.Tz1, "edpkuOTHER", "tz1dCaMnnMJk76UodjewCK67ABiXWjcKj73N", "edeskOTHER");
+
+    [Fact]
+    public async Task ForgetRefusesAnAliasReusedDuringThePasswordCheck()
+    {
+        WalletViewModel? model = null;
+        var importer = new InterferingImporter(async () =>
+        {
+            if (model is null) return;
+            // While the password is being checked: the account is renamed and another one takes its alias.
+            model.RenameSelectedWallet("Saved");
+            await model.ImportAccount("Paper", Other, alreadyEncrypted: true, keepForSession: true);
+        });
+        model = new WalletViewModel(chain: new MockChainService(), keyImporter: importer);
+        await model.ImportAccount("Paper", Paper, alreadyEncrypted: true, keepForSession: true);
+        var original = model.SelectedWallet!;
+
+        await Assert.ThrowsAnyAsync<SessionKeyStore.StoreError>(() => model.ForgetSelectedWallet("correct horse"));
+
+        // Nothing was removed: the original lives on as "Saved", the replacement "Paper" is intact.
+        Assert.Equal(new HashSet<string> { "Saved", "Paper" }, model.Wallets.Select(w => w.Alias).ToHashSet());
+        var saved = model.Wallets.First(w => w.Alias == "Saved");
+        var replacement = model.Wallets.First(w => w.Alias == "Paper");
+        Assert.True(saved.Address == original.Address && replacement.Address.Value == Other.Address);
+        Assert.Equal(Other.SecretKey, Assert.IsType<SigningKey.Secret>(model.SigningKeyFor(replacement, "correct horse")).Key);
+        Assert.Equal(Paper.SecretKey, Assert.IsType<SigningKey.Secret>(model.SigningKeyFor(saved, "correct horse")).Key);
+    }
+
+    [Fact]
+    public async Task ForgetRefusesARenameDuringThePasswordCheck()
+    {
+        WalletViewModel? model = null;
+        var importer = new InterferingImporter(() => { model?.RenameSelectedWallet("Moved"); return Task.CompletedTask; });
+        model = new WalletViewModel(chain: new MockChainService(), keyImporter: importer);
+        await model.ImportAccount("Paper", Paper, alreadyEncrypted: true, keepForSession: true);
+        await Assert.ThrowsAnyAsync<SessionKeyStore.StoreError>(() => model.ForgetSelectedWallet("correct horse"));
+        Assert.Equal(["Moved"], model.Wallets.Select(w => w.Alias));
+        // Asked again for what is there now, Forget works (the importer renames to the same name).
+        await model.ForgetSelectedWallet("correct horse");
+        Assert.Empty(model.Wallets);
+    }
+
+    [Fact]
+    public void SessionStoreNeverReplacesAnEntry()
+    {
+        var store = new SessionKeyStore();
+        var a = new Wallet("a", new Address(Paper.Address), AddressScheme.Tz1, "edpkA", KeyKind.Unencrypted);
+        store.Add(a, "edskA");
+        Assert.ThrowsAny<SessionKeyStore.StoreError>(() => store.Add(a, "edskA2"));                       // same alias
+        Assert.ThrowsAny<SessionKeyStore.StoreError>(() => store.Add(a with { Alias = "b" }, "edskA2"));  // same address
+        var b = new Wallet("b", new Address(Other.Address), AddressScheme.Tz1, "edpkB", KeyKind.Unencrypted);
+        store.Add(b, "edskB");
+        Assert.ThrowsAny<SessionKeyStore.StoreError>(() => store.Rename("a", "b"));
+        Assert.Equal("edskA", store.SecretKey(store.Wallets[0]));
+
+        // A snapshot is only good for the entry as it was: rename or removal in between refuses it.
+        var snapshot = store.RemovalSnapshotFor(store.Wallets[0])!;
+        store.Rename("a", "c");
+        Assert.ThrowsAny<SessionKeyStore.StoreError>(() => store.Remove(snapshot));
+        Assert.Equal(["c", "b"], store.Wallets.Select(w => w.Alias));
+        var fresh = store.RemovalSnapshotFor(store.Wallets[0])!;
+        store.Remove(fresh);
+        Assert.Equal(["b"], store.Wallets.Select(w => w.Alias));
+        Assert.ThrowsAny<SessionKeyStore.StoreError>(() => store.Remove(fresh));
+    }
+
+    [Fact]
+    public async Task ConcurrentImportsOfTheSameAliasAdmitOnlyOne()
+    {
+        var model = new WalletViewModel(chain: new MockChainService());
+        var one = await new KeyGenerator().Generate(AddressScheme.Tz1);
+        var two = await new KeyGenerator().Generate(AddressScheme.Tz1);
+        // Both pass the first check and encrypt (an await); the second must fail the recheck.
+        async Task<bool> Import(KeyMaterial material)
+        {
+            try { await model.ImportAccount("Paper", material, storePassphrase: "correct horse battery", keepForSession: true); return true; }
+            catch (Exception) { return false; }
+        }
+        var results = await Task.WhenAll(Import(one), Import(two));
+        Assert.Equal(1, results.Count(r => r));
+        Assert.Equal(["Paper"], model.Wallets.Select(w => w.Alias));
+    }
+}
+
+/// <summary>S09: import reads a recovered, locked source snapshot.</summary>
+public class ImportSourceBoundaryTests
+{
+    [Fact]
+    public void ImportRecoversTheSourceJournalBeforeReading()
+    {
+        var source = TestSupport.MakeDir("source");
+        // A finished state: alice with her key. Then an unfinished change replaced the address
+        // file (new address, no matching key yet) and left the journal holding the old address.
+        var oldHashes = """[ { "name": "alice", "value": "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb" } ]"""u8.ToArray();
+        TestSupport.WriteText(source, "public_key_hashs", """[ { "name": "alice", "value": "tz2BFTyPeYRzxd5aiBchbXN3WCZhx7BqbMBq" } ]""");
+        TestSupport.WriteText(source, "public_keys", """[ { "name": "alice", "value": { "locator": "unencrypted:edpkALICE", "key": "edpkALICE" } } ]""");
+        TestSupport.WriteText(source, "secret_keys", """[ { "name": "alice", "value": "unencrypted:edskALICE" } ]""");
+        TestSupport.WriteText(source, TezosClientStore.JournalFile, new System.Text.Json.Nodes.JsonObject { ["version"] = 1, ["files"] = new System.Text.Json.Nodes.JsonObject { ["public_key_hashs"] = Convert.ToBase64String(oldHashes) } }.ToJsonString());
+
+        var store = new TezosClientStore(TestSupport.MakeDir("target"));
+        Assert.Equal(1, store.ImportWallets(source));
+
+        // The copy is of the recovered source: the old address, which the key belongs to.
+        var imported = store.Load().First();
+        Assert.True(imported.Address.Value == "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb" && imported.PublicKey == "edpkALICE");
+        Assert.Equal("edskALICE", store.SecretKey(imported));
+        // The source itself was rolled back and its journal removed.
+        Assert.False(File.Exists(Path.Combine(source, TezosClientStore.JournalFile)));
+        Assert.Equal("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb", new TezosClientStore(source).Load().First().Address.Value);
+    }
+
+    [Fact]
+    public void ImportRecoversBeforeCheckingWhetherTheHashFileExists()
+    {
+        var source = TestSupport.MakeDir("missing-hashes");
+        var hashes = """[{"name":"alice","value":"tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"}]"""u8.ToArray();
+        TestSupport.WriteText(source, TezosClientStore.JournalFile, new System.Text.Json.Nodes.JsonObject { ["version"] = 1, ["files"] = new System.Text.Json.Nodes.JsonObject { [TezosClientStore.PublicKeyHashesFile] = Convert.ToBase64String(hashes) } }.ToJsonString());
+        Assert.False(new TezosClientStore(source).HasWallets);
+        var destination = new TezosClientStore(TestSupport.MakeDir("target"));
+        Assert.Equal(1, destination.ImportWallets(source));
+        Assert.Equal(["alice"], destination.Load().Select(w => w.Alias));
+        Assert.False(File.Exists(Path.Combine(source, TezosClientStore.JournalFile)));
+    }
+
+    [Fact]
+    public void ImportFiltersRejectedAliasesEvenWhenTargetKeyFilesAreMissing()
+    {
+        string source = TestSupport.MakeDir("source"), target = TestSupport.MakeDir("contracts-only");
+        TezosClientStore from = new(source), to = new(target);
+        from.AddWithSecretKey(new Wallet("reserved", new Address("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"), publicKey: "edpkRejected", keyKind: KeyKind.Unencrypted), "edskRejected");
+        from.AddWithSecretKey(new Wallet("accepted", new Address("tz2BFTyPeYRzxd5aiBchbXN3WCZhx7BqbMBq"), publicKey: "sppkAccepted", keyKind: KeyKind.Unencrypted), "spskAccepted");
+        to.AddContract(new MultisigContract("reserved", new Address("KT1RJ6PbjHpwc3M5rw5s2Nbmefwbuwbdxton")));
+        Assert.Equal(1, to.ImportWallets(source));
+        Assert.True(to.Load().First(w => w.Alias == "reserved").Address.IsContract);
+        Assert.Equal(["accepted"], to.Load().Where(w => !w.Address.IsContract).Select(w => w.Alias));
+        foreach (var file in TezosClientStore.WalletFiles)
+            Assert.DoesNotContain("reserved", File.ReadAllText(Path.Combine(target, file)));
+    }
+
+    [Fact]
+    public void ImportRefusesTheDirectoryItself()
+    {
+        var dir = TestSupport.MakeDir("self");
+        var store = new TezosClientStore(dir);
+        store.AddWithSecretKey(new Wallet("me", new Address("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"), publicKey: "edpkME", keyKind: KeyKind.Unencrypted), "edskME");
+        // Windows: a junction stands in for upstream's symbolic link.
+        var viaLink = Path.Combine(TestSupport.MakeDir("links"), "wallet");
+        TestSupport.CreateJunction(viaLink, dir);
+        Assert.ThrowsAny<TezosClientStore.StoreError>(() => store.ImportWallets(dir));
+        Assert.ThrowsAny<TezosClientStore.StoreError>(() => store.ImportWallets(viaLink));
+        Assert.Single(store.Load());
+    }
+
+    [Fact]
+    public async Task ImportWaitsForAWriterHoldingTheSourceLock()
+    {
+        var source = TestSupport.MakeDir("source");
+        TestSupport.WriteText(source, "public_key_hashs", """[ { "name": "alice", "value": "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb" } ]""");
+        var store = new TezosClientStore(TestSupport.MakeDir("target"));
+        using ManualResetEventSlim holding = new(), release = new();
+        var cancel = TestContext.Current.CancellationToken;
+        var writer = Task.Run(() => TezosClientStore.WithWalletLock(source, () => { holding.Set(); release.Wait(TimeSpan.FromSeconds(3), cancel); return 0; }), cancel);
+        Assert.True(holding.Wait(TimeSpan.FromSeconds(2), cancel));
+        var started = DateTime.UtcNow;
+        var reader = Task.Run(() => store.ImportWallets(source), cancel);
+        await Task.Delay(300, cancel);
+        Assert.False(reader.IsCompleted);   // blocked on the source lock
+        release.Set();
+        await reader.WaitAsync(TimeSpan.FromSeconds(3), cancel);
+        Assert.True(DateTime.UtcNow - started >= TimeSpan.FromMilliseconds(300));
+        Assert.Equal(["alice"], store.Load().Select(w => w.Alias));
+        await writer;
+    }
+
+    [Fact]
+    public async Task OppositeImportsDoNotDeadlock()
+    {
+        string a = TestSupport.MakeDir("a"), b = TestSupport.MakeDir("b");
+        new TezosClientStore(a).AddWithSecretKey(new Wallet("fromA", new Address("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"), publicKey: "edpkA", keyKind: KeyKind.Unencrypted), "edskA");
+        new TezosClientStore(b).AddWithSecretKey(new Wallet("fromB", new Address("tz2BFTyPeYRzxd5aiBchbXN3WCZhx7BqbMBq"), publicKey: "sppkB", keyKind: KeyKind.Unencrypted), "spskB");
+        var cancel = TestContext.Current.CancellationToken;
+        var jobs = new[] { (a, b), (b, a) }.Select(pair => Task.Run(() =>
+        {
+            for (var i = 0; i < 20; i++)
+                try { new TezosClientStore(pair.Item2).ImportWallets(pair.Item1); } catch (TezosClientStore.StoreError) { }
+        }, cancel));
+        await Task.WhenAll(jobs).WaitAsync(TimeSpan.FromSeconds(10), cancel);
+        Assert.Equal(new HashSet<string> { "fromA", "fromB" }, new TezosClientStore(a).Load().Select(w => w.Alias).ToHashSet());
+        Assert.Equal(new HashSet<string> { "fromA", "fromB" }, new TezosClientStore(b).Load().Select(w => w.Alias).ToHashSet());
+    }
+}
+
+public class RememberKeyTests
+{
+    [Fact]
+    public async Task RememberMovesASessionKeyIntoTheDirectory()
+    {
+        var store = new InMemoryWalletStore();
+        var model = new WalletViewModel(chain: new MockChainService(), walletStore: store);
+        Assert.False(model.CanRememberSelectedKey);
+        await model.ImportAccount("Paper", SessionKeyRemovalTests.Paper, alreadyEncrypted: true, keepForSession: true);
+        Assert.True(model.CanRememberSelectedKey && model.SelectedWallet?.IsSessionOnly == true);
+        Assert.Empty(store.Load());
+
+        await model.RememberSelectedWallet();
+
+        var kept = model.SelectedWallet!;
+        Assert.True(kept.Alias == "Paper" && !kept.IsSessionOnly && kept.KeyKind == KeyKind.Encrypted);
+        Assert.True(!model.CanRememberSelectedKey && model.SessionWallets.Count == 0);
+        Assert.Equal(["Paper"], store.Load().Select(w => w.Alias));
+        Assert.Equal(SessionKeyRemovalTests.Paper.SecretKey, store.SecretKey(kept));
+        // Asked again, there is nothing session-only to remember.
+        await Assert.ThrowsAnyAsync<WalletViewModel.WalletError>(() => model.RememberSelectedWallet());
+    }
+
+    [Fact]
+    public async Task RememberCanEncryptAClearKeyOnTheWay()
+    {
+        var store = new InMemoryWalletStore();
+        var model = new WalletViewModel(chain: new MockChainService(), walletStore: store);
+        var material = await new KeyGenerator().Generate(AddressScheme.Tz1);
+        await model.ImportAccount("Clear", material, keepForSession: true);
+        await Assert.ThrowsAsync<WalletViewModel.WalletError.PassphraseTooShort>(() => model.RememberSelectedWallet("short"));
+        Assert.True(model.SelectedWallet?.IsSessionOnly);
+
+        await model.RememberSelectedWallet("correct horse battery");
+        var kept = model.SelectedWallet!;
+        Assert.True(kept.KeyKind == KeyKind.Encrypted && !kept.IsSessionOnly);
+        var stored = store.SecretKey(kept)!;
+        Assert.StartsWith("edesk", stored);
+        Assert.Equal(material.SecretKey, await new BridgeKeyImporter().Decrypt(stored, "correct horse battery"));
+    }
+
+    [Fact]
+    public async Task RememberRefusesAnAliasOrAddressAlreadyStoredAndKeepsTheKey()
+    {
+        var store = new InMemoryWalletStore();
+        var model = new WalletViewModel(chain: new MockChainService(), walletStore: store);
+        await model.ImportAccount("Paper", SessionKeyRemovalTests.Paper, alreadyEncrypted: true, keepForSession: true);
+        var session = model.SelectedWallet!;
+        // The same address lands in the directory under another name behind the model's back.
+        store.AddWithSecretKey(new Wallet("Disk", session.Address, AddressScheme.Tz1, "edpkuPAPER", KeyKind.Encrypted), "edeskPAPER");
+
+        await Assert.ThrowsAnyAsync<WalletViewModel.WalletError>(() => model.RememberSelectedWallet());
+        Assert.Equal(["Paper"], model.SessionWallets.Select(w => w.Alias));
+        Assert.Equal(SessionKeyRemovalTests.Paper.SecretKey, Assert.IsType<SigningKey.Secret>(model.SigningKeyFor(session, "x")).Key);
     }
 }
