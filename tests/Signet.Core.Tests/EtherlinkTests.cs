@@ -647,3 +647,96 @@ public class EtherlinkHistoryTests
         Assert.IsType<Portfolio.PortfolioState.Complete>(model.PortfolioState);
     }
 }
+
+public class ShieldedSwitchTests
+{
+    [Fact]
+    public void TheSwitchIsPerNetworkAndSavedSparsely()
+    {
+        var state = new InMemoryAppStateStore();
+        var model = new WalletViewModel(wallets: WalletViewModel.SampleWallets, chain: new MockChainService(), stateStore: state);
+        Assert.True(model.Network == Network.Mainnet && !model.IsShieldedEnabled(Network.Mainnet) && !model.IsShieldedEnabled(Network.Shadownet));
+        Assert.Null(state.Load().ShieldedEnabled);
+
+        // Another network, without switching to it.
+        model.SetShieldedEnabled(true, Network.Shadownet);
+        Assert.True(model.IsShieldedEnabled(Network.Shadownet) && !model.Network.ShieldedEnabled);
+        Assert.Equal(new Dictionary<string, bool> { ["Shadownet"] = true }, state.Load().ShieldedEnabled);
+        Assert.Equal(Network.Mainnet, model.Network);
+
+        // The network in use: applied at once, and the saved node, Layer 2 and links are untouched.
+        model.SetShieldedEnabled(true, Network.Mainnet);
+        Assert.True(model.Network.ShieldedEnabled && model.Network.RpcURL == Network.Mainnet.DefaultRPCURL && !model.Network.L2Enabled);
+        Assert.Equal(new Dictionary<string, bool> { ["Shadownet"] = true, ["Mainnet"] = true }, state.Load().ShieldedEnabled);
+        Assert.True(state.Load().NodeURLs is null && state.Load().L2Enabled is null);
+
+        // Relaunch over the same state: the choice comes back; off clears it.
+        var again = new WalletViewModel(wallets: [], chain: new MockChainService(), stateStore: state);
+        Assert.True(again.Network.ShieldedEnabled && again.IsShieldedEnabled(Network.Shadownet));
+        again.SetShieldedEnabled(false, Network.Shadownet);
+        again.SetShieldedEnabled(false, Network.Mainnet);
+        Assert.True(state.Load().ShieldedEnabled is null && !again.Network.ShieldedEnabled);
+    }
+
+    [Fact]
+    public void OnlyShadownetAndQuantumnetHaveShieldedTransactionsToday()
+    {
+        Assert.Equal(["Shadownet", "Quantumnet"], Network.All.Where(n => n.ShieldedAvailable).Select(n => n.Name));
+        Assert.True(!Network.Mainnet.ShieldedAvailable && !Network.Custom.ShieldedAvailable && !Network.Weeklynet.ShieldedAvailable);
+    }
+
+    [Fact]
+    public void SwitchingNetworksKeepsEachChoice()
+    {
+        var model = new WalletViewModel(wallets: [], chain: new MockChainService());
+        model.SetShieldedEnabled(true, Network.Shadownet);
+        model.SwitchNetwork(Network.Shadownet);
+        Assert.True(model.Network.ShieldedEnabled);
+        model.SwitchNetwork(Network.Mainnet);
+        Assert.True(!model.Network.ShieldedEnabled && model.IsShieldedEnabled(Network.Shadownet));
+    }
+}
+
+/// <summary>
+/// The Shielded row: under Etherlink when that is shown, else under tez, only while the
+/// network's shielded transactions are on, and 0 tz until the TzEL scan exists.
+/// </summary>
+public class ShieldedRowTests
+{
+    [Fact]
+    public async Task RowFollowsTheSwitchAndSitsUnderEtherlink()
+    {
+        var model = new WalletViewModel(wallets: WalletViewModel.SampleWallets, chain: new MockChainService());
+        await model.Refresh();
+        Assert.Equal(["tez"], model.Assets.Select(a => a.Id));
+
+        model.SetShieldedEnabled(true, Network.Mainnet);
+        await model.Refresh();
+        Assert.Equal(["tez", "shielded"], model.Assets.Select(a => a.Id));
+        var row = model.Assets.First(a => a.Kind is AssetBalance.AssetKind.Shielded);
+        Assert.True(row.Amount == 0 && row.Symbol == "tz" && row.Name == "Shielded" && row.Unavailable is null);
+        Assert.Equal("0 tz", row.FormattedAmount);
+
+        model.SetL2Enabled(true, Network.Mainnet);
+        await model.Refresh();
+        Assert.Equal(["tez", "etherlink", "shielded"], model.Assets.Select(a => a.Id));
+
+        model.SetShieldedEnabled(false, Network.Mainnet);
+        await model.Refresh();
+        Assert.Equal(["tez", "etherlink"], model.Assets.Select(a => a.Id));
+
+        // Another network's switch does not show it here.
+        model.SetShieldedEnabled(true, Network.Shadownet);
+        await model.Refresh();
+        Assert.Equal(["tez", "etherlink"], model.Assets.Select(a => a.Id));
+    }
+
+    [Fact]
+    public async Task NoRowsAtAllWhenTheAccountIsNotOnChain()
+    {
+        var model = new WalletViewModel(wallets: WalletViewModel.SampleWallets, chain: new EtherlinkRowTests.FailingEtherlink(notOnChain: true));
+        model.SetShieldedEnabled(true, Network.Mainnet);
+        await model.Refresh();
+        Assert.True(model.AccountNotOnChain && model.Assets.Count == 0);
+    }
+}

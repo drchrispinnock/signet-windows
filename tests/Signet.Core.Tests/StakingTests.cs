@@ -251,3 +251,111 @@ public class QuantumnetBakerParametersTests
         Assert.True((afterKey.Baker?.PendingConsensusKeys.Count ?? 0) > 0 || afterKey.Baker?.ConsensusKey is not null, $"baker after: {afterKey.Baker}");
     }
 }
+
+/// <summary>The bridge forges consensus and companion key updates itself and checks the node's bytes against its own.</summary>
+public class RawForgingTests
+{
+    private const string Branch = "BLockGenesisGenesisGenesisGenesisGenesisf79b5d1CoW2";
+    private static TaquitoBridge Bridge => TaquitoBridge.Shared;
+
+    private static string JSON(params JsonObject[] contents) => new JsonArray(contents.Select(c => (JsonNode?)c.DeepClone()).ToArray()).ToJsonString();
+
+    private static async Task<string> Ours(params JsonObject[] contents) =>
+        (await Bridge.Call("forgeRawForTest", Branch, JSON(contents))).StringValue ?? throw new InvalidOperationException("no bytes");
+
+    private static async Task<string> Taquitos(params JsonObject[] contents) =>
+        (await Bridge.Call("taquitoForgeForTest", Branch, JSON(contents))).StringValue ?? throw new InvalidOperationException("no bytes");
+
+    private static JsonObject Header(string kind, string source, string counter, string fee = "1234", string gas = "10100", string storage = "0") =>
+        new() { ["kind"] = kind, ["source"] = source, ["fee"] = fee, ["counter"] = counter, ["gas_limit"] = gas, ["storage_limit"] = storage };
+
+    [Theory]
+    [InlineData(AddressScheme.Tz1)] [InlineData(AddressScheme.Tz2)] [InlineData(AddressScheme.Tz3)] [InlineData(AddressScheme.Tz4)] [InlineData(AddressScheme.Tz5)]
+    public async Task ForgesRevealAndConsensusKeyUpdatesLikeTaquito(AddressScheme scheme)
+    {
+        var baker = await new KeyGenerator().Generate(AddressScheme.Tz1);
+        var key = await new KeyGenerator().Generate(scheme);
+        var reveal = Header("reveal", baker.Address, "7", fee: "0");
+        reveal["public_key"] = baker.PublicKey;
+        var update = Header("update_consensus_key", baker.Address, "8", fee: "300000", gas: "1040000", storage: "60000");
+        update["pk"] = key.PublicKey;
+        Assert.Equal(await Taquitos(reveal, update), await Ours(reveal, update));
+    }
+
+    [Theory]
+    [InlineData(AddressScheme.Tz2)] [InlineData(AddressScheme.Tz3)] [InlineData(AddressScheme.Tz4)] [InlineData(AddressScheme.Tz5)]
+    public async Task ForgesForEverySourceKind(AddressScheme scheme)
+    {
+        var baker = await new KeyGenerator().Generate(scheme);
+        var key = await new KeyGenerator().Generate(AddressScheme.Tz1);
+        var reveal = Header("reveal", baker.Address, "1", fee: "0");
+        reveal["public_key"] = baker.PublicKey;
+        var update = Header("update_companion_key", baker.Address, "2");
+        update["pk"] = key.PublicKey;
+        Assert.Equal(await Taquitos(reveal, update), await Ours(reveal, update));
+    }
+
+    [Fact]
+    public async Task ForgesABLSProofLikeTaquito()
+    {
+        var baker = await new KeyGenerator().Generate(AddressScheme.Tz1);
+        var bls = await new KeyGenerator().Generate(AddressScheme.Tz4);
+        var proof = (await Bridge.Call("provePossession", new SigningKey.Secret(bls.SecretKey, null, new Address(bls.Address)).BridgeSpec))["proof"]?.StringValue!;
+        Assert.StartsWith("BLsig", proof);
+        var update = Header("update_consensus_key", baker.Address, "3");
+        update["pk"] = bls.PublicKey;
+        update["proof"] = proof;
+        Assert.Equal(await Taquitos(update), await Ours(update));
+    }
+
+    [Fact]
+    public async Task ZarithAndLargeNumbersMatchTaquito()
+    {
+        var baker = await new KeyGenerator().Generate(AddressScheme.Tz1);
+        var update = Header("update_consensus_key", baker.Address, "123456789", fee: "99999999999", gas: "1040000", storage: "60000");
+        update["pk"] = baker.PublicKey;
+        Assert.Equal(await Taquitos(update), await Ours(update));
+    }
+
+    /// <summary>The audit's attack: the node returns a forged transfer where a consensus-key update was asked for.</summary>
+    [Fact]
+    public async Task RefusesNodeBytesThatDifferFromOurs()
+    {
+        var baker = await new KeyGenerator().Generate(AddressScheme.Tz1);
+        var update = Header("update_consensus_key", baker.Address, "5");
+        update["pk"] = baker.PublicKey;
+        var json = JSON(update);
+        var honest = await Ours(update);
+
+        var transfer = Header("transaction", baker.Address, "5", fee: "1234", gas: "1500");
+        transfer["amount"] = "50000000";
+        transfer["destination"] = "tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx";
+        var substituted = await Taquitos(transfer);
+        Assert.NotEqual(honest, substituted);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => Bridge.Call("verifyRawForgingForTest", Branch, json, substituted));
+        // A single changed byte (fee, branch, key…) is refused too; the honest bytes pass.
+        // The byte at offset 35 lies inside the (random) source address; write whatever it is not.
+        var tampered = honest[..70] + (honest[70..72] == "ff" ? "00" : "ff") + honest[72..];
+        await Assert.ThrowsAnyAsync<Exception>(() => Bridge.Call("verifyRawForgingForTest", Branch, json, tampered));
+        await Assert.ThrowsAnyAsync<Exception>(() => Bridge.Call("verifyRawForgingForTest", Branch, json, honest + "00"));
+        await Assert.ThrowsAnyAsync<Exception>(() => Bridge.Call("verifyRawForgingForTest", Branch, json, ""));
+        Assert.Equal(honest, (await Bridge.Call("verifyRawForgingForTest", Branch, json, honest.ToUpperInvariant())).StringValue);
+    }
+
+    [Fact]
+    public async Task RefusesKindsItCannotForge()
+    {
+        var baker = await new KeyGenerator().Generate(AddressScheme.Tz1);
+        var transfer = Header("transaction", baker.Address, "5");
+        transfer["amount"] = "1";
+        transfer["destination"] = baker.Address;
+        await Assert.ThrowsAnyAsync<Exception>(() => Ours(transfer));
+        var bad = Header("update_consensus_key", baker.Address, "5");
+        bad["pk"] = "edpkNotARealKeyAtAll";
+        await Assert.ThrowsAnyAsync<Exception>(() => Ours(bad));
+    }
+
+    [Fact(Skip = "Live and reads the user's ~/.tezos-client for an xmpk key (upstream: .realWalletState)")]
+    public void ForgesAnXMSSKeyLikeTheQuantumnetNode() { }
+}

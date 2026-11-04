@@ -148,3 +148,49 @@ public class TokenMetadataFallbackTests
         Assert.True(metadata?.Name == "Layer 2 Elvis" && metadata.DecimalPlaces == 0);
     }
 }
+
+public class PortfolioStateTests
+{
+    [Fact]
+    public void UnreadableDecimalsAreNotGuessed()
+    {
+        var rows = TzKTService.Decode("""
+        [
+          {"balance":"100","token":{"contract":{"address":"KT1A"},"tokenId":"0","standard":"fa2","metadata":{"name":"Huge","symbol":"HUGE","decimals":"400"}}},
+          {"balance":"100","token":{"contract":{"address":"KT1B"},"tokenId":"0","standard":"fa2","metadata":{"name":"Neg","symbol":"NEG","decimals":"-3"}}},
+          {"balance":"100","token":{"contract":{"address":"KT1C"},"tokenId":"0","standard":"fa2","metadata":{"name":"Text","symbol":"TXT","decimals":"lots"}}},
+          {"balance":"100","token":{"contract":{"address":"KT1D"},"tokenId":"0","standard":"fa1.2","metadata":{"name":"Old","symbol":"OLD","decimals":"1e2"}}},
+          {"balance":"-5","token":{"contract":{"address":"KT1E"},"tokenId":"0","standard":"fa2","metadata":{"name":"Neg balance","symbol":"NB","decimals":"2"}}},
+          {"balance":"250","token":{"contract":{"address":"KT1F"},"tokenId":"0","standard":"fa2","metadata":{"name":"Fine","symbol":"OK","decimals":"2"}}}
+        ]
+        """u8.ToArray());
+        var tokens = TzKTService.FungibleTokens(rows);
+        Assert.Equal(["OLD", "OK"], tokens.Select(t => t.Symbol));
+        Assert.Equal(100m, tokens.First(t => t.Symbol == "OLD").Amount);   // FA1.2 with unreadable decimals: shown unscaled
+        Assert.Equal(2.5m, tokens.First(t => t.Symbol == "OK").Amount);
+        Assert.Empty(TzKTService.Nfts(rows));
+    }
+
+    private sealed class Flaky : TestChainService
+    {
+        public bool Fail;
+        public override Task<TezBalance> TezBalanceFor(Address address) => Task.FromResult(new TezBalance(1));
+        public override Task<Portfolio> PortfolioFor(Address address) => Task.FromResult(Fail
+            ? new Portfolio([], [], new Portfolio.PortfolioState.Unavailable("HTTP 503"))
+            : new Portfolio([new AssetBalance("t", new AssetBalance.AssetKind.Token("KT1x", "0"), "Tok", "TOK", 1)], [], new Portfolio.PortfolioState.Partial(1000)));
+    }
+
+    [Fact]
+    public async Task AnUnavailableIndexerKeepsTheLastKnownListAndSaysSo()
+    {
+        var chain = new Flaky();
+        var model = new Signet.ViewModels.WalletViewModel(wallets: [new Wallet("A", new Address("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"), keyKind: KeyKind.Unencrypted)], chain: chain);
+        await model.Refresh();
+        Assert.Equal(["TOK"], model.Tokens.Select(t => t.Symbol));
+        Assert.Equal(new Portfolio.PortfolioState.Partial(1000), model.PortfolioState);
+        chain.Fail = true;
+        await model.Refresh();
+        Assert.Equal(["TOK"], model.Tokens.Select(t => t.Symbol));   // last known holdings stay on screen
+        Assert.Equal(new Portfolio.PortfolioState.Unavailable("HTTP 503"), model.PortfolioState);
+    }
+}
