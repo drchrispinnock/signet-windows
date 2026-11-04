@@ -57,6 +57,6 @@ public sealed partial class AccountAvatarView : UserControl
             Picture.Source = null;
             return;
         }
-        ImageLoader.Load(Picture, [url], (int)Math.Ceiling(size * 2), ok => Placeholder.Visibility = ok ? Visibility.Collapsed : Visibility.Visible);
+        ArtworkImages.Load(Picture, [url], (int)Math.Ceiling(size * 2), ok => Placeholder.Visibility = ok ? Visibility.Collapsed : Visibility.Visible);
     }
 }

@@ -105,13 +105,29 @@ public static class IPFS
         var query = url.Query.Length > 1 ? url.Query : "";
         var index = components.IndexOf("ipfs");
         if (index >= 0 && index + 1 < components.Count) return ContentPath.Validated(string.Join('/', components.Skip(index + 1)) + query);
-        var labels = url.Host.Split('.');
-        if (labels.Length >= 3 && labels[1] == "ipfs" && LooksLikeCID(labels[0]))
+        var labels = HostAsWritten(url).Split('.');
+        if (labels.Length >= 3 && labels[1].Equals("ipfs", StringComparison.OrdinalIgnoreCase) && LooksLikeCID(labels[0]))
         {
             var rest = string.Join('/', components);
             return ContentPath.Validated((rest.Length == 0 ? labels[0] : $"{labels[0]}/{rest}") + query);
         }
         return null;
+    }
+
+    /// <summary>
+    /// The host with its letters as written: <c>Uri.Host</c> lower-cases it, which would turn a
+    /// CIDv0 label (<c>Qm…</c>, case-sensitive base58) into another, invalid one.
+    /// </summary>
+    private static string HostAsWritten(Uri url)
+    {
+        var text = url.OriginalString.Trim();
+        var start = text.IndexOf("://", StringComparison.Ordinal);
+        if (start < 0) return url.Host;
+        var rest = text[(start + 3)..];
+        if (rest.LastIndexOf('@', rest.IndexOfAny(['/', '?', '#']) is var end and >= 0 ? end : rest.Length - 1) is var at and >= 0) rest = rest[(at + 1)..];
+        var stop = rest.IndexOfAny(['/', ':', '?', '#']);
+        var host = stop < 0 ? rest : rest[..stop];
+        return host.Equals(url.Host, StringComparison.OrdinalIgnoreCase) ? host : url.Host;
     }
 
     /// <summary>The <c>&lt;cid&gt;[/path]</c> behind a gateway URL as text, or null. (Kept for the tests and callers of the first port.)</summary>

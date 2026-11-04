@@ -190,7 +190,7 @@ public sealed partial class ActivityTabsView : UserControl
         {
             var image = new Image { Stretch = Stretch.UniformToFill };
             logo.Children.Add(new Border { CornerRadius = new CornerRadius(20), Child = image });
-            ImageLoader.Load(image, token.IconURLs, 80);
+            ArtworkImages.Load(image, token.IconURLs, 80);
         }
         logo.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Stroke = (Brush)Application.Current.Resources["ControlStrokeColorDefaultBrush"], StrokeThickness = 1 });
         row.Children.Add(logo);

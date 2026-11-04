@@ -248,7 +248,7 @@ public sealed partial class NFTGridView : UserControl
                 }, HorizontalAlignment.Right, VerticalAlignment.Top));
         }
         if (nft.ImageURLs.Count > 0)
-            ImageLoader.Load(image, nft.ImageURLs, (int)Math.Max(80, size * 2), ok =>
+            ArtworkImages.Load(image, nft.ImageURLs, (int)Math.Max(80, size * 2), ok =>
             {
                 placeholder.IsActive = false;
                 failed.Visibility = ok ? Visibility.Collapsed : Visibility.Visible;
