@@ -89,6 +89,104 @@ SignPath signs open-source projects for free. The project qualifies: it is publi
    ours), and hands the folder back to Velopack. The Setup and Update executables Velopack makes
    need signing too (its `--signTemplate` option can call the same signing step).
 
+## Code signing with Azure Artifact Signing
+
+Azure Artifact Signing (until 2025 called Trusted Signing, a name the portal and tools still use)
+is Microsoft's own signing service: about $9.99 a month (Basic, 5,000 signatures), no hardware
+token, and Microsoft-issued certificates that SmartScreen and Smart App Control trust. It is the
+paid alternative to SignPath.
+
+**Check eligibility first.** Individuals are accepted only in the US and Canada. Organisations
+are accepted in more countries, the UK and the EU among them, and must pass a business identity
+check. Billing starts when the account is created, even if the identity check later fails, so
+read Microsoft's current eligibility page before paying.
+
+### One-time setup in Azure
+
+1. **Subscription.** Sign in at https://portal.azure.com with an Azure subscription
+   (pay-as-you-go will do). Under Subscriptions → yours → Resource providers, register
+   `Microsoft.CodeSigning`.
+2. **Signing account.** Create an *Artifact Signing* (Trusted Signing) account, Basic tier, in a
+   nearby region such as West Europe. Note its **account name** and **endpoint** (West Europe is
+   `https://weu.codesigning.azure.net`).
+3. **Identity validation.** In Access control (IAM) on the account, give yourself the
+   *Identity Verifier* role (Artifact Signing Identity Verifier, formerly Trusted Signing). Then go
+   to Objects → Identity validation → New → **Public**, and submit the organisation's details and
+   documents. Microsoft verifies them, which takes from a day to a couple of weeks.
+4. **Certificate profile.** Once the identity is validated, create a certificate profile of type
+   **Public Trust** on that identity. Note the **profile name**.
+
+### Let GitHub Actions sign, with no secret to leak
+
+5. **App registration.** In Microsoft Entra ID → App registrations → New, name it
+   `signet-windows-release`. Note its **client id** and **tenant id**.
+6. **Federated credential.** In the app registration, open Certificates & secrets → Federated
+   credentials → Add → *GitHub Actions deploying Azure resources*. Set the organisation to
+   `drchrispinnock`, the repository to `signet-windows`, the entity type to **Environment**, and
+   the environment name to `release`. GitHub then logs in with a short-lived OIDC token and no
+   password is stored anywhere.
+7. **Role.** On the certificate profile, Access control (IAM) → Add role assignment →
+   *Certificate Profile Signer*, to the app registration.
+8. **In GitHub**, open Settings → Environments → New environment → `release`. Under deployment
+   branches and tags, allow only `main` and tags matching `v*`. Then add three environment
+   secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`. None of them is
+   sensitive on its own, but keeping them in the environment ties them to it.
+
+### The workflow change
+
+Velopack signs through Artifact Signing itself (`vpk pack --azureTrustedSignFile`, with
+signtool and Microsoft's dlib bundled), so no separate signing step is needed. It signs
+`Signet.exe` and the other binaries, and also the `Setup.exe` and `Update.exe` it makes. In
+`.github/workflows/release.yml`:
+
+```yaml
+permissions:
+  contents: write
+  id-token: write          # lets the job request the OIDC token
+
+jobs:
+  build:
+    runs-on: windows-latest
+    environment: release   # matches the federated credential's subject
+    steps:
+      # … checkout, setup-dotnet, Version, Test, Build as now …
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Package
+        # … as now, with a metadata file written before vpk pack and the flag added to it:
+        run: |
+          @{ Endpoint = 'https://weu.codesigning.azure.net'
+             CodeSigningAccountName = '<account name>'
+             CertificateProfileName = '<profile name>' } | ConvertTo-Json | Set-Content signing.json
+          vpk pack … --azureTrustedSignFile signing.json
+```
+
+The dlib picks up the `azure/login` session through the Azure CLI. Also update the header comment
+in `release.yml`, which still points at SignPath.
+
+### Checking it
+
+Do a manual run first (Actions → Release → Run workflow), download the artifact, and check:
+
+```powershell
+Get-AuthenticodeSignature .\SignetWallet-win-x64-Setup.exe | Format-List Status, SignerCertificate
+```
+
+`Status` should be `Valid`, and the signer should be your validated name. Repeat for `Signet.exe`
+inside the installed copy.
+
+What to expect afterwards:
+- Smart App Control and **Unknown publisher** stop being a problem straight away.
+- SmartScreen can still warn for the first few releases, until the publisher builds up a download
+  reputation. That reputation stays with the validated identity across releases, even though each
+  certificate lasts only three days. The timestamp keeps the old signatures valid.
+- After that, the release notes no longer need the **Run anyway** instructions.
+
 Until then, updates are trusted on HTTPS from GitHub alone (Velopack has no signature check like
 Sparkle's EdDSA one on the Mac), which is why automatic download is off by default: users see each
 update offered and choose to install it.
