@@ -97,6 +97,7 @@ public sealed partial class SettingsView : Sheet
         }
 
         UpdatesSection();
+        DeveloperSection();
 
         CloseButtonText = "Done";
         DefaultButton = ContentDialogButton.Close;
@@ -108,6 +109,24 @@ public sealed partial class SettingsView : Sheet
             updater.PropertyChanged -= UpdaterChanged;
         };
         Update();
+    }
+
+    // ---- Developer (upstream's developerSection) ----------------------------------------------------
+
+    private void DeveloperSection()
+    {
+        Form.Children.Add(new SectionHeader("Developer"));
+        var armed = new ToggleSwitch { Header = "Verbose dApp log on the next launch", IsOn = DeveloperSettings.DAppDiagnosticsArmed };
+        armed.Toggled += (_, _) => DeveloperSettings.DAppDiagnosticsArmed = armed.IsOn;
+        Form.Children.Add(armed);
+        if (model.Dapps.Diagnostics)
+            Form.Children.Add(new TextBlock
+            {
+                Text = "Verbose dApp logging is on for this run; it switches itself off at the next launch.",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Orange),
+            });
+        Form.Children.Add(Note($"The bridge log ({TaquitoBridge.LogFilePath}) never contains keys, signatures or message contents. The verbose dApp log adds the relay SDK's own debugging output, which includes decrypted dApp traffic; it is armed for one launch only."));
     }
 
     // ---- Updates (upstream's updatesSection, Velopack for Sparkle) ----------------------------------

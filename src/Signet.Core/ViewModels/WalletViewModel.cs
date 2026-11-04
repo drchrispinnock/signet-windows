@@ -532,7 +532,8 @@ public sealed partial class WalletViewModel : ObservableObject
         bool startDApps = false,
         IMultisigService? multisig = null,
         IMultisigProposalStore? proposalStore = null,
-        ILedgerService? ledger = null)
+        ILedgerService? ledger = null,
+        bool dappDiagnostics = false)
     {
         this.backupSettings = backupSettings;
         var factory = chainFactory ?? (_ => chain ?? new MockChainService());
@@ -591,6 +592,7 @@ public sealed partial class WalletViewModel : ObservableObject
         _ = BackUp();
 
         this.dappStorageFactory = dappStorageFactory;
+        this.dappDiagnostics = dappDiagnostics;
         startsDApps = startDApps;
         dapps = MakeDApps(dappStorage ?? (directory is not null ? dappStorageFactory?.Invoke(directory) : null) ?? new InMemoryBridgeStorage());
         if (startDApps && Wallets.Count > 0) _ = dapps.Start();
@@ -647,12 +649,14 @@ public sealed partial class WalletViewModel : ObservableObject
     /// </summary>
     private readonly Func<string, IBridgeStorage>? dappStorageFactory;
     private readonly bool startsDApps;
+    /// <summary>Verbose dApp SDK logging for this run (<c>DeveloperSettings.DAppDiagnostics</c>, S11).</summary>
+    private readonly bool dappDiagnostics;
 
     private DAppConnectionManager MakeDApps(IBridgeStorage storage)
     {
         // Its own bridge, reaching public endpoints only (S12), sharing the operation journal.
         var bridge = new TaquitoBridge(requirePublicEndpoints: true) { OperationJournal = TaquitoBridge.Shared.OperationJournal };
-        return new DAppConnectionManager(storage, () => Wallets, SigningKeyFor, bridge,
+        return new DAppConnectionManager(storage, () => Wallets, SigningKeyFor, bridge, diagnostics: dappDiagnostics,
             // The block watcher runs on the chain service (the shared bridge, whose journal the
             // dApp bridge shares), never on the dApp bridge: a read that times out discards its
             // context, which must not take the Octez Connect session with it.

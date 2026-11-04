@@ -72,7 +72,8 @@ public partial class App : Application
         dappStorageFactory: directory => new OctezConnectStorage(directory),
         startDApps: true,
         multisig: new BridgeMultisigService(),
-        ledger: new BridgeLedgerService());
+        ledger: new BridgeLedgerService(),
+        dappDiagnostics: DeveloperSettings.DAppDiagnostics);
 
     /// <summary>
     /// Windows-only: the <c>--preview</c> model, upstream's test-host model and <c>#Preview</c> data in a
