@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -23,12 +24,30 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
 
             /// <param name="Icon">Fungible tokens often put their logo here instead of thumbnailUri.</param>
             /// <param name="IsTransferable">TZIP-21: false for tokens the contract will not move (soulbound); absent means true.</param>
+            /// <remarks>
+            /// TZIP-21 fields, as TzKT reports them or as a document Signet read itself states them
+            /// (<c>TokenMetadataResolver</c>). Every field is read leniently: a value of the wrong type
+            /// is missing, never a decoding failure, so one odd field cannot hide a token.
+            /// <c>decimals</c> is a string from TzKT and usually a number in a document.
+            /// </remarks>
             public sealed record MetadataInfo(
-                string? Name, string? Symbol, string? Decimals, string? ThumbnailUri, string? DisplayUri, string? ArtifactUri,
-                string? Icon, IReadOnlyList<MetadataInfo.Format>? Formats,
+                [property: JsonConverter(typeof(LenientStringConverter))] string? Name,
+                [property: JsonConverter(typeof(LenientStringConverter))] string? Symbol,
+                [property: JsonConverter(typeof(LenientStringConverter))] string? Decimals,
+                [property: JsonConverter(typeof(LenientStringConverter))] string? ThumbnailUri,
+                [property: JsonConverter(typeof(LenientStringConverter))] string? DisplayUri,
+                [property: JsonConverter(typeof(LenientStringConverter))] string? ArtifactUri,
+                [property: JsonConverter(typeof(LenientStringConverter))] string? Icon,
+                [property: JsonConverter(typeof(LenientFormatsConverter))] IReadOnlyList<MetadataInfo.Format>? Formats,
                 [property: JsonConverter(typeof(LenientBoolConverter))] bool? IsTransferable = null)
             {
-                public sealed record Format(string? Uri, string? MimeType);
+                public sealed record Format(
+                    [property: JsonConverter(typeof(LenientStringConverter))] string? Uri,
+                    [property: JsonConverter(typeof(LenientStringConverter))] string? MimeType);
+
+                /// <summary>Nothing here describes a token.</summary>
+                public bool IsEmpty =>
+                    new[] { Name, Symbol, Decimals, ThumbnailUri, DisplayUri, ArtifactUri, Icon }.All(v => v is null) && (Formats ?? []).Count == 0;
 
                 /// <summary>
                 /// Decimals come back as a string in TZIP-21 metadata. Only a whole number in
@@ -41,7 +60,78 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
         }
     }
 
-    private static readonly JsonSerializerOptions DecodeOptions = new(JsonSerializerDefaults.Web);
+    internal static readonly JsonSerializerOptions DecodeOptions = new(JsonSerializerDefaults.Web);
+
+    /// <summary>A string, or a number's text; anything else reads as absent.</summary>
+    public sealed class LenientStringConverter : JsonConverter<string?>
+    {
+        public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            switch (reader.TokenType)
+            {
+                case JsonTokenType.String: return reader.GetString();
+                case JsonTokenType.Number: return Encoding.UTF8.GetString(reader.HasValueSequence ? System.Buffers.BuffersExtensions.ToArray(reader.ValueSequence) : reader.ValueSpan);
+                default: reader.Skip(); return null;
+            }
+        }
+
+        public override void Write(Utf8JsonWriter writer, string? value, JsonSerializerOptions options)
+        {
+            if (value is null) writer.WriteNullValue(); else writer.WriteStringValue(value);
+        }
+    }
+
+    /// <summary>An array of formats; anything else, or an odd entry, reads as absent.</summary>
+    public sealed class LenientFormatsConverter : JsonConverter<IReadOnlyList<TokenBalance.TokenInfo.MetadataInfo.Format>?>
+    {
+        public override IReadOnlyList<TokenBalance.TokenInfo.MetadataInfo.Format>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType != JsonTokenType.StartArray) { reader.Skip(); return null; }
+            var node = JsonNode.Parse(ref reader) as JsonArray;
+            var formats = new List<TokenBalance.TokenInfo.MetadataInfo.Format>();
+            foreach (var item in node ?? [])
+            {
+                if (item is not JsonObject o) continue;
+                static string? Text(JsonNode? n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+                formats.Add(new TokenBalance.TokenInfo.MetadataInfo.Format(Text(o["uri"]), Text(o["mimeType"])));
+            }
+            return formats;
+        }
+
+        public override void Write(Utf8JsonWriter writer, IReadOnlyList<TokenBalance.TokenInfo.MetadataInfo.Format>? value, JsonSerializerOptions options) =>
+            JsonSerializer.Serialize(writer, value, options);
+    }
+
+    /// <summary>
+    /// The hex-decoded <c>token_info</c> of the contract's <c>token_metadata</c> big map entry for
+    /// <c>tokenId</c> (TZIP-12), read through the indexer; null when the contract has no such entry.
+    /// Values that are not UTF-8 are left out.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, string>?> TokenInfo(string contract, string tokenId)
+    {
+        if (!TokenMetadataResolver.IsContract(contract) || !TokenMetadataResolver.IsTokenID(tokenId)) return null;
+        var reply = await Http.Get(http, BaseURL.AppendingPathComponent($"v1/contracts/{contract}/bigmaps/token_metadata/keys/{tokenId}"), TimeSpan.FromSeconds(15));
+        if (!reply.IsSuccess || reply.Body.Length == 0 || reply.Body.Length > 1 << 20) return null;
+        return ParseTokenInfo(reply.Body);
+    }
+
+    /// <summary>Pure parser for a <c>token_metadata</c> key reply: <c>value.token_info</c>, each hex value decoded.</summary>
+    public static IReadOnlyDictionary<string, string>? ParseTokenInfo(byte[] data)
+    {
+        JsonNode? entry;
+        try { entry = JsonNode.Parse(data); }
+        catch (JsonException) { return null; }
+        if (entry is not JsonObject root || root["value"] is not JsonObject entryValue || entryValue["token_info"] is not JsonObject info) return null;
+        var decoded = new Dictionary<string, string>();
+        var strict = new UTF8Encoding(false, true);
+        foreach (var (key, value) in info)
+        {
+            if (value is not JsonValue v || !v.TryGetValue<string>(out var hex) || HexBytes.Decode(hex) is not { } bytes) continue;
+            try { decoded[key] = strict.GetString(bytes); }
+            catch (DecoderFallbackException) { }
+        }
+        return decoded;
+    }
 
     /// <summary>
     /// A boolean in the standard; some minters write the words. Anything else reads as absent,
@@ -122,7 +212,9 @@ public sealed class TzKTService(Uri baseURL, HttpClient? http = null)
     /// <summary>Tokens and NFTs from one snapshot, marked partial when the account holds more than was fetched.</summary>
     public async Task<Portfolio> PortfolioFor(Address address)
     {
-        var (rows, complete) = await AllTokenBalancesFor(address);
+        var (fetched, complete) = await AllTokenBalancesFor(address);
+        // Rows the indexer has no metadata for are resolved by Signet itself first.
+        var rows = await TokenMetadataResolver.Live(this).Fill(fetched);
         return new Portfolio(FungibleTokens(rows), Nfts(rows),
                              complete ? new Portfolio.PortfolioState.Complete() : new Portfolio.PortfolioState.Partial(rows.Count));
     }
