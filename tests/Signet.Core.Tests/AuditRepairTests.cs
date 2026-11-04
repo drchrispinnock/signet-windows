@@ -104,8 +104,28 @@ public class AuditRepairTests
         Assert.Equal(0, active);
     }
 
-    [Fact(Skip = "Windows has no WalletBackup journal recovery yet (upstream's newer WalletBackup)")]
-    public void BackupRecoversBeforeItsFirstSnapshot() { }
+    [Fact]
+    public void BackupRecoversBeforeItsFirstSnapshot()
+    {
+        string root = Directory(), backup = Directory();
+        try
+        {
+            var old = "[{\"name\":\"before\",\"value\":\"synthetic\"}]"u8.ToArray();
+            var fresh = "[{\"name\":\"after\",\"value\":\"synthetic\"}]"u8.ToArray();
+            var name = TezosClientStore.PublicKeyHashesFile;
+            PrivateFile.Write(Path.Combine(root, name), fresh);
+            var journal = new System.Text.Json.Nodes.JsonObject { ["version"] = 1, ["files"] = new System.Text.Json.Nodes.JsonObject { [name] = Convert.ToBase64String(old) } };
+            PrivateFile.Write(Path.Combine(root, TezosClientStore.JournalFile), System.Text.Encoding.UTF8.GetBytes(journal.ToJsonString()));
+            var generation = Assert.IsType<WalletBackup.Outcome.Created>(new WalletBackup(root, backup, 2).Run()).Generation;
+            Assert.Equal(old, File.ReadAllBytes(Path.Combine(generation, name)));
+            Assert.False(File.Exists(Path.Combine(root, TezosClientStore.JournalFile)));
+        }
+        finally
+        {
+            System.IO.Directory.Delete(root, recursive: true);
+            System.IO.Directory.Delete(backup, recursive: true);
+        }
+    }
 
     [Fact(Skip = "Windows pins public connections in SocketsHttpHandler.ConnectCallback, not a curl configuration; PublicHTTPClient's checks are tested in DAppTests")]
     public void PublicConnectionsPinTheCheckedAddressAndRefusePrivateAnswers() { }

@@ -6,6 +6,14 @@ internal static class TestSupport
     public static string TempDir(string label) =>
         Path.Combine(Path.GetTempPath(), $"signet-{label}-{Guid.NewGuid():N}");
 
+    /// <summary>A directory junction at <c>link</c> pointing at <c>target</c> (no privilege needed, unlike a symbolic link).</summary>
+    public static void CreateJunction(string link, string target)
+    {
+        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", ["/c", "mklink", "/J", link, target]) { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true })!;
+        process.WaitForExit();
+        if (!Directory.Exists(link)) throw new IOException($"mklink /J {link} failed");
+    }
+
     /// <summary>A fresh, existing directory.</summary>
     public static string MakeDir(string label) => Directory.CreateDirectory(TempDir(label)).FullName;
 
