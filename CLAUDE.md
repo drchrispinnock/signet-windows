@@ -118,10 +118,12 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 ## Status
 
-The pin is upstream `9b9fa4e`, but that commit was **not ported in full**: the jump from `3b33fe1`
-brought the account-management UI up to date and skipped whole subsystems. Ported as of `9b9fa4e`:
-- Models, except the shielded parts of `Network` (`shielded…`). `AppState` carries the
-  shielded maps through unread.
+The pin is upstream `86b28df` (origin/main, 2026-11-03). Every feature commit up to it is ported,
+TzEL included; what is still missing is infrastructure, listed under **Backlog** below (in
+particular upstream `6a4a2b0`, a fix to `ArtworkCache`, which has no Windows counterpart yet, and
+the Linux/FreeBSD build commits `698121e`, `7dc82dc`, `461d097`, `436631a`, `78a6098`, which need
+nothing here). Ported:
+- Models, `Network` and `AppState` in full, the shielded members included.
 - The `TaquitoBridge` host (`JSONValue` with `IntValue`, `BridgeError.Typed`, the journal and
   Ledger session natives). Not yet: the call policy (S30: signing calls, read deadlines, context
   discard) and log rotation during writes (S11).
@@ -130,10 +132,44 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   `WalletDirectorySettings`, `EndpointPolicy` (host classification only), `QRCode`.
 - The chain layer with approved limits (S14), `SentOperation`, `Portfolio` (S26) and chain pinning
   (S12): `ChainService`, `MockChainService`, `TaquitoChainService`, `TzKTService`, `NodeMonitor`
-  and the rest as before. Not yet: `BoundedHTTP`/`JSONBudget` (S19), `ArtworkCache`.
+  and the rest as before; `TokenMetadataResolver` (metadata the indexer lacks, read from the
+  `token_metadata` big map and the TZIP-21 document) with `JSONBudget`; `IPFS` at HEAD (validated
+  content paths, public HTTPS candidates only, S13); `PublicHTTPClient.Data`, the bounded GET
+  through the pinned client with checked redirects (upstream `data(for:limit:followRedirects:)`).
+- Etherlink governance (`EtherlinkGovernance`, the slow and fast kernel-upgrade contracts): on
+  `Network` the map is `EtherlinkGovernanceContracts` (a value-equal `EtherlinkGovernance.Contracts`,
+  since `Network` is a record compared by value; the name `EtherlinkGovernance` is the model's).
+  The Governance sheet has Tezos/Etherlink tabs; the Etherlink half is `EtherlinkGovernanceView.cs`,
+  a partial of `GovernanceSheet` (one dialog on Windows). The Networks sheet's governance fields use
+  `SettingField` (`NetworkSettingsControls.cs`, upstream's shared text setting), as do the Shielded
+  settings.
+- Etherlink history and holdings on the activity tabs, the Tezos/Etherlink `LayerToggles`.
+- NFTs: newest first across both layers, play badge, and `NFTGridView.cs` (selection with click,
+  Ctrl-click, Shift-click; right-click Transfer, Burn, Download, explorer and objkt links, View
+  Artwork, copies, Select All). `TransferNFTSheet` (`TokenTransferRequest`, `BatchLimits`,
+  `WalletViewModel+Tokens.cs`), `DownloadNFTsSheet` and `NFTDownloader` (Show in File Explorer;
+  Windows also turns `< > " | ? *` and a trailing dot in a token name into file-name-safe text).
+- tz4 sends make the reveal's proof of possession (`Wallet.ProofOfPossession`,
+  `ChainError.ProofOfPossessionRequired`, the compose-step password); "Create proof of
+  possession…" (`ProofOfPossessionSheet`); the Baking key field takes a tz address
+  (`WalletViewModel.KeyFieldContentOf` / `PublicKeyForKeyOrAddress`; the address case is
+  `KeyFieldContent.AddressContent`, as a nested `Address` would clash) and Reactivate for a
+  deactivated baker; dApps watch each operation into a block (`AwaitingHash`).
+- TzEL (shielded tez), as upstream's CLAUDE.md describes it. Windows differences: `Blake2s.cs` is
+  managed code (an unrolled compression; upstream's is `tzel_blake2s.c`), with the auth-tree leaf
+  and node beside it; a whole tree takes a few seconds in Release, about 10 s in Debug.
+  `ShieldedWallet` and its records are classes, deep-copied and compared through their JSON
+  (`ShieldedJSON`: sorted keys, ISO 8601 dates, LF, as the Mac's `JSONEncoder` writes), so a
+  wallet folder moves between the two. `PrivateFile` is an atomic write and a read that refuses
+  links (the profile's ACL makes the files private). The view model takes its stores and rollup
+  through `ConfigureShielded` (the app passes `FileShieldedStore`); `ShieldedRollupExtensions.
+  DeliveryPollInterval` is shortened by the tests. `ShieldedTests` runs the whole shield, unshield
+  and transfer flows through the bridge against `MockShieldedRollup`; the classes that build
+  signing trees share a non-parallel collection (`CpuHeavy`) so timing tests are not starved.
 - `WalletViewModel`: accounts (create, import, session keys, remember, rename, forget, export,
   address book, octez-client import), refresh, networks and nodes, backups, faucet, staking and
-  governance pass-throughs, dApps, multisig, Buy, Ledger, Etherlink. Not yet: TzEL.
+  governance pass-throughs, dApps, multisig, Buy, Ledger, Etherlink, Etherlink governance, tokens,
+  shielded (`WalletViewModel+Shielded.cs`).
   `SendViewModel` exists only for its `SendError`.
 - Views: `WalletHomeView` (with `NoWalletsView` and the disclaimer), the header
   (`WalletIdentityView`, `OperationsMenuItems`), `NetworkBadgeMenu`, `ActionButtonsView`,
@@ -217,11 +253,19 @@ brought the account-management UI up to date and skipped whole subsystems. Porte
   its return type). Upstream's `SendSheet.SideContext`/`capture` is `SendSideContext.Capture`
   in Core, so `SendSideContextTests` runs headless. The live tests (`ShadownetBridgeTests`,
   `EtherlinkLiveTests`) fund through the Shadownet faucet's proof of work and pass, about 40 s each.
-- `WalletBackup` is still the `3b33fe1` version (no manifest or locked snapshot, S05/S28).
-
-Every menu item is ported except the TzEL ones, which are left out of the menus.
-Shielded settings is left out of the menu altogether while TzEL is out of scope. Run `dotnet test` and read the skipped tests for the
-detailed backlog. The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
+Every menu item is ported. **Backlog** (infrastructure, not features):
+- `ImageLoader` is still the app's `BitmapImage` loader: no `ArtworkCache` on disk (nor `6a4a2b0`),
+  no 8 MB "too large" skip, and artwork is fetched by WinUI rather than the pinned public client
+  (the candidates themselves are already S13-filtered by `IPFS`).
+- `BoundedHTTP` (S19) for the native readers (TzKT, nodes, faucet); the rollup client has its own byte cap.
+- The bridge call policy (S30: signing calls, read deadlines, context discard) and log rotation (S11).
+- `WalletBackup` is still the `3b33fe1` version (no manifest or locked snapshot, S05/S28); its
+  file list is HEAD's, the shielded wallets included.
+- Settings has no Developer section (`DeveloperSettings`, dApp diagnostics).
+- Upstream test suites not yet ported: `AuditRepairTests`, `AuditRepairTests2`, `ArtworkCacheTests`,
+  `ConfirmationWatcherTests`, `RefreshContextTests`, `WalletLockMeasurementTests`, `DAppStartupTests`,
+  `UpdaterTests` and a few small ones; `dotnet test`'s skipped list has the rest.
+The bridge log is at `%LOCALAPPDATA%\Signet\Logs\bridge.log`.
 
 Windows-specific porting notes:
 - `UserDefaults` is a C# class of that name backed by `%LOCALAPPDATA%\Signet\preferences.json`.
