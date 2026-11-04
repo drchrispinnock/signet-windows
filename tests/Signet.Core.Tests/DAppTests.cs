@@ -130,10 +130,10 @@ public class DAppGrantTests
 {
     static readonly Address Source = new("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb");
     static readonly DAppInfo App = new("objkt.com", null, null, "peer-a");
-    static DAppPermission Grant(string senderId = "peer-a", string? address = null, string networkType = "mainnet", Uri? rpc = null, string[]? scopes = null) =>
+    internal static DAppPermission Grant(string senderId = "peer-a", string? address = null, string networkType = "mainnet", Uri? rpc = null, string[]? scopes = null) =>
         new("acc", senderId, address ?? Source.Value, "objkt.com", null, networkType, scopes ?? ["operation_request", "sign"], null, rpc);
     static readonly DAppRequest Operation = new DAppRequest.Operation("op", App, "mainnet", null, Source, "[]");
-    static readonly DAppRequest Sign = new DAppRequest.SignPayload("sig", App, Source, "micheline", "05");
+    internal static readonly DAppRequest Sign = new DAppRequest.SignPayload("sig", App, Source, "micheline", "05");
 
     [Fact]
     public void RequiresAnExactGrant()

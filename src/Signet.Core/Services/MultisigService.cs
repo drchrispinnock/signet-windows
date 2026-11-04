@@ -48,7 +48,7 @@ public sealed class BridgeMultisigService(TaquitoBridge? bridge = null, Network?
     {
         if (network is null || network.RpcURL != rpcURL)
             throw new TaquitoBridge.BridgeError.JavaScript("The multisig service needs the selected network and endpoint before contacting a node.");
-        await bridge.Call("assertChain", rpcURL.AbsoluteString(), network.ExpectedChainID ?? "").WaitAsync(TimeSpan.FromSeconds(30));
+        await bridge.CallWithin(TimeSpan.FromSeconds(30), "assertChain", rpcURL.AbsoluteString(), network.ExpectedChainID ?? "");
     }
 
     public static MultisigInfo InfoFrom(JSONValue r)

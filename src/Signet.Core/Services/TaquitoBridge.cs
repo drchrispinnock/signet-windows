@@ -27,6 +27,11 @@ public sealed class TaquitoBridge
         public sealed class LoadFailed(string detail) : BridgeError($"Taquito bridge failed to load: {detail}");
         public sealed class JavaScript(string detail) : BridgeError(detail);
         public sealed class NotAFunction(string name) : BridgeError($"TaquitoBridge.{name} is not a function");
+        public sealed class TimedOut(string name, TimeSpan after) : BridgeError($"TaquitoBridge.{name} did not finish within {after.TotalSeconds:0.##} s");
+        public sealed class NotASigningCall(string name) : BridgeError($"TaquitoBridge.{name} is not a signing call");
+        public sealed class InputTooLarge() : BridgeError("Bridge arguments exceed the input budget");
+        /// <summary>A read still waiting when another read's deadline discarded the context.</summary>
+        public sealed class ContextDiscarded(string name) : BridgeError($"TaquitoBridge.{name} was stopped: the bridge was reset after a timeout");
 
         /// <summary>
         /// The <see cref="ChainError"/> this failure stands for when the bridge's text is one every signing path
@@ -54,8 +59,15 @@ public sealed class TaquitoBridge
     private Exception? loadError;
     private readonly Dictionary<int, Timer> timers = [];
     private readonly Dictionary<int, CancellationTokenSource> fetches = [];
-    private readonly Dictionary<int, TaskCompletionSource<JSONValue>> calls = [];
+    /// <summary>A call waiting for JavaScript to settle it. Bridge thread only.</summary>
+    private sealed record PendingCall(TaskCompletionSource<JSONValue> Completion, string Name, bool Signing, int Generation)
+    {
+        public Timer? Deadline { get; set; }
+    }
+    private readonly Dictionary<int, PendingCall> calls = [];
     private int nextCallID;
+    /// <summary>Bumped when the context is discarded, so a late timer, fetch or Ledger reply for the old one is dropped. Bridge thread only.</summary>
+    private int generation;
     private readonly Lock gate = new();
 
     /// <summary>
@@ -94,9 +106,13 @@ public sealed class TaquitoBridge
     }
     private Action<string>? eventHandler;
 
-    public TaquitoBridge(HttpClient? http = null, bool requirePublicEndpoints = false)
+    /// <param name="logPath">The bridge log; <c>LogFilePath</c> unless a test names another.</param>
+    /// <param name="systemLog">Also receives every recorded line (upstream's system log; the debugger's output here).</param>
+    public TaquitoBridge(HttpClient? http = null, bool requirePublicEndpoints = false, string? logPath = null, Action<string>? systemLog = null)
     {
         RequirePublicEndpoints = requirePublicEndpoints;
+        this.logPath = logPath ?? LogFilePath;
+        this.systemLog = systemLog ?? (line => System.Diagnostics.Debug.WriteLine(line));
         // Each fetch has URLSession's default 60 s timeout, so a node that never answers still settles the promise.
         this.http = http ?? (requirePublicEndpoints ? PublicHTTPClient.Shared : new HttpClient { Timeout = Timeout.InfiniteTimeSpan });
         var thread = new Thread(() => { foreach (var work in queue.GetConsumingEnumerable()) work(); })
@@ -109,10 +125,60 @@ public sealed class TaquitoBridge
 
     // ---- Public API ------------------------------------------------------------------------------
 
-    /// <summary>Calls <c>TaquitoBridge.&lt;name&gt;(...args)</c> and awaits the result, unwrapping promises.</summary>
-    public Task<JSONValue> Call(string name, params object?[] args)
+    /// <summary>
+    /// What a bridge export may do, which decides how its call is treated (S30): a read gets a
+    /// deadline; a signing call runs to its outcome.
+    /// </summary>
+    public enum CallKind { Read, Signing }
+
+    /// <summary>
+    /// Every export that signs, injects or holds a Ledger session. A call to one of these has no
+    /// deadline and is never abandoned: abandoning it could lose an operation outcome or release
+    /// a device still signing. Upstream's <c>npm test</c> (signing-exports.cjs) checks the JavaScript
+    /// sources against this list.
+    /// </summary>
+    public static readonly IReadOnlySet<string> SigningCalls = new HashSet<string>
+    {
+        "sendTransfer", "sendStakingOperation", "sendRawOperation", "sendGovernanceOperation", "sendEtherlinkDeposit", "sendEtherlinkLink", "sendEtherlinkGovernance", "sendTokenTransfer", "sendShieldDeposit", "sendOutboxExecution",
+        "injectSignedBytes", "multisigOriginate", "multisigSubmit", "multisigSign", "signPayload", "provePossession",
+        "octezConnectExecute", "octezConnectSign", "ledgerGetAddress", "ledgerAppVersion",
+    };
+
+    public static CallKind KindOf(string name) => SigningCalls.Contains(name) ? CallKind.Signing : CallKind.Read;
+
+    /// <summary>A read's deadline when the caller names none (upstream's 60 s).</summary>
+    public static readonly TimeSpan DefaultReadDeadline = TimeSpan.FromSeconds(60);
+
+    /// <summary>The most the string arguments of one call may add up to, in UTF-8 bytes.</summary>
+    public const int MaxInputBytes = 2 << 20;
+
+    /// <summary>
+    /// The entry point for a signing or injecting call: <c>name</c> must be declared in
+    /// <c>SigningCalls</c>, so a caller cannot sign through a read with a deadline by mistake.
+    /// </summary>
+    public Task<JSONValue> Sign(string name, params object?[] args) =>
+        KindOf(name) == CallKind.Signing ? Call(name, args) : Task.FromException<JSONValue>(new BridgeError.NotASigningCall(name));
+
+    /// <summary>
+    /// Calls <c>TaquitoBridge.&lt;name&gt;(...args)</c> and awaits the result, unwrapping promises.
+    /// A read has <c>DefaultReadDeadline</c>; signing, injection and Ledger sessions (<c>SigningCalls</c>)
+    /// have none, whichever entry point they come through.
+    /// </summary>
+    public Task<JSONValue> Call(string name, params object?[] args) => CallWithin(null, name, args);
+
+    /// <summary>
+    /// <c>Call</c> with a read deadline of <c>timeout</c> (upstream's <c>call(_:_:timeout:)</c>). When a read's
+    /// deadline passes its HTTP work is cancelled and the context discarded before reuse, so the
+    /// next call starts clean (S30). Windows: calls are not serialised as upstream's are, so a
+    /// read that times out while a signing call is in flight fails alone and the context is kept.
+    /// </summary>
+    public Task<JSONValue> CallWithin(TimeSpan? timeout, string name, params object?[] args)
     {
         var completion = new TaskCompletionSource<JSONValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (args.Sum(a => a is string s ? Encoding.UTF8.GetByteCount(s) : 0) > MaxInputBytes)
+            return Task.FromException<JSONValue>(new BridgeError.InputTooLarge());
+        var signing = KindOf(name) == CallKind.Signing;
+        var deadline = signing ? (TimeSpan?)null : timeout ?? DefaultReadDeadline;
         var argsJSON = JsonSerializer.Serialize(args);
         Post(() =>
         {
@@ -120,23 +186,75 @@ public sealed class TaquitoBridge
             {
                 var context = LoadedEngine();
                 var id = ++nextCallID;
-                calls[id] = completion;
+                var pending = new PendingCall(completion, name, signing, generation);
+                calls[id] = pending;
+                if (deadline is { } after)
+                    pending.Deadline = new Timer(_ => Post(() => Expire(id, after)), null, after, Timeout.InfiniteTimeSpan);
                 context.Invoke("__signet_call", id, name, argsJSON);
             }
-            catch (BridgeError e) { completion.TrySetException(e); }
-            catch (ScriptEngineException e) { completion.TrySetException(new BridgeError.JavaScript(e.Message)); }
+            catch (BridgeError e) { Abandon(completion); completion.TrySetException(e); }
+            catch (ScriptEngineException e) { Abandon(completion); completion.TrySetException(new BridgeError.JavaScript(e.Message)); }
         });
         return completion.Task;
     }
 
     private void Post(Action work) => queue.Add(work);
 
+    /// <summary>Forgets a call that never reached JavaScript, so its deadline cannot discard the context.</summary>
+    private void Abandon(TaskCompletionSource<JSONValue> completion)
+    {
+        foreach (var (id, pending) in calls.Where(c => c.Value.Completion == completion).ToList())
+        {
+            pending.Deadline?.Dispose();
+            calls.Remove(id);
+        }
+    }
+
     /// <summary>Called from JavaScript when a call settles: a JSON result or an error message.</summary>
     private void CallDone(int id, string? resultJSON, string? error)
     {
-        if (!calls.Remove(id, out var completion)) return;
-        if (error is not null) completion.TrySetException(new BridgeError.JavaScript(error));
-        else completion.TrySetResult(JSONValue.Parse(resultJSON));
+        if (!calls.Remove(id, out var pending)) return;
+        pending.Deadline?.Dispose();
+        if (error is not null) pending.Completion.TrySetException(new BridgeError.JavaScript(error));
+        else pending.Completion.TrySetResult(JSONValue.Parse(resultJSON));
+    }
+
+    /// <summary>A read's deadline passed: it fails, and the context is discarded unless a signing call still needs it.</summary>
+    private void Expire(int id, TimeSpan after)
+    {
+        if (!calls.TryGetValue(id, out var pending) || pending.Generation != generation) return;
+        calls.Remove(id);
+        pending.Deadline?.Dispose();
+        Note($"{pending.Name} timed out after {after.TotalSeconds:0.##} s");
+        pending.Completion.TrySetException(new BridgeError.TimedOut(pending.Name, after));
+        if (calls.Values.Any(c => c.Signing)) return;
+        DiscardContext();
+    }
+
+    /// <summary>
+    /// Drops the JavaScript context and everything it had running: HTTP requests are cancelled,
+    /// timers stopped, Ledger leases released, waiting reads failed. The next call loads a fresh
+    /// context. Bridge thread only.
+    /// </summary>
+    private void DiscardContext()
+    {
+        generation++;
+        foreach (var (_, cancel) in fetches) cancel.Cancel();
+        fetches.Clear();
+        foreach (var (_, timer) in timers) timer.Dispose();
+        timers.Clear();
+        foreach (var (_, lease) in ledgerLeases) LedgerSessions.Shared.Release(lease.Lease, lease.Device);
+        ledgerLeases.Clear();
+        foreach (var (_, pending) in calls)
+        {
+            pending.Deadline?.Dispose();
+            pending.Completion.TrySetException(new BridgeError.ContextDiscarded(pending.Name));
+        }
+        calls.Clear();
+        var old = engine;
+        engine = null;
+        try { old?.Dispose(); } catch (Exception) { }
+        EventHandler?.Invoke("{\"kind\":\"stopped\",\"message\":\"The dApp connection timed out; reconnect before signing.\"}");
     }
 
     // ---- Loading ---------------------------------------------------------------------------------
@@ -339,9 +457,10 @@ public sealed class TaquitoBridge
     private void SetTimer(int id, double ms)
     {
         if (timers.Remove(id, out var old)) old.Dispose();
+        var owner = generation;
         timers[id] = new Timer(_ => Post(() =>
         {
-            if (!timers.Remove(id, out var fired)) return;  // cleared meanwhile
+            if (owner != generation || !timers.Remove(id, out var fired)) return;  // cleared or discarded meanwhile
             fired.Dispose();
             Invoke("__signet_timerFired", id);
         }), null, TimeSpan.FromMilliseconds(Math.Max(0, ms)), Timeout.InfiniteTimeSpan);
@@ -389,6 +508,7 @@ public sealed class TaquitoBridge
 
         var cancel = new CancellationTokenSource();
         fetches[id] = cancel;
+        var owner = generation;
         _ = Task.Run(async () =>
         {
             try
@@ -403,7 +523,7 @@ public sealed class TaquitoBridge
                 var status = (int)response.StatusCode;
                 Post(() =>
                 {
-                    if (!fetches.Remove(id)) return;  // cancelled
+                    if (owner != generation || !fetches.Remove(id)) return;  // cancelled or discarded
                     FinishFetch(id, status, response.ReasonPhrase ?? "", JsonSerializer.Serialize(responseHeaders), text);
                 });
             }
@@ -412,7 +532,7 @@ public sealed class TaquitoBridge
                 // Whatever went wrong, JavaScript must hear back or its promise never settles.
                 Post(() =>
                 {
-                    if (!fetches.Remove(id)) return;  // cancelled
+                    if (owner != generation || !fetches.Remove(id)) return;  // cancelled or discarded
                     FinishFetch(id, error: e is HttpRequestException or TaskCanceledException ? e.Message : $"{e.GetType().Name}: {e.Message}");
                 });
             }
@@ -460,8 +580,10 @@ public sealed class TaquitoBridge
     {
         Trace($"ledger #{id} → {apduHex[..Math.Min(8, apduHex.Length)]} {apduHex.Length / 2} bytes");
         var apdu = Convert.FromHexString(apduHex.Length % 2 == 0 ? apduHex : apduHex[..^1]);
+        var owner = generation;
         LedgerHID.Shared.Exchange(deviceID, apdu, TimeSpan.FromMilliseconds(timeoutMs), (response, error) => Post(() =>
         {
+            if (owner != generation) return;
             if (response is not null)
             {
                 var hex = Convert.ToHexString(response).ToLowerInvariant();
@@ -485,6 +607,7 @@ public sealed class TaquitoBridge
     /// </summary>
     private void LedgerSessionBegin(int id, string deviceID)
     {
+        var owner = generation;
         _ = Task.Run(async () =>
         {
             try
@@ -492,13 +615,18 @@ public sealed class TaquitoBridge
                 var lease = await LedgerSessions.Shared.Acquire(deviceID);
                 Post(() =>
                 {
+                    if (owner != generation)
+                    {
+                        LedgerSessions.Shared.Release(lease, deviceID);
+                        return;
+                    }
                     ledgerLeases[id] = (lease, deviceID);
                     Invoke("__signet_ledgerSessionReady", id, null);
                 });
             }
             catch (Exception e)
             {
-                Post(() => Invoke("__signet_ledgerSessionReady", id, e.Message));
+                Post(() => { if (owner == generation) Invoke("__signet_ledgerSessionReady", id, e.Message); });
             }
         });
     }
@@ -520,10 +648,17 @@ public sealed class TaquitoBridge
     }
     private readonly List<string> consoleLines = [];
 
-    /// <summary>Rolling log of bridge activity for support: <c>%LOCALAPPDATA%\Signet\Logs\bridge.log</c>.</summary>
-    public static string LogFilePath { get; } = Path.Combine(
+    /// <summary>
+    /// Rolling log of bridge activity for support: <c>%LOCALAPPDATA%\Signet\Logs\bridge.log</c>, rotated to
+    /// <c>bridge.log.1</c> once it passes <c>MaxLogBytes</c> (S11).
+    /// </summary>
+    public static string LogFilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Signet", "Logs", "bridge.log");
+    public const long MaxLogBytes = 5_000_000;
+    private readonly string logPath;
+    private readonly Action<string> systemLog;
     private StreamWriter? logWriter;
+    private long logBytes;
 
     /// <summary>Appends a line to <c>ConsoleLines</c> from C# (fetch tracing).</summary>
     private void Trace(string line) => Record($"[host] {line}");
@@ -562,32 +697,51 @@ public sealed class TaquitoBridge
         return text;
     }
 
-    /// <summary>The one way a line reaches any sink: <c>ConsoleLines</c> and the log file get the same redacted, capped text (S11).</summary>
+    /// <summary>
+    /// The one way a line reaches any sink: the system log, <c>ConsoleLines</c> and the log file all
+    /// get the same redacted, capped text (S11).
+    /// </summary>
     private void Record(string rawLine)
     {
         var line = RedactedLine(rawLine);
+        systemLog(line);
         lock (gate)
         {
             consoleLines.Add(line);
             if (consoleLines.Count > 300) consoleLines.RemoveRange(0, consoleLines.Count - 300);
             try
             {
+                RotateLogIfNeeded();
                 logWriter ??= OpenLog();
-                logWriter.WriteLine($"{DateTime.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture)} {line}");
+                var text = $"{DateTime.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture)} {line}\n";
+                logWriter.Write(text);
+                logBytes += Encoding.UTF8.GetByteCount(text);
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
     }
 
-    private static StreamWriter OpenLog()
+    private StreamWriter OpenLog()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(LogFilePath)!);
-        var info = new FileInfo(LogFilePath);
-        if (info.Exists && info.Length > 5_000_000) info.Delete();
-        return new StreamWriter(new FileStream(LogFilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite), new UTF8Encoding(false))
+        Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+        var info = new FileInfo(logPath);
+        if (info.Exists && info.Attributes.HasFlag(FileAttributes.ReparsePoint)) throw new IOException($"{logPath} is a link; not logging to it.");
+        logBytes = info.Exists ? info.Length : 0;
+        return new StreamWriter(new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete), new UTF8Encoding(false))
         {
             AutoFlush = true,
         };
+    }
+
+    /// <summary>Moves a full log to <c>bridge.log.1</c> (replacing the previous one) so the next line starts a new file.</summary>
+    private void RotateLogIfNeeded()
+    {
+        if (logWriter is null && File.Exists(logPath)) logBytes = new FileInfo(logPath).Length;
+        if (logBytes <= MaxLogBytes) return;
+        logWriter?.Dispose();
+        logWriter = null;
+        File.Move(logPath, logPath + ".1", overwrite: true);
+        logBytes = 0;
     }
 }

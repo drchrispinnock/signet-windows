@@ -102,9 +102,9 @@ public sealed partial class DAppConnectionManager : ObservableObject
         signerProvider = signer;
     }
 
-    /// <summary>A bridge call with upstream's read deadline. The call itself runs on; only waiting for it stops.</summary>
+    /// <summary>A bridge call with upstream's read deadline; when it passes, the bridge discards its context (S30).</summary>
     private Task<JSONValue> Call(string name, int seconds, params object?[] args) =>
-        bridge.Call(name, args).WaitAsync(TimeSpan.FromSeconds(seconds));
+        bridge.CallWithin(TimeSpan.FromSeconds(seconds), name, args);
 
     // ---- Lifecycle -------------------------------------------------------------------------------
 

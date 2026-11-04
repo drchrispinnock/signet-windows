@@ -152,3 +152,124 @@ public class BoundedHTTPTests
         Assert.Equal(10, rows.Count);
     }
 }
+
+/// <summary>S11: every line the bridge records is redacted and capped, wherever it goes.</summary>
+public class LoggingPolicyTests
+{
+    private const string Key = "edskRuR3azSfg5xTz6dLovR7yr7hgP9Qt6Ub8rgqJG7VTH6RhJ1vXXhfSwtxw1E2Lc3b3TvsgrnWXKVyLRQgm3Rx8cFXqQhd3";
+
+    [Fact]
+    public async Task ConsoleLinesFromJavaScriptAreRedactedAndCapped()
+    {
+        var hex = string.Concat(Enumerable.Repeat("ab", 64));
+        var filler = new string('x', TaquitoBridge.MaxLineLength + 200);
+        _ = await TaquitoBridge.Shared.Call("bridgeEcho", $"{Key} {hex} {filler}");
+        var echoed = TaquitoBridge.Shared.ConsoleLines.Last(l => l.StartsWith("[log] echo: ", StringComparison.Ordinal));
+        Assert.True(!echoed.Contains(Key) && !echoed.Contains(hex));
+        Assert.True(echoed.Contains("edsk<redacted>") && echoed.Contains("<128 hex chars>"));
+        Assert.True(echoed.Length <= TaquitoBridge.MaxLineLength + 1);
+    }
+
+    [Fact]
+    public void BridgeNotesGoThroughTheSamePolicy()
+    {
+        var bridge = new TaquitoBridge(systemLog: _ => { });
+        bridge.Note($"uncaught: {Key}");
+        Assert.Equal("[app] uncaught: edsk<redacted>", bridge.ConsoleLines.LastOrDefault());
+    }
+
+    [Fact]
+    public async Task SystemConsoleAndFileReceiveTheSameRedactedText()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "signet-logs-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var file = Path.Combine(directory, "bridge.log");
+            var sink = new List<string>();
+            var bridge = new TaquitoBridge(logPath: file, systemLog: line => { lock (sink) sink.Add(line); });
+            var input = "edsk" + new string('R', 50) + " " + string.Concat(Enumerable.Repeat("ab", 64)) + " " + new string('x', 1200);
+            _ = await bridge.Call("bridgeEcho", input);
+            var console = bridge.ConsoleLines;
+            lock (sink) Assert.Equal(console, sink);
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var text = new StreamReader(stream).ReadToEnd();
+            foreach (var line in console)
+            {
+                Assert.DoesNotContain(new string('R', 50), line);
+                Assert.DoesNotContain(string.Concat(Enumerable.Repeat("ab", 64)), line);
+                Assert.True(line.Length <= TaquitoBridge.MaxLineLength + 1);
+                Assert.Contains(line, text);
+            }
+        }
+        finally { try { Directory.Delete(directory, recursive: true); } catch (IOException) { } }
+    }
+
+    /// <summary>Windows: the rotation itself (upstream's is checked by hand), with a full log planted first.</summary>
+    [Fact]
+    public void AFullLogIsRotatedToDotOne()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "signet-logs-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(directory);
+            var file = Path.Combine(directory, "bridge.log");
+            File.WriteAllBytes(file, new byte[TaquitoBridge.MaxLogBytes + 1]);
+            var bridge = new TaquitoBridge(logPath: file, systemLog: _ => { });
+            bridge.Note("after rotation");
+            Assert.Equal(TaquitoBridge.MaxLogBytes + 1, new FileInfo(file + ".1").Length);
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            Assert.EndsWith("[app] after rotation\n", new StreamReader(stream).ReadToEnd());
+        }
+        finally { try { Directory.Delete(directory, recursive: true); } catch (IOException) { } }
+    }
+}
+
+/// <summary>S30: every export that signs is declared as such (the JavaScript inventory is upstream's npm test).</summary>
+public class SigningExportsTests
+{
+    [Fact]
+    public async Task TheSigningEntryPointRefusesReads()
+    {
+        await Assert.ThrowsAsync<TaquitoBridge.BridgeError.NotASigningCall>(() => TaquitoBridge.Shared.Sign("version"));
+        Assert.NotNull((await TaquitoBridge.Shared.Call("version")).StringValue);
+    }
+}
+
+/// <summary>F02: every bridge failure goes through one conversion to <c>ChainError</c>.</summary>
+public class BridgeErrorConversionTests
+{
+    [Fact]
+    public async Task KnownMessagesBecomeChainErrorsAndEverythingElsePassesThrough()
+    {
+        (string Message, Type Expected)[] cases =
+        [
+            ("Failed to decrypt the key", typeof(ChainError.WrongPassphrase)), ("Invalid passphrase", typeof(ChainError.WrongPassphrase)),
+            ("Ledger device: Condition of use not satisfied (denied by the user?) (0x6985)", typeof(ChainError.LedgerDeclined)),
+            ("Ledger Device is busy (0x5515 LOCKED_DEVICE)", typeof(ChainError.LedgerLocked)),
+            ("CLA_NOT_SUPPORTED (0x6e00)", typeof(ChainError.LedgerAppNotOpen)), ("INS_NOT_SUPPORTED", typeof(ChainError.LedgerAppNotOpen)),
+            ("No Ledger is connected", typeof(ChainError.LedgerNotConnected)), ("the device was unplugged", typeof(ChainError.LedgerNotConnected)),
+            ("Ledger does not hold this key", typeof(ChainError.LedgerWrongDevice)),
+            ("the key does not derive the account's address tz1x", typeof(ChainError.KeyAddressMismatch)),
+        ];
+        foreach (var (message, expected) in cases)
+        {
+            Assert.IsType(expected, new TaquitoBridge.BridgeError.JavaScript(message).AsChainError);
+            var thrown = await Assert.ThrowsAnyAsync<ChainError>(() => TaquitoBridge.BridgeError.Typed<int>(() => throw new TaquitoBridge.BridgeError.JavaScript(message)));
+            Assert.IsType(expected, thrown);
+        }
+        Assert.Equal("Ledger does not hold this key", new TaquitoBridge.BridgeError.JavaScript("Ledger does not hold this key").AsChainError.Message);
+        // Precedence is the message scan's: a decrypt failure wins over a Ledger code in the same text.
+        Assert.IsType<ChainError.WrongPassphrase>(new TaquitoBridge.BridgeError.JavaScript("could not decrypt (0x6985)").AsChainError);
+        // Unknown JavaScript text and every other bridge failure come back exactly as they were.
+        TaquitoBridge.BridgeError[] others =
+        [
+            new TaquitoBridge.BridgeError.JavaScript("something else"), new TaquitoBridge.BridgeError.TimedOut("getHead", TimeSpan.FromSeconds(60)),
+            new TaquitoBridge.BridgeError.NotAFunction("x"), new TaquitoBridge.BridgeError.BundleMissing(), new TaquitoBridge.BridgeError.LoadFailed("y"),
+            new TaquitoBridge.BridgeError.NotASigningCall("z"),
+        ];
+        foreach (var error in others) Assert.Same(error, error.AsChainError);
+        // Other errors never enter the conversion, and a success comes back untouched.
+        await Assert.ThrowsAsync<ChainError.AccountNotOnChain>(() => TaquitoBridge.BridgeError.Typed<int>(() => throw new ChainError.AccountNotOnChain(new Address("tz1"))));
+        Assert.Equal(7, await TaquitoBridge.BridgeError.Typed(() => Task.FromResult(7)));
+    }
+}
