@@ -29,6 +29,8 @@ public sealed class TaquitoBridge
         public sealed class NotAFunction(string name) : BridgeError($"TaquitoBridge.{name} is not a function");
         public sealed class TimedOut(string name, TimeSpan after) : BridgeError($"TaquitoBridge.{name} did not finish within {after.TotalSeconds:0.##} s");
         public sealed class NotASigningCall(string name) : BridgeError($"TaquitoBridge.{name} is not a signing call");
+        public sealed class QueueFull() : BridgeError("Too many bridge calls are waiting; try again when the current operation finishes");
+
         public sealed class InputTooLarge() : BridgeError("Bridge arguments exceed the input budget");
         /// <summary>A read still waiting when another read's deadline discarded the context.</summary>
         public sealed class ContextDiscarded(string name) : BridgeError($"TaquitoBridge.{name} was stopped: the bridge was reset after a timeout");
@@ -54,6 +56,34 @@ public sealed class TaquitoBridge
     public static TaquitoBridge Shared { get; } = new();
 
     private readonly BlockingCollection<Action> queue = [];
+    // One active foreground operation and at most 64 FIFO waiters, as on the Mac.
+    // Timer/fetch/Ledger callbacks still run on `queue` while that operation awaits its result.
+    private readonly Lock callGateLock = new();
+    private bool callActive;
+    private readonly Queue<TaskCompletionSource> waitingCalls = [];
+
+    private Task AcquireCall()
+    {
+        lock (callGateLock)
+        {
+            if (!callActive) { callActive = true; return Task.CompletedTask; }
+            if (waitingCalls.Count >= 64) return Task.FromException(new BridgeError.QueueFull());
+            var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            waitingCalls.Enqueue(ready);
+            return ready.Task;
+        }
+    }
+
+    private void ReleaseCall()
+    {
+        TaskCompletionSource? next;
+        lock (callGateLock)
+        {
+            if (!waitingCalls.TryDequeue(out next)) callActive = false;
+        }
+        next?.SetResult();
+    }
+
     private readonly HttpClient http;
     private V8ScriptEngine? engine;
     private Exception? loadError;
@@ -167,35 +197,45 @@ public sealed class TaquitoBridge
     public Task<JSONValue> Call(string name, params object?[] args) => CallWithin(null, name, args);
 
     /// <summary>
-    /// <c>Call</c> with a read deadline of <c>timeout</c> (upstream's <c>call(_:_:timeout:)</c>). When a read's
-    /// deadline passes its HTTP work is cancelled and the context discarded before reuse, so the
-    /// next call starts clean (S30). Windows: calls are not serialised as upstream's are, so a
-    /// read that times out while a signing call is in flight fails alone and the context is kept.
+    /// <c>Call</c> with a read deadline of <c>timeout</c> (upstream's <c>call(_:_:timeout:)</c>).
+    /// Foreground calls wait for the previous outcome. The read deadline starts only when the
+    /// call runs, so waiting behind a signature cannot reset its context. Signing, injection
+    /// and Ledger calls have no generic deadline. A read timeout discards the context before
+    /// the next foreground call starts.
     /// </summary>
-    public Task<JSONValue> CallWithin(TimeSpan? timeout, string name, params object?[] args)
+    public async Task<JSONValue> CallWithin(TimeSpan? timeout, string name, params object?[] args)
     {
-        var completion = new TaskCompletionSource<JSONValue>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (args.Sum(a => a is string s ? Encoding.UTF8.GetByteCount(s) : 0) > MaxInputBytes)
-            return Task.FromException<JSONValue>(new BridgeError.InputTooLarge());
+            throw new BridgeError.InputTooLarge();
         var signing = KindOf(name) == CallKind.Signing;
         var deadline = signing ? (TimeSpan?)null : timeout ?? DefaultReadDeadline;
+        // Capture arguments before waiting; callers may still own mutable collections.
         var argsJSON = JsonSerializer.Serialize(args);
-        Post(() =>
+        await AcquireCall().ConfigureAwait(false);
+        try
         {
-            try
+            var completion = new TaskCompletionSource<JSONValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Post(() =>
             {
-                var context = LoadedEngine();
-                var id = ++nextCallID;
-                var pending = new PendingCall(completion, name, signing, generation);
-                calls[id] = pending;
-                if (deadline is { } after)
-                    pending.Deadline = new Timer(_ => Post(() => Expire(id, after)), null, after, Timeout.InfiniteTimeSpan);
-                context.Invoke("__signet_call", id, name, argsJSON);
-            }
-            catch (BridgeError e) { Abandon(completion); completion.TrySetException(e); }
-            catch (ScriptEngineException e) { Abandon(completion); completion.TrySetException(new BridgeError.JavaScript(e.Message)); }
-        });
-        return completion.Task;
+                try
+                {
+                    var context = LoadedEngine();
+                    var id = ++nextCallID;
+                    var pending = new PendingCall(completion, name, signing, generation);
+                    calls[id] = pending;
+                    if (deadline is { } after)
+                        pending.Deadline = new Timer(_ => Post(() => Expire(id, after)), null, after, Timeout.InfiniteTimeSpan);
+                    context.Invoke("__signet_call", id, name, argsJSON);
+                }
+                catch (Exception e)
+                {
+                    Abandon(completion);
+                    completion.TrySetException(e is ScriptEngineException ? new BridgeError.JavaScript(e.Message) : e);
+                }
+            });
+            return await completion.Task.ConfigureAwait(false);
+        }
+        finally { ReleaseCall(); }
     }
 
     private void Post(Action work) => queue.Add(work);
@@ -231,7 +271,7 @@ public sealed class TaquitoBridge
         else pending.Completion.TrySetResult(JSONValue.Parse(resultJSON));
     }
 
-    /// <summary>A read's deadline passed: it fails, and the context is discarded unless a signing call still needs it.</summary>
+    /// <summary>A read's deadline passed: discard its context before the next foreground call runs.</summary>
     private void Expire(int id, TimeSpan after)
     {
         if (!calls.TryGetValue(id, out var pending) || pending.Generation != generation) return;
@@ -239,7 +279,6 @@ public sealed class TaquitoBridge
         pending.Deadline?.Dispose();
         Note($"{pending.Name} timed out after {after.TotalSeconds:0.##} s");
         pending.Completion.TrySetException(new BridgeError.TimedOut(pending.Name, after));
-        if (calls.Values.Any(c => c.Signing)) return;
         DiscardContext();
     }
 

@@ -127,9 +127,10 @@ here). Ported:
   Ledger session natives) with upstream's call policy (S30): `SigningCalls`/`CallKind`, `Sign`
   refuses a read, a read has a 60 s deadline (`CallWithin` for another) after which its HTTP work
   is cancelled and the context discarded (a generation counter drops late timers, fetches and
-  Ledger replies), and string arguments are capped at 2 MB. Windows difference: calls are not
-  serialised through one gate as upstream's are, so a read that times out while a signing call is
-  in flight fails alone and the context is kept. `bridge.log` rotates to `bridge.log.1` past 5 MB
+  Ledger replies), and string arguments are capped at 2 MB. Foreground calls run through one FIFO gate per bridge,
+  held until the asynchronous outcome settles, with at most 64 waiters. A read's deadline starts
+  after admission; its timeout resets the context before the next call starts. Timer, fetch and
+  Ledger callbacks continue on the bridge thread while a foreground call waits. `bridge.log` rotates to `bridge.log.1` past 5 MB
   (S11), and every line also goes to a `systemLog` sink (the debugger's output by default).
 - `KeyGenerator`, `KeyImporter`, `SessionKeys`, `TezosClientStore` (journal, `contracts`, removal
   snapshots, address-checked secrets), `WalletStore`, `AppStateStore` (nodes, Layer 2 and service links),
@@ -336,10 +337,12 @@ Windows-specific porting notes:
   - K02: `CrashLog` (Core) writes `crash.log` through the bridge's redaction and rotates it at
     1 MB (`LoggingPolicyTests`).
   - `JSONValue.Array`/`Object` copy the collections they are given.
-  - Not done: T04 (upstream's audit note says Windows runs signing calls one at a time per
-    bridge; it does not yet, see the `TaquitoBridge` note above), and upstream's own open items
-    (G02 master-key encryption, separating the scanned commitments from the key file, E01 to
-    E03 in the Octez Connect SDK).
+  - T04: foreground bridge calls now run one at a time through a bounded FIFO gate held
+    until their asynchronous outcome settles. `BridgeCallGateTests` covers signing/read
+    ordering, rejection, timeout recovery, abandoned caller waits, queue bounds and per-bridge
+    independence.
+  - Still open: G02 master-key encryption, separating scanned commitments from the key file,
+    and E01 to E03 in the Octez Connect SDK.
 
 - `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock
   chain, in-memory accounts (Captain Stake held with a placeholder key, so Baking and Governance
