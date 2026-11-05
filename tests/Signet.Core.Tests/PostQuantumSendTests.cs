@@ -5,19 +5,9 @@ namespace Signet.Tests;
 
 /// <summary>
 /// The whole tz5 story on a live testnet: make an ML-DSA-44 key, fund it from the faucet, let the
-/// node see it, estimate and send tez from it (reveal + transaction, both ML-DSA signed).
-///
-/// Known blocker (2026-10-08, upstream): the Shadownet faucet rejects tz5 destinations with
-/// "The address 'tz5…' is invalid", so this fails at the funding step until the faucet is fixed.
+/// node see it, estimate and send tez from it (reveal + transaction, both ML-DSA signed). tz5 exists
+/// only on Quantumnet (not on Shadownet), whose blocks are 6 s apart.
 /// </summary>
-public class PostQuantumSendTests
-{
-    [Fact, Trait(Category.Name, Category.Network)]
-    public Task Tz5WalletCanReceiveAndSendOnShadownet() =>
-        PostQuantumSend.Run(Network.Shadownet, new FaucetService(Network.Shadownet.FaucetURL!), polls: 24, every: TimeSpan.FromSeconds(5));
-}
-
-/// <summary>The same story on Quantumnet, whose faucet accepts tz5 and whose blocks are 6 s apart.</summary>
 [Collection(Quantumnet.FaucetCollection)]
 public class QuantumnetPostQuantumSendTests
 {

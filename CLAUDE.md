@@ -118,7 +118,7 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 ## Status
 
-The pin is upstream `b6297c6` (origin/main, 2026-11-05), and everything up to it is ported: every
+The pin is upstream `1fc7dc4` (main, 2026-11-05), and everything up to it is ported: every
 feature (TzEL included), the infrastructure behind them, and every upstream test suite (the
 Linux/FreeBSD build commits `698121e`, `7dc82dc`, `461d097`, `436631a`, `78a6098` need nothing
 here). Ported:
