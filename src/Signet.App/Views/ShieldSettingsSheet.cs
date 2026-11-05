@@ -18,6 +18,7 @@ public sealed partial class ShieldSettingsSheet : Sheet
     private readonly ToggleSwitch enabled = new() { Header = "Enable Shielded Transactions" };
     private readonly TextBlock status = new() { Style = (Style)Application.Current.Resources["CautionText"], TextWrapping = TextWrapping.Wrap };
     private readonly StackPanel details = new() { Spacing = 16 };
+    private readonly TextBlock plainHTTP = new() { Style = (Style)Application.Current.Resources["CautionText"], TextWrapping = TextWrapping.Wrap };
     private bool syncing;
 
     public ShieldSettingsSheet(WalletViewModel model) : base("Shielded settings", 520)
@@ -78,6 +79,8 @@ public sealed partial class ShieldSettingsSheet : Sheet
                                                   _ => setting.Problem(),
                                                   () => { model.UseDefaultShieldedSetting(setting, @base); Refresh(); },
                                                   multiline: setting == ShieldedConfig.Setting.ProducerAddress));
+        details.Children.Add(plainHTTP);
+        ShowPlainHTTP(@base);
 
         details.Children.Add(new SectionHeader("Access")
         {
@@ -130,5 +133,14 @@ public sealed partial class ShieldSettingsSheet : Sheet
         status.Text = @base.ShieldedDefault is null && model.Resolved(@base).Shielded is null ? $"Signet ships no TzEL services for {@base.Name}. Fill in every item below to shield there."
             : model.Resolved(@base).Shielded is null ? "Shielding is off until every item below is filled in." : "";
         status.Visibility = status.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ShowPlainHTTP(@base);
+    }
+
+    /// <summary>The note naming any service reached over plain HTTP (audit G04).</summary>
+    private void ShowPlainHTTP(Network @base)
+    {
+        var note = ShieldSettingsNotes.PlainHTTP(model.ShieldedSetting(ShieldedConfig.Setting.OperatorURL, @base), model.ShieldedSetting(ShieldedConfig.Setting.RollupNode, @base));
+        plainHTTP.Text = note ?? "";
+        plainHTTP.Visibility = note is null ? Visibility.Collapsed : Visibility.Visible;
     }
 }

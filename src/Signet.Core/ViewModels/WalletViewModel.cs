@@ -1201,12 +1201,13 @@ public sealed partial class WalletViewModel : ObservableObject
         var ui = SynchronizationContext.Current;
         try
         {
-            // Solving runs off the UI thread; cancelling stops waiting for it.
+            // Solving runs off the UI thread; cancelling stops the requests and the proof of work
+            // itself, not just the wait for them (S21).
             var worker = Task.Run(() => service.RequestTez(address, amount, (done, total) =>
             {
                 void Report() { if (!cancel.IsCancellationRequested && Faucet is FaucetStatus.Solving) Faucet = new FaucetStatus.Solving(done, total); }
                 if (ui is null) Report(); else ui.Post(_ => Report(), null);
-            }), cancel.Token);
+            }, cancel.Token), cancel.Token);
             var hash = await worker.WaitAsync(cancel.Token);
             if (cancel.IsCancellationRequested) return;
             Faucet = new FaucetStatus.Sent(hash);

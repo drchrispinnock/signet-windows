@@ -15,14 +15,21 @@ public abstract record JSONValue
     public sealed record Number(double Value) : JSONValue;
     public sealed record String(string Value) : JSONValue;
 
+    /// <summary>The items are copied, so a list the caller keeps cannot change the value later.</summary>
     public sealed record Array(IReadOnlyList<JSONValue> Items) : JSONValue
     {
+        public IReadOnlyList<JSONValue> Items { get; init; } = Items.ToArray();
+
         public bool Equals(Array? other) => other is not null && Items.SequenceEqual(other.Items);
         public override int GetHashCode() => Items.Count;
     }
 
+    /// <summary>The members are copied, as <c>Array</c>'s items are.</summary>
     public sealed record Object(IReadOnlyDictionary<string, JSONValue> Members) : JSONValue
     {
+        public IReadOnlyDictionary<string, JSONValue> Members { get; init; } =
+            new System.Collections.ObjectModel.ReadOnlyDictionary<string, JSONValue>(new Dictionary<string, JSONValue>(Members));
+
         public bool Equals(Object? other) =>
             other is not null && Members.Count == other.Members.Count &&
             Members.All(m => other.Members.TryGetValue(m.Key, out var v) && Equals(m.Value, v));

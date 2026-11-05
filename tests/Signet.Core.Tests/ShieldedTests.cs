@@ -28,8 +28,14 @@ internal static class TzELVectors
                 if (File.Exists(candidate)) { path = candidate; break; }
             }
         }
-        if (path is null || !File.Exists(path)) return null;
-        return JsonNode.Parse(File.ReadAllBytes(path)) as JsonObject;
+        JsonObject? json = null;
+        try { if (path is not null && File.Exists(path)) json = JsonNode.Parse(File.ReadAllBytes(path)) as JsonObject; }
+        catch (System.Text.Json.JsonException) { }
+        // Optional by default; a release gate sets SIGNET_TZEL_VECTORS_REQUIRED=1 so a missing or
+        // unreadable checkout fails the run instead of passing quietly.
+        if (json is null && Environment.GetEnvironmentVariable("SIGNET_TZEL_VECTORS_REQUIRED") is not null)
+            Assert.Fail($"tzel vectors required but not readable at {path ?? "..\\tzel"}");
+        return json;
     }
 }
 
@@ -397,6 +403,11 @@ public sealed class MockShieldedRollup : IShieldedRollup
     public List<IReadOnlyList<string>> ProofRequests = [];
     public string? FailProving;
     public bool FailDelivery;
+    /// <summary>Audit T01: what Submit does instead of answering: throw before taking the request, or take it and lose the reply.</summary>
+    public Exception? SubmitFailure;
+    public bool LoseSubmitReply;
+    /// <summary>Thrown by every status poll (a network failure while waiting for delivery).</summary>
+    public Exception? PollFailure;
 
     public Task<RollupHead> Head() { lock (gate) return Task.FromResult(new RollupHead($"BLmock{Level}", Level)); }
     public Task<string> SmartRollupAddress() { lock (gate) return Task.FromResult(Address); }
@@ -507,7 +518,9 @@ public sealed class MockShieldedRollup : IShieldedRollup
         if (token != "operator-secret") throw new ShieldedError.OperatorRefused("missing Authorization header");
         lock (gate)
         {
+            if (SubmitFailure is { } failure) throw failure;
             Submitted.Add((kind, payloadHex, token));
+            if (LoseSubmitReply) throw new HttpRequestException("connection reset");
             return Task.FromResult(new OperatorSubmission($"sub-{Submitted.Count}", "commitment_included", "dal"));
         }
     }
@@ -515,7 +528,7 @@ public sealed class MockShieldedRollup : IShieldedRollup
     public Task<OperatorSubmission> SubmissionFor(string id, string token)
     {
         lock (gate)
-            return Task.FromResult(FailDelivery
+            return PollFailure is { } failure ? Task.FromException<OperatorSubmission>(failure) : Task.FromResult(FailDelivery
                 ? new OperatorSubmission(id, "failed", "dal", null, "slot not attested")
                 : new OperatorSubmission(id, "submitted_to_l1", "dal", "ooShieldPointer"));
     }
@@ -909,6 +922,49 @@ public class UnshieldFlowTests
         Assert.Null(applied.ChangeCm);
         await model.Refresh();
         Assert.True(model.ShieldedWallet?.BalanceMutez == 0 && model.ShieldedWallet?.Notes.Count == 1 && model.ShieldedWallet?.LeafCms.Count == 2);
+    }
+
+    /// <summary>
+    /// Audit T01: an unshield whose outcome is uncertain keeps its record and its reserved notes,
+    /// since the operator may still deliver it; only the operator's own refusal frees them.
+    /// </summary>
+    [Fact]
+    public async Task AnUncertainSubmissionKeepsItsRecordAndOnlyARefusalFreesTheNotes()
+    {
+        var (model, store, rollup, _) = await ShieldedModel();
+        // The operator takes the request and the reply is lost.
+        rollup.LoseSubmitReply = true;
+        var estimate = await model.EstimateUnshield(1, Me.Value);
+        var before = rollup.Submitted.Count;
+        await Assert.ThrowsAsync<ShieldedError.SubmissionPending>(() => model.UnshieldTez(estimate));
+        var wallet = store.Load(Me)!;
+        Assert.Equal(("unshield", before + 1), (rollup.Submitted[^1].Kind, rollup.Submitted.Count));
+        Assert.True(wallet.Withdrawals.Count == 1 && wallet.Withdrawals[0].SubmissionID.StartsWith("local:", StringComparison.Ordinal));
+        Assert.True(!wallet.Withdrawals[0].Submitted && wallet.Withdrawals[0].PayloadHex == rollup.Submitted[^1].Payload);
+        Assert.Equal(0ul, wallet.AvailableMutez);
+        rollup.LoseSubmitReply = false;
+        model.ForgetWithdrawal(wallet.Withdrawals[0].Id);
+
+        // Accepted, then every status poll fails: kept and reserved under the operator's id, acknowledged.
+        rollup.PollFailure = new HttpRequestException("no route to host");
+        estimate = await model.EstimateUnshield(1, Me.Value);
+        await model.UnshieldTez(estimate);
+        wallet = store.Load(Me)!;
+        Assert.True(wallet.Withdrawals.Count == 1 && wallet.Withdrawals[0].SubmissionID == $"sub-{rollup.Submitted.Count}" && wallet.Withdrawals[0].Submitted && wallet.AvailableMutez == 0);
+        rollup.PollFailure = null;
+        model.ForgetWithdrawal(wallet.Withdrawals[0].Id);
+
+        // A server error is not a refusal either; a 4xx is.
+        rollup.SubmitFailure = new ShieldedError.BadReply("HTTP 502 from operator");
+        estimate = await model.EstimateUnshield(1, Me.Value);
+        await Assert.ThrowsAsync<ShieldedError.SubmissionPending>(() => model.UnshieldTez(estimate));
+        Assert.Single(store.Load(Me)!.Withdrawals);
+        model.ForgetWithdrawal(store.Load(Me)!.Withdrawals[0].Id);
+        rollup.SubmitFailure = new ShieldedError.Rejected(422, "operator: bad proof");
+        estimate = await model.EstimateUnshield(1, Me.Value);
+        await Assert.ThrowsAsync<ShieldedError.Rejected>(() => model.UnshieldTez(estimate));
+        wallet = store.Load(Me)!;
+        Assert.True(wallet.Withdrawals.Count == 0 && wallet.AvailableMutez == 1_800_000);
     }
 
     [Fact]

@@ -25,29 +25,32 @@ public static class Http
     /// <summary>The cap when a caller names none: an indexer page (upstream's <c>TzKTService.pageBytes</c>).</summary>
     public const int DefaultLimit = 4 << 20;
 
-    public static Task<Reply> Get(HttpClient client, Uri url, TimeSpan? timeout = null, int limit = DefaultLimit, BoundedHTTP.JSONLimits? json = null) =>
-        Send(client, new HttpRequestMessage(HttpMethod.Get, url), timeout, limit, json ?? BoundedHTTP.JSONLimits.Page);
+    public static Task<Reply> Get(HttpClient client, Uri url, TimeSpan? timeout = null, int limit = DefaultLimit, BoundedHTTP.JSONLimits? json = null, CancellationToken cancellation = default) =>
+        Send(client, new HttpRequestMessage(HttpMethod.Get, url), timeout, limit, json ?? BoundedHTTP.JSONLimits.Page, cancellation);
 
-    public static Task<Reply> PostJSON(HttpClient client, Uri url, string body, TimeSpan? timeout = null, int limit = DefaultLimit, BoundedHTTP.JSONLimits? json = null) =>
-        Send(client, new HttpRequestMessage(HttpMethod.Post, url) { Content = new StringContent(body, Encoding.UTF8, "application/json") }, timeout, limit, json ?? BoundedHTTP.JSONLimits.Page);
+    public static Task<Reply> PostJSON(HttpClient client, Uri url, string body, TimeSpan? timeout = null, int limit = DefaultLimit, BoundedHTTP.JSONLimits? json = null, CancellationToken cancellation = default) =>
+        Send(client, new HttpRequestMessage(HttpMethod.Post, url) { Content = new StringContent(body, Encoding.UTF8, "application/json") }, timeout, limit, json ?? BoundedHTTP.JSONLimits.Page, cancellation);
 
     /// <summary>
     /// Sends <c>request</c> and reads the reply through <c>BoundedHTTP</c> (S19): at most <c>limit</c> bytes,
     /// and within <c>json</c>'s budget when one is given (null: the body is not JSON, or not checked).
+    /// Cancelling <c>cancellation</c> abandons the request with <see cref="OperationCanceledException"/>;
+    /// running out of time raises <see cref="TimeoutException"/>.
     /// </summary>
-    public static async Task<Reply> Send(HttpClient client, HttpRequestMessage request, TimeSpan? timeout = null, int limit = DefaultLimit, BoundedHTTP.JSONLimits? json = null)
+    public static async Task<Reply> Send(HttpClient client, HttpRequestMessage request, TimeSpan? timeout = null, int limit = DefaultLimit, BoundedHTTP.JSONLimits? json = null, CancellationToken cancellation = default)
     {
         using var _ = request;
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         // reloadIgnoringLocalCacheData
         request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
-        using var cancel = new CancellationTokenSource(timeout ?? DefaultTimeout);
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        cancel.CancelAfter(timeout ?? DefaultTimeout);
         try
         {
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel.Token);
             return new Reply((int)response.StatusCode, await BoundedHTTP.Read(response, limit, json, cancel.Token));
         }
-        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested && !cancellation.IsCancellationRequested)
         {
             throw new TimeoutException($"The request to {request.RequestUri?.Host} timed out.");
         }

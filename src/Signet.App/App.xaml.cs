@@ -23,15 +23,8 @@ public partial class App : Application
         UnhandledException += (_, e) =>
         {
             // Windows-only: an exception escaping a UI event (an async handler) ends the process with
-            // 0xC000027B and no trace. Keep the details where support can read them.
-            try
-            {
-                var path = Path.Combine(Path.GetDirectoryName(TaquitoBridge.LogFilePath)!, "crash.log");
-                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                File.AppendAllText(path, $"{DateTimeOffset.Now:O} {e.Exception}{Environment.NewLine}{Environment.NewLine}");
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            // 0xC000027B and no trace. Keep the details, redacted and bounded, where support can read them.
+            CrashLog.Append(e.Exception);
         };
     }
 

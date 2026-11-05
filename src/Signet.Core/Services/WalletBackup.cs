@@ -245,7 +245,7 @@ public sealed record WalletBackup(string WalletDirectory, string BackupDirectory
 
     /// <summary>SHA-256 over each saved file's name and contents, so identical wallets compare equal.</summary>
     public static byte[] Fingerprint(string directory) =>
-        Fingerprint(Files.Select(f => (f, PrivateFile.Read(Path.Combine(directory, f)))).Where(p => p.Item2 is not null).Select(p => (p.f, p.Item2!)).ToList());
+        Fingerprint(Files.Select(f => (f, PrivateFile.Read(Path.Combine(directory, f), PrivateFile.ReadLimit(f)))).Where(p => p.Item2 is not null).Select(p => (p.f, p.Item2!)).ToList());
 
     public static byte[] Fingerprint(IReadOnlyList<(string File, byte[] Data)> snapshot)
     {

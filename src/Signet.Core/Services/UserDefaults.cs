@@ -97,6 +97,29 @@ public static class PathUtility
         return full.Length > root.Length ? full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) : full;
     }
 
+    /// <summary>
+    /// <c>path</c> standardized with every link or junction along it followed (upstream
+    /// <c>resolvingSymlinksInPath()</c>), so two spellings of the same folder compare equal.
+    /// A part that cannot be read is left as it is.
+    /// </summary>
+    public static string RealPath(string path)
+    {
+        var full = Standardized(path);
+        var root = Path.GetPathRoot(full) ?? "";
+        var current = root;
+        foreach (var part in full[root.Length..].Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, part);
+            try
+            {
+                FileSystemInfo info = Directory.Exists(current) ? new DirectoryInfo(current) : new FileInfo(current);
+                if (info.LinkTarget is not null && info.ResolveLinkTarget(returnFinalTarget: true) is { } target) current = Standardized(target.FullName);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+        return current;
+    }
+
     /// <summary>Windows paths are case-insensitive.</summary>
     public static bool SamePath(string a, string b) =>
         string.Equals(Standardized(a), Standardized(b), StringComparison.OrdinalIgnoreCase);

@@ -200,6 +200,18 @@ public sealed class TaquitoBridge
 
     private void Post(Action work) => queue.Add(work);
 
+    /// <summary>Tests only: runs <c>script</c> in the loaded context on the bridge thread.</summary>
+    internal Task ExecuteForTesting(string script)
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Post(() =>
+        {
+            try { LoadedEngine().Execute(script); completion.TrySetResult(); }
+            catch (Exception e) { completion.TrySetException(e); }
+        });
+        return completion.Task;
+    }
+
     /// <summary>Forgets a call that never reached JavaScript, so its deadline cannot discard the context.</summary>
     private void Abandon(TaskCompletionSource<JSONValue> completion)
     {
@@ -308,9 +320,37 @@ public sealed class TaquitoBridge
     /// </summary>
     private const string HostScript = """
         var console = (function () {
+          // Objects are never serialised as they are: the dApp SDK hands its transport (whose
+          // client holds the communication key pair) and other state to the console, and a
+          // key written as decimal bytes carries no prefix the line redactor would catch. So
+          // fields whose names say secret are dropped, byte containers become their length,
+          // and depth, width and the total number of nodes are capped (S11).
+          var SENSITIVE = /secret|private|seed|keypair|key_pair|passphrase|password|mnemonic|^sk$|token/i;
+          function isByte(x) { return typeof x === "number" && x >= 0 && x <= 255 && x === (x | 0); }
+          function scrub(a, depth, budget) {
+            if (a === null || typeof a !== "object") return a;
+            if (budget.nodes-- <= 0) return "<…>";
+            if (depth > 6) return "<nested>";
+            if (a instanceof ArrayBuffer || ArrayBuffer.isView(a)) return "<" + a.byteLength + " bytes>";
+            if (Array.isArray(a)) {
+              if (a.length >= 16 && a.every(isByte)) return "<" + a.length + " bytes>";
+              var items = a.slice(0, 64).map(function (x) { return scrub(x, depth + 1, budget); });
+              if (a.length > 64) items.push("<" + (a.length - 64) + " more>");
+              return items;
+            }
+            var keys = Object.keys(a);
+            if (keys.length >= 16 && keys.every(function (k) { return /^\d+$/.test(k); })) return "<" + keys.length + " bytes>";
+            var out = {};
+            for (var i = 0; i < keys.length; i++) {
+              if (i >= 64) { out["…"] = "<" + (keys.length - 64) + " more>"; break; }
+              var k = keys[i];
+              out[k] = SENSITIVE.test(k) ? "<redacted>" : scrub(a[k], depth + 1, budget);
+            }
+            return out;
+          }
           function fmt(args) { return Array.prototype.map.call(args, function (a) {
             if (a instanceof Error) return a.message + (a.stack ? "\n" + a.stack : "");
-            if (typeof a === "object") { try { return JSON.stringify(a); } catch (e) { return String(a); } }
+            if (typeof a === "object") { try { return JSON.stringify(scrub(a, 0, { nodes: 2000 })); } catch (e) { return "<object>"; } }
             return String(a);
           }).join(" "); }
           function log(level) { return function () { __signet_host.log(level, fmt(arguments)); }; }
@@ -683,16 +723,29 @@ public sealed class TaquitoBridge
     private static readonly System.Text.RegularExpressions.Regex LongHex = new("[0-9a-fA-F]{48,}");
     private static readonly System.Text.RegularExpressions.Regex Secrets =
         new(@"\b(edsk|edesk|spsk|spesk|p2sk|p2esk|BLsk|BLesk|mdsk|mdesk|edsig|spsig1|p2sig|BLsig|mdsig|sig)[1-9A-HJ-NP-Za-km-z]{20,}");
+    private static readonly System.Text.RegularExpressions.Regex Uuid =
+        new(@"\b([0-9a-fA-F]{8})-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b");
+    private static readonly System.Text.RegularExpressions.Regex ByteObject =
+        new(@"\{(?:\s*""\d+""\s*:\s*\d{1,3}\s*,){15,}\s*""\d+""\s*:\s*\d{1,3}\s*\}");
+    private static readonly System.Text.RegularExpressions.Regex ByteArray =
+        new(@"\[(?:\s*\d{1,3}\s*,){15,}\s*\d{1,3}\s*\]");
 
     /// <summary>
     /// A log line with anything that could be a secret or private content kept out: at most
-    /// <c>MaxLineLength</c> characters, and hex or base58 runs long enough to be keys, signatures or
-    /// payloads replaced by their length (S11).
+    /// <c>MaxLineLength</c> characters; hex or base58 runs long enough to be keys, signatures or
+    /// payloads replaced by their length; UUIDs cut to their first group (the dApp SDK derives
+    /// a replacement communication key from a UUID seed it prints when the relay account is
+    /// deactivated, and message ids are UUIDs too, so the stub keeps lines tellable apart);
+    /// and runs of decimal bytes, how a key serialises as an object or array, replaced by
+    /// their count (S11).
     /// </summary>
     public static string RedactedLine(string line)
     {
         var text = LongHex.Replace(line, m => $"<{m.Length} hex chars>");
         text = Secrets.Replace(text, m => $"{m.Groups[1].Value}<redacted>");
+        text = Uuid.Replace(text, m => $"<uuid {m.Groups[1].Value}…>");
+        text = ByteObject.Replace(text, m => $"<{m.Value.Split(':').Length - 1} bytes>");
+        text = ByteArray.Replace(text, m => $"<{m.Value.Split(',').Length} bytes>");
         if (text.Length > MaxLineLength) text = text[..MaxLineLength] + "…";
         return text;
     }

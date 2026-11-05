@@ -450,7 +450,7 @@ public sealed class TezosClientStore(string? directory = null) : IWalletStore
         WithWalletLock(directory, () =>
         {
             new TezosClientStore(directory).RecoverIfNeeded();
-            return files.Where(f => File.Exists(Path.Combine(directory, f))).Select(f => (f, File.ReadAllBytes(Path.Combine(directory, f)))).ToList();
+            return files.Select(f => (f, PrivateFile.Read(Path.Combine(directory, f), PrivateFile.ReadLimit(f)))).Where(p => p.Item2 is not null).Select(p => (p.f, p.Item2!)).ToList();
         });
 
     private T WithWalletLock<T>(Func<T> body) => WithWalletLock(Directory, body);

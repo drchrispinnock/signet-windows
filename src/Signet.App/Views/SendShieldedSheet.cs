@@ -38,6 +38,8 @@ public sealed partial class SendShieldedSheet : Sheet
     private SendShieldedReceipt? receipt;
     private CancellationTokenSource? parsing;
     private CancellationTokenSource? estimating;
+    /// <summary>The unacknowledged transfer being handed to the operator again, while it is.</summary>
+    private string? resubmitting;
 
     private readonly ComboBox picker = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly TextBox pastedBox = new()
@@ -220,12 +222,27 @@ public sealed partial class SendShieldedSheet : Sheet
             var to = new TextBlock { Text = $"to {transfer.RecipientName ?? Short(transfer.RecipientFingerprint)}", Foreground = Secondary, VerticalAlignment = VerticalAlignment.Center };
             Grid.SetColumn(to, 1);
             row.Children.Add(to);
-            var state = new TextBlock { Text = transfer.Applied ? "Applied by the rollup" : "With the operator", FontSize = 12, Foreground = Secondary, VerticalAlignment = VerticalAlignment.Center };
+            var state = new TextBlock
+            {
+                Text = transfer.Applied ? "Applied by the rollup" : transfer.Submitted ? "With the operator" : "Handed to the operator, no acknowledgement received",
+                FontSize = 12, Foreground = Secondary, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap,
+            };
             Grid.SetColumn(state, 2);
             row.Children.Add(state);
+            var id = transfer.Id;
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            if (!transfer.Applied && !transfer.Submitted)
+            {
+                if (resubmitting == id) buttons.Children.Add(new ProgressRing { Width = 14, Height = 14, IsActive = true });
+                else
+                {
+                    var again = MakeButton("Submit again", () => _ = Resubmit(id), resubmitting is null && model.CanShield);
+                    ToolTipService.SetToolTip(again, "Hands the same message to the operator again. The rollup cannot spend the notes twice, so a copy that landed after all is simply reported as a duplicate.");
+                    buttons.Children.Add(again);
+                }
+            }
             if (!transfer.Applied && transfer.Created < DateTimeOffset.UtcNow.AddMinutes(-30))
             {
-                var id = transfer.Id;
                 var forget = MakeButton("Forget", () =>
                 {
                     ShowError(null);
@@ -233,8 +250,12 @@ public sealed partial class SendShieldedSheet : Sheet
                     catch (Exception e) { ShowError(e.Message); }
                 });
                 ToolTipService.SetToolTip(forget, "Drops the record and frees its notes. Only for a transfer the operator never delivered; if it lands after all, the notes show as spent on the next refresh.");
-                Grid.SetColumn(forget, 3);
-                row.Children.Add(forget);
+                buttons.Children.Add(forget);
+            }
+            if (buttons.Children.Count > 0)
+            {
+                Grid.SetColumn(buttons, 3);
+                row.Children.Add(buttons);
             }
             sent.Children.Add(row);
         }
@@ -328,5 +349,19 @@ public sealed partial class SendShieldedSheet : Sheet
             throw;
         }
         finally { Render(); }
+    }
+
+    private async Task Resubmit(string id)
+    {
+        ShowError(null);
+        resubmitting = id;
+        Render();
+        try { await model.ResubmitTransfer(id); }
+        catch (Exception e) { ShowError(e.Message); }
+        finally
+        {
+            resubmitting = null;
+            Render();
+        }
     }
 }

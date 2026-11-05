@@ -118,7 +118,7 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 ## Status
 
-The pin is upstream `86b28df` (origin/main, 2026-11-03), and everything up to it is ported: every
+The pin is upstream `b6297c6` (origin/main, 2026-11-05), and everything up to it is ported: every
 feature (TzEL included), the infrastructure behind them, and every upstream test suite (the
 Linux/FreeBSD build commits `698121e`, `7dc82dc`, `461d097`, `436631a`, `78a6098` need nothing
 here). Ported:
@@ -308,6 +308,38 @@ Windows-specific porting notes:
   opens `UpdateSheet`, which also offers what the daily check finds. Only an installed copy
   updates; `SIGNET_UPDATE_SOURCE` points it at a local `vpk pack` folder for testing.
 - The Mac's chmod 600 assertions are dropped (see `TestSupport.cs`).
+- The 5 November 2026 audit (`..\signet-audit`; upstream `audit/AUDIT_20261105.md`, commits
+  `fc84e47`, `de18ad5`, `555311f`) is ported as upstream has it, with `AuditFixTests`:
+  `FileShieldedWalletStore` holds `tzel-<chain>.lock` (an open with no sharing, upstream `lockf`)
+  beneath its in-process lock keyed by the real path (`PathUtility.RealPath`, links and
+  junctions followed), 5 s then `ShieldedError.WalletLocked`; one 128 MB bound for reading and
+  writing the shielded file (`WalletTooLarge`), shared with the backup's snapshot and
+  fingerprint through `PrivateFile.ReadLimit`; `RollupState.Level` bounds; backups after new
+  shielded keys, pools and records; unshield and transfer records (`local:` id, `PayloadHex`,
+  `Submitted`) on file before the operator is contacted, `WalletViewModel.SubmitShielded`,
+  `ShieldedError.Rejected` / `RollupNodeService.IsRejection`, and Submit again
+  (`ResubmitWithdrawal`/`ResubmitTransfer`); the console's object scrub and `RedactedLine`'s UUID
+  and byte-run rules; the plaintext-key and plain-HTTP notes in the sheets. Windows differences:
+  upstream's `ShieldSettingsSheet.plainHTTP` is `ShieldSettingsNotes.PlainHTTP` in Core;
+  `NodeMonitor.probe(session:)` is `ProbeOver(HttpClient)`; the lock test holds the lock file
+  itself rather than from a Python process, and the path-alias test makes a junction when it
+  cannot make a symbolic link; `RollupHead.Level` is an `int`, so the level test's edges are
+  int's. The shield flow also backs up after it spends a key index (Windows addition).
+  Windows-only fixes from the same audit, ahead of upstream:
+  - G03: `FaucetService` has upstream's S21 bounds (it had been ported without them):
+    `Limits`, `Validate`, `Checked`, capped rounds and time, and a cancellable `Solve`. The view
+    model's token reaches the requests and the hashing (`Http.Get`/`PostJSON`/`Send` take a
+    `CancellationToken`). Tests in `FaucetServiceTests`.
+  - G07: `AtomicFile` creates every file with a protected owner-only DACL (the user and SYSTEM)
+    before writing, so a custom wallet or backup folder cannot hand its permissions down.
+    Downloaded NFTs pass `ownerOnly: false`. Test in `StorageAuditRepairTests`.
+  - K02: `CrashLog` (Core) writes `crash.log` through the bridge's redaction and rotates it at
+    1 MB (`LoggingPolicyTests`).
+  - `JSONValue.Array`/`Object` copy the collections they are given.
+  - Not done: T04 (upstream's audit note says Windows runs signing calls one at a time per
+    bridge; it does not yet, see the `TaquitoBridge` note above), and upstream's own open items
+    (G02 master-key encryption, separating the scanned commitments from the key file, E01 to
+    E03 in the Octez Connect SDK).
 
 - `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock
   chain, in-memory accounts (Captain Stake held with a placeholder key, so Baking and Governance

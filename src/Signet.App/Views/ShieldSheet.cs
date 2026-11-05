@@ -51,6 +51,7 @@ public sealed partial class ShieldSheet : Sheet
         compose.Children.Add(FieldWithUnit(amount, "tz"));
         compose.Children.Add(costs);
         compose.Children.Add(Note("The tez leave this account on Tezos into a deposit pool on the TzEL rollup that only this wallet can claim, and are then shielded into a note of yours. The rollup's fee is set at shield time; the shielded amount can differ slightly if it changes."));
+        compose.Children.Add(Note("The shielded spending key is a separate random key kept unencrypted in the wallet directory and its backups, even when this account's own key has a password. The proof of each shield, unshield and transfer is made by the proving service, which sees that transaction's private details."));
         if (NeedsPassphrase && model.SelectedWallet is { } w)
         {
             compose.Children.Add(new TextBlock { Text = $"Password for “{w.Alias}”" });

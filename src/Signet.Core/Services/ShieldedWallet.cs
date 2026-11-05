@@ -100,6 +100,7 @@ public sealed class ShieldedNote
 /// </summary>
 public sealed class ShieldedWithdrawal
 {
+    /// <summary>The operator's id once it has answered; before that a <c>local:</c> id of our own.</summary>
     public string SubmissionID { get; set; } = "";
     public string Recipient { get; set; } = "";
     public string AmountMutez { get; set; } = "0";
@@ -119,11 +120,22 @@ public sealed class ShieldedWithdrawal
     public int? MessageIndex { get; set; }
     /// <summary>The layer 1 operation that executed the outbox message.</summary>
     public string? ExecutedHash { get; set; }
+    /// <summary>The exact kernel message handed to the operator, kept from before it was contacted.</summary>
+    public string? PayloadHex { get; set; }
+    /// <summary>
+    /// The operator acknowledged the submission. <c>false</c> while its reply is unknown: the
+    /// request may still be applied, so the notes stay reserved until the scan sees them
+    /// spent or the user forgets the record. Files written before it was recorded read as submitted.
+    /// </summary>
+    public bool Submitted { get; set; } = true;
 
     [JsonIgnore] public string Id => SubmissionID;
     [JsonIgnore] public ulong Amount => ShieldedWallet.Mutez(AmountMutez);
     [JsonIgnore] public ulong RollupFee => ShieldedWallet.Mutez(RollupFeeMutez);
     [JsonIgnore] public ulong ProducerFee => ShieldedWallet.Mutez(ProducerFeeMutez);
+
+    /// <summary>A <c>local:</c> id for a record written before the operator has answered.</summary>
+    public static string LocalID() => "local:" + Guid.NewGuid().ToString().ToUpperInvariant();
 }
 
 /// <summary>
@@ -132,6 +144,7 @@ public sealed class ShieldedWithdrawal
 /// </summary>
 public sealed class ShieldedTransfer
 {
+    /// <summary>The operator's id once it has answered; before that a <c>local:</c> id of our own.</summary>
     public string SubmissionID { get; set; } = "";
     public string RecipientFingerprint { get; set; } = "";
     /// <summary>The address-book name it was sent to, if any.</summary>
@@ -147,6 +160,10 @@ public sealed class ShieldedTransfer
     public string? OperationHash { get; set; }
     /// <summary>The rollup has spent every input: the recipient has the note.</summary>
     public bool Applied { get; set; }
+    /// <summary>The exact kernel message handed to the operator, kept from before it was contacted.</summary>
+    public string? PayloadHex { get; set; }
+    /// <summary>The operator acknowledged the submission (see <c>ShieldedWithdrawal.Submitted</c>).</summary>
+    public bool Submitted { get; set; } = true;
 
     [JsonIgnore] public string Id => SubmissionID;
     [JsonIgnore] public ulong Amount => ShieldedWallet.Mutez(AmountMutez);
@@ -391,10 +408,27 @@ public sealed class FileShieldedWalletStore(string directory, string chain) : IS
 {
     public string Directory { get; } = directory;
     public string Chain { get; } = chain;
+    /// <summary>
+    /// The most the wallet file may hold, read or written: a file is never replaced by one
+    /// Signet could not read back (the key file and the scanned commitments share it).
+    /// </summary>
+    public int MaxBytes { get; init; } = DefaultMaxBytes;
+    /// <summary>How long to wait for another process holding the lock file.</summary>
+    public TimeSpan LockTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// One rule with every reader that takes the file by name (the backup's snapshot and
+    /// fingerprint), so a wallet the store accepts is one the backup saves.
+    /// </summary>
+    public const int DefaultMaxBytes = PrivateFile.LargeStateBytes;
 
     /// <summary>
     /// One lock per wallet file in this process: the scan writes from its own task while the
-    /// UI thread spends key indexes, and each must see the other's write.
+    /// UI thread spends key indexes, and each must see the other's write. Beneath it the lock
+    /// <i>file</i> (like the wallet's <c>wallet_lock</c>) excludes other processes: a second Signet,
+    /// a port or a tool on the same directory would otherwise read the same next key index and
+    /// both spend it, and a WOTS+ key must never sign twice. Upstream holds it with <c>lockf</c>;
+    /// Windows opens it with no sharing.
     /// </summary>
     private static readonly Dictionary<string, Lock> FileLocks = new(StringComparer.OrdinalIgnoreCase);
 
@@ -403,24 +437,46 @@ public sealed class FileShieldedWalletStore(string directory, string chain) : IS
         Lock gate;
         lock (FileLocks)
         {
-            var key = Path.GetFullPath(WalletPath);
+            // The real path (links and junctions followed): two stores reaching the same file
+            // through different paths share the one lock.
+            var key = Path.Combine(PathUtility.RealPath(Directory), WalletFile(Chain));
             if (!FileLocks.TryGetValue(key, out gate!)) FileLocks[key] = gate = new Lock();
         }
-        lock (gate) return body();
+        lock (gate) return WithFileLock(LockPath, LockTimeout, body);
     }
 
     private void Locked(Action body) => Locked(() => { body(); return 0; });
 
+    /// <summary>
+    /// Holds <c>path</c> (created if need be) open with no sharing while <c>body</c> runs; another
+    /// process holding it is waited for up to <c>timeout</c>, then <c>ShieldedError.WalletLocked</c>.
+    /// </summary>
+    public static T WithFileLock<T>(string path, TimeSpan timeout, Func<T> body)
+    {
+        if (Path.GetDirectoryName(path) is { Length: > 0 } folder) System.IO.Directory.CreateDirectory(folder);
+        var deadline = DateTime.UtcNow + timeout;
+        while (true)
+        {
+            FileStream handle;
+            try { handle = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException) when (DateTime.UtcNow < deadline) { Thread.Sleep(50); continue; }
+            catch (IOException) { throw new ShieldedError.WalletLocked(); }
+            using (handle) return body();
+        }
+    }
+
     public static string WalletFile(string chain) => $"tzel-{chain}.json";
+    public static string LockFile(string chain) => $"tzel-{chain}.lock";
     public static string LeavesFile(string chain, Address account, int addressIndex) => $"tzel-{chain}-{account.Value}-auth{addressIndex}.bin";
     /// <summary>Where a version 1 file kept its one address's leaves.</summary>
     public static string LegacyLeavesFile(string chain, int addressIndex) => $"tzel-{chain}-auth{addressIndex}.bin";
 
     private string WalletPath => Path.Combine(Directory, WalletFile(Chain));
+    private string LockPath => Path.Combine(Directory, LockFile(Chain));
 
     private ShieldedWalletFile? Read()
     {
-        if (PrivateFile.Read(WalletPath) is not { } data) return null;
+        if (PrivateFile.Read(WalletPath, MaxBytes) is not { } data) return null;
         var header = JsonNode.Parse(data) as JsonObject;
         var version = header?["version"] is JsonValue v && v.TryGetValue<int>(out var n) ? n : 0;
         switch (version)
@@ -441,7 +497,13 @@ public sealed class FileShieldedWalletStore(string directory, string chain) : IS
         }
     }
 
-    private void Write(ShieldedWalletFile file) => PrivateFile.Write(WalletPath, ShieldedJSON.Encode(file));
+    private void Write(ShieldedWalletFile file)
+    {
+        var data = ShieldedJSON.Encode(file);
+        // Never replace a readable file with one the reader would refuse (S10).
+        if (data.Length > MaxBytes) throw new ShieldedError.WalletTooLarge(data.Length, MaxBytes);
+        PrivateFile.Write(WalletPath, data);
+    }
 
     public ShieldedWallet? Load(Address account) => Locked(() => Read()?.Accounts.GetValueOrDefault(account.Value));
 
@@ -605,6 +667,16 @@ public abstract class ShieldedError(string message) : Exception(message), IEquat
     public sealed class BadPaymentAddress(string detail) : ShieldedError($"That is not a shielded payment address: {detail}");
     public sealed class ContactExists(string name) : ShieldedError($"That shielded address is already in the address book as “{name}”.");
     public sealed class MemoTooLong() : ShieldedError("The memo must be at most 1024 bytes.");
+    /// <summary>Another process holds the shielded wallet file's lock.</summary>
+    public sealed class WalletLocked() : ShieldedError("Another program is using the shielded wallet file. Try again in a moment.");
+    /// <summary>The wallet file would be larger than Signet reads back; nothing was written.</summary>
+    public sealed class WalletTooLarge(int bytes, int limit)
+        : ShieldedError($"The shielded wallet file would be {bytes >> 20} MB, more than the {limit >> 20} MB Signet reads back. Nothing was written.");
+    /// <summary>A service answered with a client error other than an access refusal: it did not take the request.</summary>
+    public sealed class Rejected(int status, string detail) : ShieldedError($"The request was rejected (HTTP {status}) by {detail}. Nothing was taken.")
+    {
+        public int Status { get; } = status;
+    }
     /// <summary>The operator still has it: not a failure, but not delivered within the wait either.</summary>
     public sealed class SubmissionPending(string detail)
         : ShieldedError($"The operator has the request but has not delivered it to the rollup yet: {detail}. It stays listed; refresh later.");

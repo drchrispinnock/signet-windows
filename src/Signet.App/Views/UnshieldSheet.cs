@@ -29,6 +29,8 @@ public sealed partial class UnshieldSheet : Sheet
     private UnshieldReceipt? receipt;
     private WithdrawalExecutionEstimate? execution;
     private string? executing;
+    /// <summary>The unacknowledged withdrawal being handed to the operator again, while it is.</summary>
+    private string? resubmitting;
     private string executionPassphrase = "";
     private CancellationTokenSource? estimating;
     private readonly StackPanel sides = new();
@@ -199,13 +201,29 @@ public sealed partial class UnshieldSheet : Sheet
         {
             case ShieldedWithdrawalStatus.WithdrawalState.Ready when execution?.Withdrawal.Id != status.Id:
                 return MakeButton("Execute…", () => _ = PrepareExecution(status.Id), executing is null && model.CanShield);
+            case ShieldedWithdrawalStatus.WithdrawalState.Unconfirmed:
+                var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                if (resubmitting == status.Id) buttons.Children.Add(new ProgressRing { Width = 14, Height = 14, IsActive = true });
+                else
+                {
+                    var again = MakeButton("Submit again", () => _ = Resubmit(status.Id), resubmitting is null && model.CanShield);
+                    ToolTipService.SetToolTip(again, "Hands the same message to the operator again. The rollup cannot spend the notes twice, so a copy that landed after all is simply reported as a duplicate.");
+                    buttons.Children.Add(again);
+                }
+                if (status.Withdrawal.Created < DateTimeOffset.UtcNow.AddMinutes(-30)) buttons.Children.Add(ForgetButton(status.Id));
+                return buttons;
             case ShieldedWithdrawalStatus.WithdrawalState.Submitted when status.Withdrawal.Created < DateTimeOffset.UtcNow.AddMinutes(-30):
-                var forget = MakeButton("Forget", () => Forget(status.Id));
-                ToolTipService.SetToolTip(forget, "Drops the record and frees its notes. Only for an unshield the operator never delivered; if it lands after all, the notes show as spent on the next refresh.");
-                return forget;
+                return ForgetButton(status.Id);
             default:
                 return null;
         }
+    }
+
+    private Button ForgetButton(string id)
+    {
+        var forget = MakeButton("Forget", () => Forget(id));
+        ToolTipService.SetToolTip(forget, "Drops the record and frees its notes. Only for an unshield the operator never delivered; if it lands after all, the notes show as spent on the next refresh.");
+        return forget;
     }
 
     private void RenderResult()
@@ -306,5 +324,19 @@ public sealed partial class UnshieldSheet : Sheet
         try { model.ForgetWithdrawal(id); }
         catch (Exception e) { ShowError(e.Message); }
         Render();
+    }
+
+    private async Task Resubmit(string id)
+    {
+        ShowError(null);
+        resubmitting = id;
+        Render();
+        try { await model.ResubmitWithdrawal(id); }
+        catch (Exception e) { ShowError(e.Message); }
+        finally
+        {
+            resubmitting = null;
+            Render();
+        }
     }
 }

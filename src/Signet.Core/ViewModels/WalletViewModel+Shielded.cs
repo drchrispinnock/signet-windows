@@ -70,6 +70,8 @@ public sealed record ShieldedWithdrawalStatus(ShieldedWithdrawal Withdrawal, int
 
     public abstract record WithdrawalState
     {
+        /// <summary>Handed to the operator, whose answer was lost: it may yet be applied.</summary>
+        public sealed record Unconfirmed : WithdrawalState;
         /// <summary>With the operator; the rollup has not spent the notes yet.</summary>
         public sealed record Submitted : WithdrawalState;
         /// <summary>Applied by the rollup; its outbox message has not been found yet.</summary>
@@ -86,7 +88,7 @@ public sealed record ShieldedWithdrawalStatus(ShieldedWithdrawal Withdrawal, int
         get
         {
             if (Withdrawal.ExecutedHash is { } hash) return new WithdrawalState.Executed(hash);
-            if (!Withdrawal.Applied) return new WithdrawalState.Submitted();
+            if (!Withdrawal.Applied) return Withdrawal.Submitted ? new WithdrawalState.Submitted() : new WithdrawalState.Unconfirmed();
             if (Withdrawal.OutboxLevel is not { } level || CementedLevel is not { } cemented) return new WithdrawalState.Queued();
             return cemented >= level ? new WithdrawalState.Ready() : new WithdrawalState.Waiting(level - cemented);
         }
@@ -94,6 +96,7 @@ public sealed record ShieldedWithdrawalStatus(ShieldedWithdrawal Withdrawal, int
 
     public string Text => State switch
     {
+        WithdrawalState.Unconfirmed => "Handed to the operator, no acknowledgement received; the notes stay reserved until the rollup applies it or you forget it",
         WithdrawalState.Submitted => "With the operator",
         WithdrawalState.Queued => "Applied by the rollup, outbox message not found yet",
         WithdrawalState.Waiting w => $"Waiting for the rollup commitment to be cemented (about {Days(w.BlocksLeft)})",
@@ -346,7 +349,7 @@ public sealed partial class WalletViewModel
     private static AssetBalance ShieldedRow(ShieldedWallet? wallet, IReadOnlyList<ShieldedPoolStatus> pools, string? unavailable = null)
     {
         var details = new List<AssetBalance.Detail>();
-        var pooled = pools.Select(p => p.BalanceMutez ?? 0).Aggregate(0UL, (a, b) => a + b);
+        var pooled = pools.Select(p => p.BalanceMutez ?? 0).Aggregate(0UL, (a, b) => a > ulong.MaxValue - b ? ulong.MaxValue : a + b);
         if (pooled > 0) details.Add(new AssetBalance.Detail("pooled", "In deposit pools, not yet shielded", pooled / Mutez.PerTez));
         if (wallet?.ReservedMutez is > 0 and var reserved) details.Add(new AssetBalance.Detail("unshielding", "Leaving in an unshield or transfer, not yet applied", reserved / Mutez.PerTez));
         return new AssetBalance("shielded", new AssetBalance.AssetKind.Shielded(), "Shielded", "tz", wallet?.Balance ?? 0) { Details = details, Unavailable = unavailable };
@@ -544,8 +547,37 @@ public sealed partial class WalletViewModel
             }) ?? throw new ShieldedError.TreeMissing(0);
         }
         ShieldedWallet = wallet;
+        // A new master key or first address is backed up at once, not on the next launch.
+        if (rounds > 0) await BackUp();
         return wallet;
     }
+
+    /// <summary>
+    /// Hands a kernel message to the operator. Only a first attempt may supply <c>drop</c>:
+    /// a definite refusal of that attempt releases its record. Retries omit it, because
+    /// refusing a retry says nothing about whether an earlier attempt was accepted.
+    /// Every uncertain outcome keeps the record and its note reservations.
+    /// </summary>
+    public static async Task<OperatorSubmission> SubmitShielded(string record, Action? drop, Func<Task<OperatorSubmission>> submit)
+    {
+        try
+        {
+            return await submit();
+        }
+        catch (Exception error)
+        {
+            if (drop is not null && error is ShieldedError.OperatorRefused or ShieldedError.Rejected)
+            {
+                try { drop(); } catch (Exception) { }
+                throw;
+            }
+            var stub = record.Length > 6 ? record[6..][..Math.Min(8, record.Length - 6)] : "";
+            throw new ShieldedError.SubmissionPending($"{error.Message}; the request {stub}… stays listed with its notes reserved until the rollup applies it or you forget it");
+        }
+    }
+
+    /// <summary><c>SubmitShielded</c> for a retry: no record is dropped, whatever the answer.</summary>
+    public static Task<OperatorSubmission> SubmitShielded(string record, Func<Task<OperatorSubmission>> submit) => SubmitShielded(record, null, submit);
 
     /// <summary>
     /// Address <c>index</c> of <c>wallet</c>: its keys from the bridge, its signing tree built natively
@@ -655,6 +687,7 @@ public sealed partial class WalletViewModel
             };
             // The pool is on file before any tez go to it.
             ShieldedWallet = store.Update(account, null, latest => latest.Pools.Add(pool)) ?? throw new ShieldedError.TreeMissing(0);
+            await BackUp();
             return pool;
         }
         finally { ShieldProgress = null; }
@@ -709,7 +742,8 @@ public sealed partial class WalletViewModel
                 if (latest.Pool(approved.Pool.PubkeyHash) is null) latest.Pools.Add(ShieldedJSON.Clone(approved.Pool));
                 if (latest.Pool(approved.Pool.PubkeyHash) is not { } pool) return;
                 pool.OperationHash = sent.Hash;
-                pool.DepositedMutez = (ShieldedWallet.Mutez(pool.DepositedMutez) + added).ToString(CultureInfo.InvariantCulture);
+                var deposited = ShieldedWallet.Mutez(pool.DepositedMutez);
+                pool.DepositedMutez = (deposited > ulong.MaxValue - added ? ulong.MaxValue : deposited + added).ToString(CultureInfo.InvariantCulture);
             });
             if (funded is not null) ShieldedWallet = funded;
             ShieldProgress = new ShieldProgress.WaitingForLayer1();
@@ -777,6 +811,8 @@ public sealed partial class WalletViewModel
             if (spent?.AddressAt(pool.AddressIndex) is not { } address) throw new ShieldedError.PoolUnknown(pubkeyHash);
             wallet = spent;
             ShieldedWallet = wallet;
+            // Windows addition (audit G09): the spent key index is backed up before it signs.
+            await BackUp();
 
             var leaves = await LeavesOf(address, wallet, account);
             var pubSeed = HexBytes.Decode(address.PubSeed) ?? throw new ShieldedError.TreeMissing(address.Index);
@@ -939,30 +975,41 @@ public sealed partial class WalletViewModel
                 throw new ShieldedError.BadReply($"unshield message: {Truncate(encoded.JsonText, 200)}");
 
             ShieldProgress = new ShieldProgress.SubmittingUnshield();
-            var submission = await rollup.Submit("unshield", payload, config.RollupAddress, token);
-            // On file as soon as the operator has it: the inputs are reserved from here.
+            // On file, payload included, before the operator is contacted (S15 for shielded
+            // spends): the inputs are reserved from here, whatever the network does next.
+            var localID = ShieldedWithdrawal.LocalID();
             var withdrawal = new ShieldedWithdrawal
             {
-                SubmissionID = submission.Id, Recipient = approved.Recipient, AmountMutez = approved.AmountMutez.ToString(CultureInfo.InvariantCulture),
+                SubmissionID = localID, Recipient = approved.Recipient, AmountMutez = approved.AmountMutez.ToString(CultureInfo.InvariantCulture),
                 RollupFeeMutez = spend.Fee.ToString(CultureInfo.InvariantCulture), ProducerFeeMutez = config.ProducerFeeMutez.ToString(CultureInfo.InvariantCulture),
-                Nullifiers = nullifiers, ChangeCm = changeCm, SubmittedLevel = spend.Head.Level, Created = DateTimeOffset.UtcNow, OperationHash = submission.OperationHash,
+                Nullifiers = nullifiers, ChangeCm = changeCm, SubmittedLevel = spend.Head.Level, Created = DateTimeOffset.UtcNow,
+                PayloadHex = payload, Submitted = false,
             };
             UpdateWithdrawals(account, store, list => list.Add(ShieldedJSON.Clone(withdrawal)));
+            await BackUp();
+            var submission = await SubmitShielded(localID, () => UpdateWithdrawals(account, store, list => list.RemoveAll(w => w.Id == localID)),
+                () => rollup.Submit("unshield", payload, config.RollupAddress, token));
+            withdrawal.SubmissionID = submission.Id;
+            withdrawal.Submitted = true;
+            withdrawal.OperationHash = submission.OperationHash;
+            var acknowledged = ShieldedJSON.Clone(withdrawal);
+            UpdateWithdrawals(account, store, list => { var at = list.FindIndex(w => w.Id == localID); if (at >= 0) list[at] = ShieldedJSON.Clone(acknowledged); });
             try
             {
                 var delivered = await rollup.AwaitDelivery(submission, token);
                 withdrawal.OperationHash = delivered.OperationHash;
                 UpdateWithdrawals(account, store, list => { if (list.FirstOrDefault(w => w.Id == withdrawal.Id) is { } w) w.OperationHash = withdrawal.OperationHash; });
             }
-            catch (ShieldedError.SubmissionPending)
+            catch (ShieldedError.SubmissionFailed)
             {
-                // Still with the operator: the record stays, the scan will see it land.
+                // The operator says it gave up on it: the notes are free again.
+                try { UpdateWithdrawals(account, store, list => list.RemoveAll(w => w.Id == submission.Id)); } catch (Exception) { }
+                throw;
             }
             catch (Exception)
             {
-                // The operator gave up on it: the notes are free again.
-                try { UpdateWithdrawals(account, store, list => list.RemoveAll(w => w.Id == submission.Id)); } catch (Exception) { }
-                throw;
+                // Still with the operator, or its answer could not be read: the record stays and
+                // the notes stay reserved; the scan sees it land, or Forget frees them by hand.
             }
             await RefreshAfterOperation();
             return new UnshieldReceipt(withdrawal, change);
@@ -1143,6 +1190,7 @@ public sealed partial class WalletViewModel
             var saved = store.Update(account, null, latest => { if (latest.AddressAt(made.Index) is null) latest.Addresses.Add(ShieldedJSON.Clone(made)); })
                 ?? throw new ShieldedError.TreeMissing(index);
             ShieldedWallet = saved;
+            await BackUp();
             return await ReceiveAddress(saved.AddressAt(index) ?? made);
         }
         finally { ShieldProgress = null; }
@@ -1229,35 +1277,101 @@ public sealed partial class WalletViewModel
                 throw new ShieldedError.BadReply($"transfer message: {Truncate(encoded.JsonText, 200)}");
 
             ShieldProgress = new ShieldProgress.SubmittingTransfer();
-            var submission = await rollup.Submit("transfer", payload, config.RollupAddress, token);
+            var localID = ShieldedWithdrawal.LocalID();
             var transfer = new ShieldedTransfer
             {
-                SubmissionID = submission.Id, RecipientFingerprint = approved.Recipient.Fingerprint,
+                SubmissionID = localID, RecipientFingerprint = approved.Recipient.Fingerprint,
                 RecipientName = approved.Recipient.Name.Length == 0 ? null : approved.Recipient.Name,
                 AmountMutez = approved.AmountMutez.ToString(CultureInfo.InvariantCulture), RollupFeeMutez = spend.Fee.ToString(CultureInfo.InvariantCulture),
                 ProducerFeeMutez = config.ProducerFeeMutez.ToString(CultureInfo.InvariantCulture), Memo = approved.Memo, Nullifiers = nullifiers,
-                RecipientCm = cms[0], ChangeCm = cms[1], Created = DateTimeOffset.UtcNow, OperationHash = submission.OperationHash,
+                RecipientCm = cms[0], ChangeCm = cms[1], Created = DateTimeOffset.UtcNow, PayloadHex = payload, Submitted = false,
             };
             UpdateTransfers(account, store, list => list.Add(ShieldedJSON.Clone(transfer)));
+            await BackUp();
+            var submission = await SubmitShielded(localID, () => UpdateTransfers(account, store, list => list.RemoveAll(t => t.Id == localID)),
+                () => rollup.Submit("transfer", payload, config.RollupAddress, token));
+            transfer.SubmissionID = submission.Id;
+            transfer.Submitted = true;
+            transfer.OperationHash = submission.OperationHash;
+            var acknowledged = ShieldedJSON.Clone(transfer);
+            UpdateTransfers(account, store, list => { var at = list.FindIndex(t => t.Id == localID); if (at >= 0) list[at] = ShieldedJSON.Clone(acknowledged); });
             try
             {
                 var delivered = await rollup.AwaitDelivery(submission, token);
                 transfer.OperationHash = delivered.OperationHash;
                 UpdateTransfers(account, store, list => { if (list.FirstOrDefault(t => t.Id == transfer.Id) is { } t) t.OperationHash = transfer.OperationHash; });
             }
-            catch (ShieldedError.SubmissionPending)
-            {
-                // Still with the operator: the record stays, the scan will see it land.
-            }
-            catch (Exception)
+            catch (ShieldedError.SubmissionFailed)
             {
                 try { UpdateTransfers(account, store, list => list.RemoveAll(t => t.Id == submission.Id)); } catch (Exception) { }
                 throw;
+            }
+            catch (Exception)
+            {
+                // Still with the operator, or its answer could not be read: the record and its
+                // reservation stay (see the unshield).
             }
             await RefreshAfterOperation();
             return new SendShieldedReceipt(transfer);
         }
         finally { ShieldProgress = null; }
+    }
+
+    /// <summary>
+    /// Hands an unacknowledged unshield (a <c>local:</c> record whose first submission got no
+    /// answer) to the operator again, with the exact payload kept from the first attempt. The
+    /// same message cannot spend the notes twice: the rollup refuses a repeated nullifier, so
+    /// at worst the operator reports the duplicate as failed and the scan settles it.
+    /// </summary>
+    public async Task ResubmitWithdrawal(string id)
+    {
+        var config = CurrentShieldedConfig;
+        if (SelectedWallet?.Address is not { } account) throw new WalletError.EmptyAlias();
+        var store = ShieldedStoreFor(Network.Chain);
+        if (store.Load(account)?.Withdrawals.FirstOrDefault(w => w.Id == id) is not { } record) throw new ShieldedError.WithdrawalUnknown(id);
+        if (record.Submitted || record.PayloadHex is not { } payload) throw new ShieldedError.WithdrawalNotReady("the operator has acknowledged it already");
+        if (store.OperatorToken() is not { Length: > 0 } token) throw new ShieldedError.OperatorTokenMissing();
+        var rollup = shieldedRollupFactory(config);
+        ShieldProgress = new ShieldProgress.SubmittingUnshield();
+        try
+        {
+            var submission = await SubmitShielded(id, () => rollup.Submit("unshield", payload, config.RollupAddress, token));
+            UpdateWithdrawals(account, store, list =>
+            {
+                if (list.FirstOrDefault(w => w.Id == id) is not { } w) return;
+                w.SubmissionID = submission.Id;
+                w.Submitted = true;
+                w.OperationHash = submission.OperationHash;
+            });
+        }
+        finally { ShieldProgress = null; }
+        await RefreshAfterOperation();
+    }
+
+    /// <summary><c>ResubmitWithdrawal</c> for a shielded transfer.</summary>
+    public async Task ResubmitTransfer(string id)
+    {
+        var config = CurrentShieldedConfig;
+        if (SelectedWallet?.Address is not { } account) throw new WalletError.EmptyAlias();
+        var store = ShieldedStoreFor(Network.Chain);
+        if (store.Load(account)?.Transfers.FirstOrDefault(t => t.Id == id) is not { } record) throw new ShieldedError.WithdrawalUnknown(id);
+        if (record.Submitted || record.PayloadHex is not { } payload) throw new ShieldedError.WithdrawalNotReady("the operator has acknowledged it already");
+        if (store.OperatorToken() is not { Length: > 0 } token) throw new ShieldedError.OperatorTokenMissing();
+        var rollup = shieldedRollupFactory(config);
+        ShieldProgress = new ShieldProgress.SubmittingTransfer();
+        try
+        {
+            var submission = await SubmitShielded(id, () => rollup.Submit("transfer", payload, config.RollupAddress, token));
+            UpdateTransfers(account, store, list =>
+            {
+                if (list.FirstOrDefault(t => t.Id == id) is not { } t) return;
+                t.SubmissionID = submission.Id;
+                t.Submitted = true;
+                t.OperationHash = submission.OperationHash;
+            });
+        }
+        finally { ShieldProgress = null; }
+        await RefreshAfterOperation();
     }
 
     /// <summary>Drops a transfer the rollup has not applied, freeing its notes (see <c>ForgetWithdrawal</c>).</summary>

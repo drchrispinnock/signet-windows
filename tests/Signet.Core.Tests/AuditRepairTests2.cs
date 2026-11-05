@@ -105,24 +105,24 @@ public class BoundedHTTPTests
     [Fact]
     public async Task DeclaredAndUndeclaredOversizeRepliesAreRefused()
     {
-        Assert.Equal(4096, (await Assert.ThrowsAsync<BoundedHTTP.Failure.TooLarge>(() => Http.Get(Session, Request("/declared-large"), limit: 4096))).Limit);
-        Assert.Equal(4096, (await Assert.ThrowsAsync<BoundedHTTP.Failure.TooLarge>(() => Http.Get(Session, Request("/chunked-large"), limit: 4096))).Limit);
+        Assert.Equal(4096, (await Assert.ThrowsAsync<BoundedHTTP.Failure.TooLarge>(() => Http.Get(Session, Request("/declared-large"), limit: 4096, cancellation: TestContext.Current.CancellationToken))).Limit);
+        Assert.Equal(4096, (await Assert.ThrowsAsync<BoundedHTTP.Failure.TooLarge>(() => Http.Get(Session, Request("/chunked-large"), limit: 4096, cancellation: TestContext.Current.CancellationToken))).Limit);
     }
 
     [Fact]
     public async Task ExcessiveNestingIsRefusedBeforeParsing()
     {
-        await Assert.ThrowsAsync<BoundedHTTP.Failure.OverBudget>(() => Http.Get(Session, Request("/deep"), limit: 4096, json: BoundedHTTP.JSONLimits.Small));
-        var raw = await Http.Get(Session, Request("/deep"), limit: 4096, json: BoundedHTTP.JSONLimits.Unchecked);
+        await Assert.ThrowsAsync<BoundedHTTP.Failure.OverBudget>(() => Http.Get(Session, Request("/deep"), limit: 4096, json: BoundedHTTP.JSONLimits.Small, cancellation: TestContext.Current.CancellationToken));
+        var raw = await Http.Get(Session, Request("/deep"), limit: 4096, json: BoundedHTTP.JSONLimits.Unchecked, cancellation: TestContext.Current.CancellationToken);
         Assert.Equal(1000, raw.Body.Length);
     }
 
     [Fact]
     public async Task FittingRepliesPassWithTheirStatus()
     {
-        var reply = await Http.Get(Session, Request("/small"), limit: 4096);
+        var reply = await Http.Get(Session, Request("/small"), limit: 4096, cancellation: TestContext.Current.CancellationToken);
         Assert.True(reply.IsSuccess && reply.Text == "\"NetXdQprcVkpaWU\"");
-        var missing = await Http.Get(Session, Request("/nothing"), limit: 4096);
+        var missing = await Http.Get(Session, Request("/nothing"), limit: 4096, cancellation: TestContext.Current.CancellationToken);
         Assert.True(missing.Status == 404 && !missing.IsSuccess);
     }
 
@@ -132,7 +132,7 @@ public class BoundedHTTPTests
         foreach (var path in new[] { "/pending-large", "/pending-chunked" })
         {
             var url = Request(path + "?id=" + Guid.NewGuid());
-            await Assert.ThrowsAsync<BoundedHTTP.Failure.TooLarge>(() => Http.Get(Session, url, TimeSpan.FromSeconds(3), limit: 4096));
+            await Assert.ThrowsAsync<BoundedHTTP.Failure.TooLarge>(() => Http.Get(Session, url, TimeSpan.FromSeconds(3), limit: 4096, cancellation: TestContext.Current.CancellationToken));
             for (var i = 0; i < 50 && !BoundedHTTPHandler.WasStopped(url); i++) await Task.Delay(10, TestContext.Current.CancellationToken);
             Assert.True(BoundedHTTPHandler.WasStopped(url), "An over-budget response must stop even before the server finishes");
         }
@@ -145,9 +145,9 @@ public class BoundedHTTPTests
         var error = await Assert.ThrowsAsync<BoundedHTTP.Failure.TooLarge>(() =>
             new TzKTService(new Uri("https://bounded.invalid/declared-large"), Session).AccountProfileFor(new Address("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb")));
         Assert.Equal(TzKTService.RecordBytes, error.Limit);
-        // A node's reply is refused when it is anything but small (the probe's cap; upstream reaches
-        // NodeMonitor's probe on the shared session, which cannot be stubbed here).
-        await Assert.ThrowsAsync<BoundedHTTP.Failure.TooLarge>(() => Http.Get(Session, Request("/declared-large"), limit: 16 << 10, json: BoundedHTTP.JSONLimits.Unchecked));
+        // The node monitor's probe refuses a block header that is anything but small (the probe
+        // is built on this test's session, so the canned reply is what it reads).
+        await Assert.ThrowsAnyAsync<BoundedHTTP.Failure>(() => NodeMonitor.ProbeOver(Session)(Request("/declared-large")));
         // Rows beyond the requested page size are dropped even when the server sends more.
         var rows = await new TzKTService(new Uri("https://bounded.invalid/rows"), Session).RecentOperationsFor(new Address("tz1a"), 10);
         Assert.Equal(10, rows.Count);
@@ -201,6 +201,65 @@ public class LoggingPolicyTests
                 Assert.True(line.Length <= TaquitoBridge.MaxLineLength + 1);
                 Assert.Contains(line, text);
             }
+        }
+        finally { try { Directory.Delete(directory, recursive: true); } catch (IOException) { } }
+    }
+
+    /// <summary>
+    /// Audit K01: the two forms the Octez Connect SDK logs communication keys in. A replacement
+    /// key's seed is a UUID (E01), and a transport object carries its key pair as typed arrays,
+    /// which <c>JSON.stringify</c> writes as decimal bytes (E02). Neither reaches any sink.
+    /// </summary>
+    [Fact]
+    public async Task SDKSeedsAndKeyBytesAreKeptOutOfEverySink()
+    {
+        const string seed = "3f2b8c1e-9d4a-4e7b-b6c5-0a1d2e3f4a5b";
+        Assert.Equal("seed <uuid 3f2b8c1e…> stored", TaquitoBridge.RedactedLine($"seed {seed} stored"));
+        var bytes = string.Join(",", Enumerable.Range(200, 32));
+        var asObject = "{" + string.Join(",", Enumerable.Range(0, 32).Select(i => $"\"{i}\":{200 + i % 50}")) + "}";
+        Assert.Equal("key <32 bytes>", TaquitoBridge.RedactedLine($"key [{bytes}]"));
+        Assert.Equal("{\"secretKey\":<32 bytes>}", TaquitoBridge.RedactedLine("{\"secretKey\":" + asObject + "}"));
+        // Short arrays (amounts, counters) are left alone.
+        Assert.Equal("[1,2,3]", TaquitoBridge.RedactedLine("[1,2,3]"));
+
+        var sink = new List<string>();
+        var bridge = new TaquitoBridge(systemLog: line => { lock (sink) sink.Add(line); });
+        await bridge.ExecuteForTesting($$"""
+            var secret = new Uint8Array(64); for (var i = 0; i < 64; i++) secret[i] = 100 + i;
+            console.warn("new seed", "{{seed}}");
+            console.log("transport", { client: { keyPair: { publicKey: "edpkPublic", secretKey: secret } }, listeners: 2 });
+            console.log("bytes", { data: secret, privateKey: "plain-private-text" });
+            """);
+        var lines = bridge.ConsoleLines;
+        lock (sink) Assert.Equal(lines, sink);
+        var joined = string.Join("\n", lines);
+        Assert.DoesNotContain("3f2b8c1e-9d4a", joined);
+        Assert.DoesNotContain("\"0\":100", joined);
+        Assert.DoesNotContain("plain-private-text", joined);
+        Assert.Contains(lines, l => l.Contains("transport", StringComparison.Ordinal) && l.Contains("\"listeners\":2", StringComparison.Ordinal));
+        Assert.Contains(lines, l => l.Contains("\"data\":\"<64 bytes>\"", StringComparison.Ordinal));
+    }
+
+    /// <summary>Audit K02: the crash log goes through the same redaction, nested exceptions included, and rotates.</summary>
+    [Fact]
+    public void CrashLogIsRedactedAndBounded()
+    {
+        var inner = new InvalidOperationException($"bad key {Key}");
+        var text = CrashLog.Format(new Exception("outer 3f2b8c1e-9d4a-4e7b-b6c5-0a1d2e3f4a5b", inner), DateTimeOffset.UnixEpoch);
+        Assert.DoesNotContain(Key, text);
+        Assert.DoesNotContain("3f2b8c1e-9d4a", text);
+        Assert.Contains("edsk<redacted>", text);
+        Assert.Contains("InvalidOperationException", text);
+
+        var directory = Path.Combine(Path.GetTempPath(), "signet-crash-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var file = Path.Combine(directory, "crash.log");
+            Directory.CreateDirectory(directory);
+            File.WriteAllBytes(file, new byte[CrashLog.MaxBytes + 1]);
+            CrashLog.Append(inner, file);
+            Assert.Equal(CrashLog.MaxBytes + 1, new FileInfo(file + ".1").Length);
+            Assert.Contains("edsk<redacted>", File.ReadAllText(file));
         }
         finally { try { Directory.Delete(directory, recursive: true); } catch (IOException) { } }
     }

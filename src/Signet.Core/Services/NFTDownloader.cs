@@ -73,7 +73,8 @@ public sealed class NFTDownloader
         var name = FileName(nft, fetched.ContentType, usesArtifact ? nft.ArtifactMime : null, from);
         System.IO.Directory.CreateDirectory(Directory);
         var file = Path.Combine(Directory, name);
-        AtomicFile.WriteAllBytes(file, fetched.Data);
+        // Artwork is the user's to share: the folder's own permissions, not a private DACL.
+        AtomicFile.WriteAllBytes(file, fetched.Data, ownerOnly: false);
         return file;
     }
 

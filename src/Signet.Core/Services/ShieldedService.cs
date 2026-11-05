@@ -289,6 +289,9 @@ public static class RollupState
     public static string Indexed(string prefix, int index) => prefix + ((ulong)index).ToString("x16", CultureInfo.InvariantCulture);
     public static string DepositBalance(string pubkeyHash) => DepositBalancePrefix + pubkeyHash;
 
+    /// <summary>A rollup level as the kernel stores it: null unless it fits a non-negative Int32.</summary>
+    public static int? Level(long value) => value is >= 0 and <= int.MaxValue ? (int)value : null;
+
     public static ulong RequiredTxFee(ulong privateTxsInLevel)
     {
         var step = Math.Min(privateTxsInLevel > BasePrivateTxsPerLevel - 1 ? privateTxsInLevel - (BasePrivateTxsPerLevel - 1) : 0, MaxDynamicFeeStep);
@@ -326,7 +329,9 @@ public static class ShieldedRollupExtensions
     /// <summary>The fee the rollup will demand of the next inbox level, read at <c>head</c>.</summary>
     public static async Task<ulong> RequiredTxFee(this IShieldedRollup rollup, RollupHead head)
     {
-        var nextInbox = (int)Math.Min((long)head.Level + 1, int.MaxValue);
+        // Levels are 32-bit on the rollup; a head outside that range is a bad reply, not a trap (S20).
+        if (head.Level < 0 || RollupState.Level((long)head.Level + 1) is not { } nextInbox)
+            throw new ShieldedError.BadReply($"rollup level {head.Level} is out of range");
         var lastInput = await rollup.I32(head.Hash, RollupState.LastInputLevel);
         var feeLevel = await rollup.I32(head.Hash, RollupState.PrivateTxFeeLevel);
         ulong count = 0;
@@ -475,11 +480,19 @@ public sealed class RollupNodeService(ShieldedConfig config, HttpClient? http = 
             var text = Encoding.UTF8.GetString(bytes.AsSpan(0, Math.Min(300, bytes.Length))).Trim();
             var where = request.RequestUri?.Host ?? "";
             if (status is 401 or 403) throw new ShieldedError.OperatorRefused($"{where} did not accept the access token (HTTP {status})");
+            if (IsRejection(status)) throw new ShieldedError.Rejected(status, $"{where}{(text.Length == 0 ? "" : $": {text}")}");
             throw new ShieldedError.BadReply($"HTTP {status} from {where}{(text.Length == 0 ? "" : $": {text}")}");
         }
         try { return JsonNode.Parse(bytes, documentOptions: new JsonDocumentOptions { MaxDepth = 128 }); }
         catch (JsonException) { throw new ShieldedError.BadReply($"unreadable JSON from {request.RequestUri?.Host}"); }
     }
+
+    /// <summary>
+    /// A 4xx is the service saying it did not take the request, except the ones that say
+    /// nothing about it: a request timeout, a conflict (a duplicate it may already hold),
+    /// too early and too many requests leave the outcome open, like a 5xx or no reply.
+    /// </summary>
+    public static bool IsRejection(int status) => status is >= 400 and < 500 and not (408 or 409 or 425 or 429);
 
     private Task<JsonNode?> GetJSON(Uri url, int limit, TimeSpan? timeout = null, string? token = null)
     {
@@ -510,6 +523,7 @@ public sealed class RollupNodeService(ShieldedConfig config, HttpClient? http = 
     {
         if (Str(await GetJSON(Url(config.RollupNode, "/global/block/head/hash"), SmallReply)) is not { Length: > 0 } hash) throw new ShieldedError.BadReply("no head hash");
         var level = Int(await GetJSON(Url(config.RollupNode, $"/global/block/{hash}/level"), SmallReply)) ?? throw new ShieldedError.BadReply("no head level");
+        if (RollupState.Level(level) is null) throw new ShieldedError.BadReply($"head level {level} is out of range");
         return new RollupHead(hash, level);
     }
 
@@ -593,7 +607,8 @@ public sealed class RollupNodeService(ShieldedConfig config, HttpClient? http = 
     // ---- Outbox ----------------------------------------------------------------------------------
 
     public async Task<int> CementedLevel() =>
-        Int(await GetJSON(Url(config.RollupNode, "/global/block/cemented/level"), SmallReply)) ?? throw new ShieldedError.BadReply("no cemented level");
+        Int(await GetJSON(Url(config.RollupNode, "/global/block/cemented/level"), SmallReply)) is { } level && RollupState.Level(level) is not null
+            ? level : throw new ShieldedError.BadReply("no cemented level");
 
     /// <summary><c>/local/outbox/pending</c>: <c>[{outbox_level, messages: [{message_index, message: {transactions: [{destination, entrypoint, parameters}]}}]}]</c>.</summary>
     public async Task<IReadOnlyList<OutboxEntry>> PendingOutbox()

@@ -42,7 +42,7 @@ public class BLSSendTests
         var wallet = new Wallet("bls-test", new Address(generated.Address), AddressScheme.Tz4, generated.PublicKey, KeyKind.Unencrypted);
 
         var faucet = FaucetService.For(Network.Shadownet)!;
-        Assert.StartsWith("o", await faucet.RequestTez(wallet.Address, 2));
+        Assert.StartsWith("o", await faucet.RequestTez(wallet.Address, 2, cancellation: TestContext.Current.CancellationToken));
 
         var chain = new TaquitoChainService(Network.Shadownet);
         TezBalance? balance = null;

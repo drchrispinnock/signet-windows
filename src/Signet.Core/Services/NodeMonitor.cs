@@ -227,12 +227,16 @@ public sealed partial class NodeMonitor : ObservableObject
         return found == expectedChainID ? new NodeIdentity.Matches(found) : new NodeIdentity.Mismatch(found, expectedChainID);
     }
 
-    public static async Task<ProbeReply> HttpProbe(Uri url)
+    public static Task<ProbeReply> HttpProbe(Uri url) => ProbeOver(Http.Shared)(url);
+
+    /// <summary>The probe over <c>session</c>, so a test can hand it a client that serves canned replies (upstream <c>probe(session:)</c>).</summary>
+    public static Probe ProbeOver(HttpClient session) => async url =>
     {
         var clock = Stopwatch.StartNew();
-        var reply = await Http.Get(Http.Shared, url, TimeSpan.FromSeconds(8), 16 << 10, BoundedHTTP.JSONLimits.Unchecked);
+        // A block header is a few hundred bytes; anything bigger is not a node worth trusting (S19).
+        var reply = await Http.Get(session, url, TimeSpan.FromSeconds(8), 16 << 10, BoundedHTTP.JSONLimits.Unchecked);
         return new ProbeReply(reply.Body, reply.Status, clock.Elapsed.TotalSeconds);
-    }
+    };
 }
 
 /// <summary>What a node said about the chain it serves when asked before it is adopted (Networks sheet).</summary>
