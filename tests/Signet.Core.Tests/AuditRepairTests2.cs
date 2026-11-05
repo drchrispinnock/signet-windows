@@ -162,13 +162,20 @@ public class LoggingPolicyTests
     [Fact]
     public async Task ConsoleLinesFromJavaScriptAreRedactedAndCapped()
     {
-        var hex = string.Concat(Enumerable.Repeat("ab", 64));
-        var filler = new string('x', TaquitoBridge.MaxLineLength + 200);
-        _ = await TaquitoBridge.Shared.Call("bridgeEcho", $"{Key} {hex} {filler}");
-        var echoed = TaquitoBridge.Shared.ConsoleLines.Last(l => l.StartsWith("[log] echo: ", StringComparison.Ordinal));
-        Assert.True(!echoed.Contains(Key) && !echoed.Contains(hex));
-        Assert.True(echoed.Contains("edsk<redacted>") && echoed.Contains("<128 hex chars>"));
-        Assert.True(echoed.Length <= TaquitoBridge.MaxLineLength + 1);
+        var directory = Path.Combine(Path.GetTempPath(), "signet-logs-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            // Own the bridge and log: parallel echo tests must not replace this test's message.
+            var bridge = new TaquitoBridge(logPath: Path.Combine(directory, "bridge.log"), systemLog: _ => { });
+            var hex = string.Concat(Enumerable.Repeat("ab", 64));
+            var filler = new string('x', TaquitoBridge.MaxLineLength + 200);
+            _ = await bridge.Call("bridgeEcho", $"{Key} {hex} {filler}");
+            var echoed = Assert.Single(bridge.ConsoleLines, l => l.StartsWith("[log] echo: ", StringComparison.Ordinal));
+            Assert.True(!echoed.Contains(Key) && !echoed.Contains(hex));
+            Assert.True(echoed.Contains("edsk<redacted>") && echoed.Contains("<128 hex chars>"));
+            Assert.True(echoed.Length <= TaquitoBridge.MaxLineLength + 1);
+        }
+        finally { try { Directory.Delete(directory, recursive: true); } catch (IOException) { } }
     }
 
     [Fact]
