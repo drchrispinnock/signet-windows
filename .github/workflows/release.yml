@@ -1,15 +1,15 @@
 # Builds the Windows release when a version tag is pushed (git tag v0.8.0; git push origin v0.8.0),
 # or by hand from the Actions tab (Run workflow) to try a build without releasing it.
 #
-# A tag build makes a DRAFT GitHub release. For each architecture (win-x64, win-arm64) it holds
-# Velopack's installer (SignetWallet-<rid>-Setup.exe), a portable zip, the full and delta update
-# packages and the update feed (releases.<rid>.json) that installed copies of Signet check daily,
-# plus SHA256SUMS.txt. Nothing is public, and no installed copy is offered the update, until the
-# draft is published on GitHub.
+# A tag build tests and builds the tagged commit for each architecture (win-x64, win-arm64) and
+# uploads the unsigned build as an artifact (Signet-build-x64, Signet-build-ARM64). The
+# code-signing key is in Certum's SimplySign and needs the maintainer's phone, so the release is
+# finished on their PC: scripts/release.ps1 downloads these builds, signs and packs them with
+# Velopack and makes a DRAFT GitHub release (docs/RELEASING.md). Nothing is public, and no
+# installed copy is offered the update, until the draft is published.
 #
-# Signing: not yet. Once the SignPath Foundation accepts the project, a signing step goes
-# between "Build" and "Package" (SignPath's GitHub action uploads the unsigned folder and
-# returns it signed); see docs/RELEASING.md.
+# A manual run packs unsigned installers (artifacts Signet-x64, Signet-ARM64) to try; no release
+# is made.
 name: Release
 
 on:
@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -48,70 +48,42 @@ jobs:
         run: dotnet test --project tests/Signet.Core.Tests --filter-not-trait "Category=Network"
 
       - name: Build
+        id: build
         shell: pwsh
         run: |
           $buildArgs = @('build', 'src/Signet.App/Signet.App.csproj', '-c', 'Release', "-p:Platform=${{ matrix.platform }}")
           if ('${{ steps.version.outputs.version }}') { $buildArgs += "-p:Version=${{ steps.version.outputs.version }}" }
           dotnet @buildArgs
-
-      - name: Package
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Velopack packs the Release build output (`dotnet publish` drops Signet.pri and the .xbf
-          # files, see CLAUDE.md) into an installer, a portable zip and the update feed Signet's
-          # updater reads from the latest GitHub release. The app id is SignetWallet, so the install
-          # (%LOCALAPPDATA%\SignetWallet) never overlaps Signet's settings (%LOCALAPPDATA%\Signet).
-          dotnet tool install -g vpk --version 1.2.161
-          $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
+          # The runnable Release output (`dotnet publish` drops Signet.pri and the .xbf files, see CLAUDE.md).
           $rid = if ('${{ matrix.platform }}' -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
-          $out = "src/Signet.App/bin/${{ matrix.platform }}/Release/net10.0-windows10.0.22621.0/$rid"
-          $version = '${{ steps.version.outputs.version }}'
-          if (-not $version) {
-            # A manual run: the project's version as a pre-release, so vpk accepts it.
-            $version = ([xml](Get-Content src/Signet.App/Signet.App.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
-            $version = "$version-ci.${{ github.run_number }}"
-          }
-          # The previous published release, so this one carries a small delta update for it.
-          # The first Velopack release has nothing to download; that is fine. A manual run skips
-          # it: its x.y.z-ci.N sorts below a published x.y.z, which vpk would refuse to pack after.
-          if ('${{ steps.version.outputs.version }}') {
-            vpk download github --repoUrl "https://github.com/${{ github.repository }}" --channel $rid --token $env:GH_TOKEN -o releases
-            if ($LASTEXITCODE -ne 0) { Write-Host 'No earlier release to make a delta from.'; $global:LASTEXITCODE = 0 }
-          }
-          vpk pack -u SignetWallet -v $version -p $out -e Signet.exe `
-            --packTitle Signet --packAuthors 'Chris Pinnock' -i src/Signet.App/Assets/Signet.ico `
-            -c $rid -r $rid -o releases
-          # Only this version's files go into the release (not the earlier package used for the delta).
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Get-ChildItem releases | Where-Object {
-            $_.Name -like "*-$version-*" -or $_.Name -like '*-Setup.exe' -or $_.Name -like '*-Portable.zip' -or
-            $_.Name -like "releases.$rid.json" -or $_.Name -like "assets.$rid.json" -or $_.Name -like "RELEASES-$rid"
-          } | Copy-Item -Destination dist
-          Get-ChildItem dist | Format-Table Name, Length
+          "rid=$rid" >> $env:GITHUB_OUTPUT
+          "dir=src/Signet.App/bin/${{ matrix.platform }}/Release/net10.0-windows10.0.22621.0/$rid" >> $env:GITHUB_OUTPUT
+
+      # A tag build: the unsigned build for scripts/release.ps1, stamped with the commit so the
+      # script can check it is the tag's.
+      - name: Stamp
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: Set-Content -NoNewline -Path '${{ steps.build.outputs.dir }}/BUILD_COMMIT.txt' -Value $env:GITHUB_SHA
 
       - uses: actions/upload-artifact@v7
+        if: github.ref_type == 'tag'
+        with:
+          name: Signet-build-${{ matrix.platform }}
+          path: ${{ steps.build.outputs.dir }}/
+          if-no-files-found: error
+
+      # A manual run: unsigned installers to try, versioned like 0.9.15-ci.12, with no delta (an
+      # x.y.z-ci.N sorts below a published x.y.z, which vpk would refuse to pack after).
+      - name: Package (unsigned)
+        if: github.ref_type != 'tag'
+        shell: pwsh
+        run: |
+          $version = ([xml](Get-Content src/Signet.App/Signet.App.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          ./scripts/pack.ps1 -BuildDir '${{ steps.build.outputs.dir }}' -Rid '${{ steps.build.outputs.rid }}' -Version "$version-ci.${{ github.run_number }}"
+
+      - uses: actions/upload-artifact@v7
+        if: github.ref_type != 'tag'
         with:
           name: Signet-${{ matrix.platform }}
           path: dist/*
-
-  release:
-    if: github.ref_type == 'tag'
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          (cd dist && sha256sum * > SHA256SUMS.txt)
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft \
-            --title "Signet for Windows ${GITHUB_REF_NAME#v}" \
-            --generate-notes

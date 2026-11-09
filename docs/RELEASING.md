@@ -20,8 +20,11 @@ so uninstalling never removes them (and the wallet in `%USERPROFILE%\.signet` is
 0.8.0 was a plain zip without the updater: its users install 0.8.1 once by hand, and are updated
 automatically from then on.
 
-The build is done by GitHub Actions (`.github/workflows/release.yml`), never on a laptop: pushing a
-`v…` tag builds both zips and makes a **draft** release. Nothing is public until the draft is
+The app is built and tested by GitHub Actions (`.github/workflows/release.yml`), never on a
+laptop. It is signed on this PC, because the signing key is in Certum's SimplySign and needs the
+SimplySign phone app to unlock (see **Code signing** below). So a release is two halves: pushing
+a `v…` tag builds the tagged commit on GitHub, then `scripts/release.ps1` here downloads that
+build, signs it, packs it and makes a **draft** release. Nothing is public until the draft is
 published.
 
 The version is `<Version>` in `src/Signet.App/Signet.App.csproj`. A tag build overrides it with
@@ -43,18 +46,31 @@ In PowerShell, in the repository folder (`C:\Users\chris\signet-windows`):
 4. Open https://github.com/drchrispinnock/signet-windows/actions and wait for the **Release** run
    for `v0.8.1` to turn green (about ten minutes). If it goes red, open it and read the step that
    failed.
-5. Open https://github.com/drchrispinnock/signet-windows/releases. There is a draft called
+5. Connect SimplySign Desktop (its tray icon → connect, then the code from the SimplySign phone
+   app).
+6. Sign and draft:
+   ```powershell
+   ./scripts/release.ps1 -Tag v0.8.1
+   ```
+   It checks that the build on GitHub is of the tagged commit, has Velopack sign every unsigned
+   binary (`Signet.exe`, our DLLs and the bundled libraries without a signature, plus the
+   `Setup.exe` and `Update.exe` Velopack makes), checks the signatures on the Setup and on
+   `Signet.exe` in the portable zip, and uploads everything to a draft release. Its working
+   folder is `%TEMP%\signet-release\v0.8.1`.
+7. Open https://github.com/drchrispinnock/signet-windows/releases. There is a draft called
    **Signet for Windows 0.8.1** with the files above. Click the pencil (Edit), check the notes, and
    press **Publish release**. From that moment installed copies are offered the update.
 
+If step 6 fails after the draft was made, delete the draft on the Releases page and run it again.
+
 To try a build without releasing: Actions → **Release** → **Run workflow** → branch `main` →
-**Run workflow**. The installers appear under **Artifacts** at the bottom of the run (versioned
-like `0.8.1-ci.12`); no release is made and no one is offered anything.
+**Run workflow**. The unsigned installers appear under **Artifacts** at the bottom of the run
+(versioned like `0.8.1-ci.12`); no release is made and no one is offered anything.
 
 To test the updater on a PC without publishing anything, pack two versions into a folder with
-`vpk pack` (as the workflow does, `-o` the same folder for both), install the older one with its
-Setup, and start it with the environment variable `SIGNET_UPDATE_SOURCE` set to that folder: it
-then updates from the folder instead of GitHub.
+`scripts/pack.ps1` (as the workflow does, `-WorkDir` the same folder for both), install the older
+one with its Setup, and start it with the environment variable `SIGNET_UPDATE_SOURCE` set to that
+folder: it then updates from the folder instead of GitHub.
 
 To undo a tag pushed by mistake (before publishing):
 ```powershell
@@ -63,130 +79,42 @@ git tag -d v0.8.1
 ```
 and delete the draft on the Releases page.
 
-## Unsigned releases
+## Code signing
 
-Until signing is set up, `Signet.exe` is unsigned. People who run it see Microsoft Defender
-SmartScreen's **Windows protected your PC**; they click **More info**, then **Run anyway**. On a PC
-with **Smart App Control** turned on, Windows may refuse to run it at all. Say so in the release
-notes.
+The certificate is Certum's **Open Source Code Signing** certificate, issued to
+"Open Source Developer Chris Pinnock" by Certum Code Signing 2021 CA, valid from 9 November 2026
+to 9 November 2027. Its public half and Certum's chain are in `C:\Users\chris\WinCert`; the
+private key never leaves SimplySign, Certum's cloud card.
 
-## Code signing with the SignPath Foundation
+One-time setup on this PC:
 
-SignPath signs open-source projects for free. The project qualifies: it is public and MIT licensed.
+1. Install **SimplySign Desktop** from Certum's support site, and activate the **SimplySign**
+   phone app with the details from the certificate order.
+2. Connect (tray icon → connect, the code from the phone app). The certificate should appear in
+   the user's certificate store; if not, register it in SimplySign Desktop's certificate manager.
+3. Check:
+   ```powershell
+   Get-ChildItem Cert:\CurrentUser\My | Where-Object Thumbprint -eq 61EA6BA1190E30EFEAE84EA9519E7BC6E95564AB | Format-List Subject, HasPrivateKey
+   ```
+   `HasPrivateKey` should be `True`.
 
-1. Apply at https://signpath.org (the open-source / SignPath Foundation programme). The form asks
-   about the project, its repository, licence and maintainers; their instructions are the
-   authority on what is needed.
-2. Make sure your GitHub account has two-factor authentication turned on.
-3. SignPath usually asks for a short **code signing policy** on the project's page (who may sign,
-   how builds are made: here, only by GitHub Actions from tagged commits). Ask Claude to draft it
-   for the README when you get there.
-4. When they accept, they give you an organisation id, a project slug, a signing policy slug and an
-   API token. Add the token to the repository: Settings → Secrets and variables → Actions →
-   **New repository secret**, name `SIGNPATH_API_TOKEN`. The ids are not secret.
-5. Then a signing step goes into the workflow between **Build** and **Package**: SignPath's GitHub
-   action uploads the unsigned build, signs `Signet.exe` and `Signet.dll` (and the other files of
-   ours), and hands the folder back to Velopack. The Setup and Update executables Velopack makes
-   need signing too (its `--signTemplate` option can call the same signing step).
+The scripts (`scripts/signing.ps1`) sign with signtool by thumbprint, SHA-256, and an RFC 3161
+timestamp from `http://time.certum.pl`, so signatures stay valid after the certificate expires.
+**When the certificate is renewed**, put the new thumbprint in `$SigningThumbprint` in
+`scripts/signing.ps1` and update this section.
 
-## Code signing with Azure Artifact Signing
+`./scripts/sign-build.ps1` signs a local build (`Signet.exe`, `Signet.dll`, `Signet.Core.dll`;
+Debug x64 by default, or `-Configuration Release`, `-Platform ARM64`, `-Path <folder>`), so
+Smart App Control on this PC runs it.
 
-Azure Artifact Signing (until 2025 called Trusted Signing, a name the portal and tools still use)
-is Microsoft's own signing service: about $9.99 a month (Basic, 5,000 signatures), no hardware
-token, and Microsoft-issued certificates that SmartScreen and Smart App Control trust. It is the
-paid alternative to SignPath.
+What to expect:
+- **Unknown publisher** becomes "Open Source Developer Chris Pinnock", and Smart App Control
+  accepts the signed app.
+- SmartScreen can still warn for the first releases, until the certificate builds up a download
+  reputation. Until it stops, keep the **Run anyway** instructions in the release notes.
+- Updates are trusted on HTTPS from GitHub alone (Velopack has no signature check like Sparkle's
+  EdDSA one on the Mac), which is why automatic download is off by default: users see each update
+  offered and choose to install it.
 
-**Check eligibility first.** Individuals are accepted only in the US and Canada. Organisations
-are accepted in more countries, the UK and the EU among them, and must pass a business identity
-check. Billing starts when the account is created, even if the identity check later fails, so
-read Microsoft's current eligibility page before paying.
-
-### One-time setup in Azure
-
-1. **Subscription.** Sign in at https://portal.azure.com with an Azure subscription
-   (pay-as-you-go will do). Under Subscriptions → yours → Resource providers, register
-   `Microsoft.CodeSigning`.
-2. **Signing account.** Create an *Artifact Signing* (Trusted Signing) account, Basic tier, in a
-   nearby region such as West Europe. Note its **account name** and **endpoint** (West Europe is
-   `https://weu.codesigning.azure.net`).
-3. **Identity validation.** In Access control (IAM) on the account, give yourself the
-   *Identity Verifier* role (Artifact Signing Identity Verifier, formerly Trusted Signing). Then go
-   to Objects → Identity validation → New → **Public**, and submit the organisation's details and
-   documents. Microsoft verifies them, which takes from a day to a couple of weeks.
-4. **Certificate profile.** Once the identity is validated, create a certificate profile of type
-   **Public Trust** on that identity. Note the **profile name**.
-
-### Let GitHub Actions sign, with no secret to leak
-
-5. **App registration.** In Microsoft Entra ID → App registrations → New, name it
-   `signet-windows-release`. Note its **client id** and **tenant id**.
-6. **Federated credential.** In the app registration, open Certificates & secrets → Federated
-   credentials → Add → *GitHub Actions deploying Azure resources*. Set the organisation to
-   `drchrispinnock`, the repository to `signet-windows`, the entity type to **Environment**, and
-   the environment name to `release`. GitHub then logs in with a short-lived OIDC token and no
-   password is stored anywhere.
-7. **Role.** On the certificate profile, Access control (IAM) → Add role assignment →
-   *Certificate Profile Signer*, to the app registration.
-8. **In GitHub**, open Settings → Environments → New environment → `release`. Under deployment
-   branches and tags, allow only `main` and tags matching `v*`. Then add three environment
-   secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`. None of them is
-   sensitive on its own, but keeping them in the environment ties them to it.
-
-### The workflow change
-
-Velopack signs through Artifact Signing itself (`vpk pack --azureTrustedSignFile`, with
-signtool and Microsoft's dlib bundled), so no separate signing step is needed. It signs
-`Signet.exe` and the other binaries, and also the `Setup.exe` and `Update.exe` it makes. In
-`.github/workflows/release.yml`:
-
-```yaml
-permissions:
-  contents: write
-  id-token: write          # lets the job request the OIDC token
-
-jobs:
-  build:
-    runs-on: windows-latest
-    environment: release   # matches the federated credential's subject
-    steps:
-      # … checkout, setup-dotnet, Version, Test, Build as now …
-
-      - uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Package
-        # … as now, with a metadata file written before vpk pack and the flag added to it:
-        run: |
-          @{ Endpoint = 'https://weu.codesigning.azure.net'
-             CodeSigningAccountName = '<account name>'
-             CertificateProfileName = '<profile name>' } | ConvertTo-Json | Set-Content signing.json
-          vpk pack … --azureTrustedSignFile signing.json
-```
-
-The dlib picks up the `azure/login` session through the Azure CLI. Also update the header comment
-in `release.yml`, which still points at SignPath.
-
-### Checking it
-
-Do a manual run first (Actions → Release → Run workflow), download the artifact, and check:
-
-```powershell
-Get-AuthenticodeSignature .\SignetWallet-win-x64-Setup.exe | Format-List Status, SignerCertificate
-```
-
-`Status` should be `Valid`, and the signer should be your validated name. Repeat for `Signet.exe`
-inside the installed copy.
-
-What to expect afterwards:
-- Smart App Control and **Unknown publisher** stop being a problem straight away.
-- SmartScreen can still warn for the first few releases, until the publisher builds up a download
-  reputation. That reputation stays with the validated identity across releases, even though each
-  certificate lasts only three days. The timestamp keeps the old signatures valid.
-- After that, the release notes no longer need the **Run anyway** instructions.
-
-Until then, updates are trusted on HTTPS from GitHub alone (Velopack has no signature check like
-Sparkle's EdDSA one on the Mac), which is why automatic download is off by default: users see each
-update offered and choose to install it.
+Releases before 0.9.15 are unsigned: SmartScreen shows **Windows protected your PC** (**More
+info**, then **Run anyway**), and Smart App Control may refuse them.

@@ -23,6 +23,8 @@ dotnet test --project tests/Signet.Core.Tests --filter-method "*.AddressTests.Sh
 dotnet test --project tests/Signet.Core.Tests --filter-not-trait "Category=Network"   # offline
 dotnet run --project src/Signet.App -p:Platform=x64
 ./scripts/make-icon.ps1                         # regenerate Signet.ico from upstream's 1024 px master
+./scripts/sign-build.ps1                        # sign the Debug x64 build (SimplySign connected)
+./scripts/release.ps1 -Tag v0.9.15              # sign, pack and draft a tag's CI build (docs/RELEASING.md)
 ```
 
 The app project defaults to x64 (pass `-p:Platform=ARM64` for Arm). Package versions are pinned
@@ -299,9 +301,13 @@ Windows-specific porting notes:
 - `dotnet publish` of the app drops `Signet.pri` and the `.xbf` files and the result crashes with
   0xC000027B. A runnable folder is the Release build output (`bin\x64\Release\…\win-x64`), which
   carries the .NET runtime (`SelfContained` in Release).
-- Releases and updates: `.github/workflows/release.yml` packs that output with Velopack (`vpk`,
-  app id `SignetWallet`, one channel per architecture) into a Setup, a portable zip and the update
-  feed on a draft GitHub release; `docs/RELEASING.md` is the procedure. `VelopackApp` runs first
+- Releases and updates: `.github/workflows/release.yml` builds and tests a tag and uploads the
+  unsigned output; `scripts/release.ps1`, run here with SimplySign Desktop connected, checks it is
+  the tag's commit, signs and packs it with Velopack (`scripts/pack.ps1`: `vpk`, app id
+  `SignetWallet`, one channel per architecture, `--signParams` through `scripts/signing.ps1`) into
+  a Setup, a portable zip and the update feed on a draft GitHub release; `docs/RELEASING.md` is
+  the procedure. The certificate is Certum Open Source Code Signing (key in SimplySign, so no CI
+  signing); a manual workflow run still packs unsigned installers. `VelopackApp` runs first
   in `Program.Main` (its uninstall hook takes back `signet://`). `UpdaterService` (app) is
   upstream's Sparkle `UpdaterService`: a daily check (on by default), automatic download (off by
   default: Velopack has no EdDSA check like Sparkle's, so nothing is installed unseen), last
@@ -357,4 +363,5 @@ This PC has Smart App Control enforced. It can block a freshly built, unsigned `
 crashes with 0xC000027B. The tests are unaffected. Each build produces a different `Signet.exe`
 hash, so some builds are allowed and some are not, but `Signet.exe` is only .NET's launcher for
 `Signet.dll` and its code does not change: copying a `Signet.exe` that was already allowed over a
-new build's (as `scratch\Signet-x64` keeps) runs the new build.
+new build's (as `scratch\Signet-x64` keeps) runs the new build. With SimplySign Desktop
+connected, `./scripts/sign-build.ps1` signs a local build instead, which Smart App Control accepts.
