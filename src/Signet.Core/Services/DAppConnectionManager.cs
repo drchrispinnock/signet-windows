@@ -22,6 +22,8 @@ public sealed partial class DAppConnectionManager : ObservableObject
         public sealed class NotOurWallet(Address address) : ConnectError($"The dApp asked for {address.Shortened()}, which is not one of your accounts.");
         public sealed class NoUsableKey(string alias) : ConnectError($"Signet cannot sign with “{alias}” (no key on disk or Ledger).");
         public sealed class UnsupportedNetwork(string type) : ConnectError($"The dApp wants the “{type}” network, which Signet does not have.");
+        public sealed class Layer2Off(string type, string network)
+            : ConnectError($"The dApp wants “{type}”, the Layer 2 of {network}, which is turned off. Turn on Enable Layer 2 for {network} in Networks to use it.");
         public sealed class RefusedPayload(string why) : ConnectError(why);
         public sealed class NotGranted(string why) : ConnectError(why);
         public sealed class PreviousUnconfirmed(string hash)
@@ -76,6 +78,7 @@ public sealed partial class DAppConnectionManager : ObservableObject
     private readonly Func<Task<IReadOnlyList<DAppPermission>>>? permissionLoader;
     private readonly Func<Wallet, string?, SigningKey?> signerProvider;
     private readonly Confirmation? confirmation;
+    private readonly Func<IReadOnlyList<Network>> layer2Provider;
     /// <summary>Running watchers by operation hash, so one operation is never watched twice.</summary>
     private readonly Dictionary<string, Task<int>> watchers = [];
     private readonly SynchronizationContext? ui = SynchronizationContext.Current;
@@ -91,9 +94,11 @@ public sealed partial class DAppConnectionManager : ObservableObject
     public DAppConnectionManager(IBridgeStorage storage, Func<IReadOnlyList<Wallet>> wallets, Func<Wallet, string?, SigningKey?> signer,
                                  TaquitoBridge? bridge = null, bool diagnostics = false,
                                  Func<Task<IReadOnlyList<DAppPermission>>>? permissionLoader = null,
-                                 Confirmation? confirmation = null)
+                                 Confirmation? confirmation = null,
+                                 Func<IReadOnlyList<Network>>? layer2 = null)
     {
         this.confirmation = confirmation;
+        layer2Provider = layer2 ?? (() => []);
         this.bridge = bridge ?? new TaquitoBridge(requirePublicEndpoints: true);
         this.storage = storage;
         Diagnostics = diagnostics;
@@ -373,6 +378,14 @@ public sealed partial class DAppConnectionManager : ObservableObject
     {
         if (request is not DAppRequest.Permission permission) return;
         if (Undelivered.TryGetValue(permission.Id, out var reply)) { await Redeliver(request, reply); return; }
+        // No grant is made for a Layer 2 that is turned off, whatever the sheet offered.
+        if (Layer2Off(permission.NetworkType) is { } off)
+        {
+            LastError = new ConnectError.Layer2Off(permission.NetworkType, off.Name).Message;
+            await RespondError(permission.Id, "NOT_GRANTED_ERROR");
+            Finish(request);
+            return;
+        }
         if (wallet.PublicKey is not { } publicKey)
         {
             LastError = $"“{wallet.Alias}” has no public key, so it cannot be shared with a dApp.";
@@ -395,6 +408,22 @@ public sealed partial class DAppConnectionManager : ObservableObject
     }
 
     /// <summary>
+    /// Which of our networks a request names, as things stand now: the Layer 2 networks are
+    /// those the user has turned on, read afresh each time.
+    /// </summary>
+    public Network? NetworkFor(string type, Uri? rpcURL) => DAppRequest.NetworkFor(type, rpcURL, layer2Provider());
+
+    /// <summary>The network whose Layer 2 the request names while that Layer 2 is off.</summary>
+    public Network? Layer2Off(string type) => DAppRequest.Layer2Off(type, layer2Provider());
+
+    private Network RequireNetwork(string type, Uri? rpcURL)
+    {
+        if (NetworkFor(type, rpcURL) is { } network) return network;
+        if (Layer2Off(type) is { } off) throw new ConnectError.Layer2Off(type, off.Name);
+        throw new ConnectError.UnsupportedNetwork(type);
+    }
+
+    /// <summary>
     /// Simulates the request's batch from its source account so the sheet can show exact fees,
     /// burn, totals and effects. Nothing is signed; a read-only signer stands in for the account.
     /// </summary>
@@ -404,7 +433,7 @@ public sealed partial class DAppConnectionManager : ObservableObject
         await GrantFor(request);
         var wallet = WalletFor(op.Source) ?? throw new ConnectError.NotOurWallet(op.Source);
         if (wallet.PublicKey is not { } publicKey) throw new ConnectError.NoUsableKey(wallet.Alias);
-        var network = DAppRequest.NetworkFor(op.NetworkType, op.RpcURL) ?? throw new ConnectError.UnsupportedNetwork(op.NetworkType);
+        var network = RequireNetwork(op.NetworkType, op.RpcURL);
         var r = await Call("octezConnectPrepare", 120, network.RpcURL.AbsoluteString(), op.Source.Value, publicKey, op.OperationsJSON, network.ExpectedChainID);
         if (r["prepared"]?.StringValue is not { } prepared || r["operations"]?.ArrayValue is not { } list)
             throw new TaquitoBridge.BridgeError.JavaScript($"unexpected prepare payload: {r}");
@@ -429,7 +458,7 @@ public sealed partial class DAppConnectionManager : ObservableObject
             if (prepared.RequestID != op.Id) throw new ConnectError.RefusedPayload("The prepared batch is not for this request.");
             await GrantFor(request);
             var (wallet, signer) = SignerFor(op.Source, passphrase);
-            var network = DAppRequest.NetworkFor(op.NetworkType, op.RpcURL) ?? throw new ConnectError.UnsupportedNetwork(op.NetworkType);
+            var network = RequireNetwork(op.NetworkType, op.RpcURL);
             await SettlePrevious(op.Source, network);
             var result = await bridge.Call("octezConnectExecute", network.RpcURL.AbsoluteString(), signer.BridgeSpec, prepared.PreparedJSON, network.ExpectedChainID);
             if (result["hash"]?.StringValue is not { Length: > 0 } hash) throw new TaquitoBridge.BridgeError.JavaScript("no operation hash");

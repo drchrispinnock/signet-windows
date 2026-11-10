@@ -120,10 +120,12 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 ## Status
 
-The pin is upstream `1fc7dc4` (main, 2026-11-05), and everything up to it is ported: every
+The pin is upstream `280b098` (main, 2026-11-10), and everything up to it is ported: every
 feature (TzEL included), the infrastructure behind them, and every upstream test suite (the
-Linux/FreeBSD build commits `698121e`, `7dc82dc`, `461d097`, `436631a`, `78a6098` need nothing
-here). Ported:
+Linux/FreeBSD build commits `00269fa`, `445e047`, `98dd8d7`, `45f6849`, `548b3b1` need nothing
+here, nor do the manuscript, release-workflow and bridge-only commits). Upstream rewrote its
+history in November 2026: the old pin `1fc7dc4` is `cf1409e` in the new history (the same
+tree), and the hashes cited here are the new ones. Ported:
 - Models, `Network` and `AppState` in full, the shielded members included.
 - The `TaquitoBridge` host (`JSONValue` with `IntValue`, `BridgeError.Typed`, the journal and
   Ledger session natives) with upstream's call policy (S30): `SigningCalls`/`CallKind`, `Sign`
@@ -146,7 +148,7 @@ here). Ported:
   complete generations of this wallet only. The manifest's `source` is a Windows path, so a backup
   folder is not shared with a Mac.
 - Artwork: Core's `ImageLoader` (upstream's actor: candidates in order with the disk consulted
-  candidate by candidate, `6a4a2b0`; public HTTPS through the pinned client; the 8 MB cut-off and
+  candidate by candidate, `a0ca989`; public HTTPS through the pinned client; the 8 MB cut-off and
   too-large memory; six loads at a time) and `ArtworkCache` in `%LOCALAPPDATA%\Signet\artwork`.
   Core has no codec, so the loader deals in encoded thumbnails (`ImageLoader.Thumbnail`: a PNG, or
   an SVG document kept as it came) and the app installs Windows Imaging Component as its `Decoder`.
@@ -235,7 +237,12 @@ here). Ported:
   the checked address (upstream runs curl with `--resolve`); no proxy, no redirects. Every bridge
   fetch is capped at 32 MB and 60 s, and the log is redacted (`Redacted`, `RedactedLine`, S11).
   The manager's calls carry upstream's read deadlines (`CallWithin`). The pairing
-  code field is a `PasswordBox`, from upstream `6c1b7d3` (after the pin, ported early). `Program.cs`
+  code field is a `PasswordBox` (upstream `153269b`). Layer 2 dApps (0.9.15): Octez Connect's
+  `tezosx-mainnet`/`tezosx-shadownet` are looked up by `Network.DappType`/`L2DAppType` and served
+  only while Layer 2 is on for that network; `MakeDApps` passes the resolved `Layer2` networks as
+  the manager's `layer2` provider, read afresh by `DAppConnectionManager.NetworkFor`/`Layer2Off`.
+  With Layer 2 off the request sheet offers only OK (the primary button; Close is hidden), which
+  rejects, and `ApprovePermission` refuses with `ConnectError.Layer2Off`. `Program.cs`
   replaces the generated `Main` (`DISABLE_XAML_GENERATED_MAIN`): it registers `signet://` with
   `ActivationRegistrationManager.RegisterForProtocolActivation` at every launch (so the scheme
   points at whichever copy ran last), and a second launch redirects its activation to the running
@@ -316,7 +323,7 @@ Windows-specific porting notes:
   updates; `SIGNET_UPDATE_SOURCE` points it at a local `vpk pack` folder for testing.
 - The Mac's chmod 600 assertions are dropped (see `TestSupport.cs`).
 - The 5 November 2026 audit (`..\signet-audit`; upstream `audit/AUDIT_20261105.md`, commits
-  `fc84e47`, `de18ad5`, `555311f`) is ported as upstream has it, with `AuditFixTests`:
+  `6237e20`, `e155a27`, `036af50`) is ported as upstream has it, with `AuditFixTests`:
   `FileShieldedWalletStore` holds `tzel-<chain>.lock` (an open with no sharing, upstream `lockf`)
   beneath its in-process lock keyed by the real path (`PathUtility.RealPath`, links and
   junctions followed), 5 s then `ShieldedError.WalletLocked`; one 128 MB bound for reading and

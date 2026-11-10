@@ -81,19 +81,39 @@ public abstract record DAppRequest(string Id, DAppInfo App)
     /// node the user configured for one of our networks (scheme, host, port and path). A dApp
     /// cannot point the wallet at this machine or the local network, and a user-configured
     /// local node is never reachable through a dApp's request unless the dApp names it exactly.
+    ///
+    /// <c>layer2</c> is the Layer 2 side of the networks whose Layer 2 the user has turned on
+    /// (<c>Network.Layer2</c>, on the Layer 2 node in use, its chain id pinned). Nothing is served on
+    /// a Layer 2 that is off: a request naming one finds no network (<c>Layer2Off</c> says which).
     /// </summary>
-    public static Network? NetworkFor(string type, Uri? rpcURL)
+    public static Network? NetworkFor(string type, Uri? rpcURL, IReadOnlyList<Network>? layer2 = null)
     {
+        layer2 ??= [];
         var kind = type.ToLowerInvariant();
         // A dApp's "custom" network is identified by its RPC, never by our own Custom entry.
-        if (Network.All.FirstOrDefault(n => n.Chain == kind && n.Chain != "custom") is { } match) return match;
+        // Each network carries the name dApps use for it (`Network.DappType`), and so does its
+        // Layer 2 (Octez Connect's `tezosx-<network>`, Etherlink's Michelson interface). The
+        // dApp's `rpcUrl` is not used for a named network.
+        if (kind != "custom" && Network.All.Concat(layer2).FirstOrDefault(n => n.DappType == kind) is { } match) return match;
         if (kind == "custom" && rpcURL is not null)
         {
             if (Network.All.FirstOrDefault(n => n.Chain != "custom" && SameEndpoint(n.DefaultRPCURL, rpcURL)) is { } known) return known;
+            if (layer2.FirstOrDefault(n => SameEndpoint(n.RpcURL, rpcURL)) is { } knownL2) return knownL2;
             if (!EndpointPolicy.IsPublicHTTPS(rpcURL)) return null;
             return new Network($"Custom ({EndpointDescription(rpcURL)})", "custom", rpcURL, tezosDomainsURL: null, tzktURL: null);
         }
         return null;
+    }
+
+    /// <summary>
+    /// The network whose Layer 2 a request names while that Layer 2 is off, so the refusal can
+    /// say what to turn on; <c>null</c> when the type is not a Layer 2 name or its Layer 2 is on.
+    /// </summary>
+    public static Network? Layer2Off(string type, IReadOnlyList<Network> layer2)
+    {
+        var kind = type.ToLowerInvariant();
+        if (layer2.Any(n => n.DappType == kind)) return null;
+        return Network.All.FirstOrDefault(n => n.L2DAppType == kind);
     }
 
     /// <summary>Two endpoints are the same only when scheme, host, port and path all agree (S12).</summary>

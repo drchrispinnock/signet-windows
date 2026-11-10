@@ -23,7 +23,7 @@ public sealed record Network
 
     public Network(string name, string chain, Uri rpcURL, Uri? tezosDomainsURL, Uri? tzktURL, Uri? faucetURL = null,
                    FaucetKindValue faucetKind = FaucetKindValue.Teztnets, Uri? explorerURL = null, string? expectedChainID = null,
-                   Uri? l2RPCURL = null, string? expectedL2ChainID = null, string? l2BridgeHelper = null, string? l2Rollup = null,
+                   Uri? l2RPCURL = null, string? l2DAppType = null, string? expectedL2ChainID = null, string? l2BridgeHelper = null, string? l2Rollup = null,
                    Uri? l2TzKTURL = null, Uri? l2ExplorerURL = null,
                    IReadOnlyDictionary<EtherlinkGovernance.Process, string>? etherlinkGovernance = null,
                    bool shieldedAvailable = false, ShieldedConfig? shielded = null)
@@ -36,6 +36,8 @@ public sealed record Network
             (etherlinkGovernance ?? new Dictionary<EtherlinkGovernance.Process, string>()).ToDictionary(p => p.Key, p => new Address(p.Value)));
         EtherlinkGovernanceContracts = DefaultEtherlinkGovernance;
         Chain = chain;
+        DappType = chain == "custom" ? null : chain;
+        L2DAppType = l2DAppType;
         RpcURL = rpcURL;
         DefaultRPCURL = rpcURL;
         TezosDomainsURL = tezosDomainsURL;
@@ -98,6 +100,16 @@ public sealed record Network
     public Uri? L2DefaultRPCURL { get; init; }
     public Uri? L2RPCURL { get; init; }
     public bool L2Enabled { get; init; }
+    /// <summary>
+    /// The names dApps use for this network in a TZIP-10 request's <c>network.type</c>
+    /// (Octez Connect's <c>NetworkType</c>): <c>DappType</c> for the network itself, <c>null</c> when it
+    /// has no such name (Custom, which dApps identify by endpoint), and <c>L2DAppType</c> for its
+    /// Layer 2 (<c>tezosx-mainnet</c>, <c>tezosx-shadownet</c>), which becomes the <c>DappType</c> of
+    /// <c>Layer2</c>. <c>DAppRequest.NetworkFor</c> finds a request's network by these and nothing
+    /// else, so a network that gains a Layer 2 needs only its identifier here.
+    /// </summary>
+    public string? DappType { get; init; }
+    public string? L2DAppType { get; init; }
     /// <summary>The chain id the Etherlink RPC must report (<c>/chains/main/chain_id</c>), when pinned (S12).</summary>
     public string? ExpectedL2ChainID { get; init; }
     /// <summary>
@@ -159,7 +171,7 @@ public sealed record Network
     /// </summary>
     public Network? Layer2 => HasL2 && L2RPCURL is { } node
         ? new Network($"{Name} · Etherlink", $"etherlink-{Chain}", node, tezosDomainsURL: null, tzktURL: L2TzKTURL,
-                      explorerURL: L2ExplorerURL, expectedChainID: ExpectedL2ChainID) { LayerNumber = 2 }
+                      explorerURL: L2ExplorerURL, expectedChainID: ExpectedL2ChainID) { LayerNumber = 2, DappType = L2DAppType }
         : null;
 
     /// <summary>1 for a Tezos network, 2 for its <c>Layer2</c> counterpart.</summary>
@@ -310,6 +322,7 @@ public sealed record Network
         explorerURL: new Uri("https://tzkt.io"),
         expectedChainID: "NetXdQprcVkpaWU",
         l2RPCURL: new Uri("https://michelson.etherlink.mainnet.octez.io"),
+        l2DAppType: "tezosx-mainnet",
         expectedL2ChainID: "NetXohUVN5QWR4f",
         l2BridgeHelper: "KT1Wj8SUGmnEPFqyahHAcjcNQwe6YGhEXJb5",
         l2Rollup: "sr1Ghq66tYK9y3r8CC1Tf8i8m5nxh8nTvZEf",
@@ -332,6 +345,7 @@ public sealed record Network
         explorerURL: new Uri("https://shadownet.tzkt.io"),
         expectedChainID: "NetXsqzbfFenSTS",
         l2RPCURL: new Uri("https://michelson.etherlink.shadownet.octez.io"),
+        l2DAppType: "tezosx-shadownet",
         expectedL2ChainID: "NetXtLrzvQDobza",
         l2BridgeHelper: "KT19aBsSWvWtvEkbiqReJnD8UzQMWcD8SHUD",
         l2Rollup: "sr19fMYrr5C4qqvQqQrDSjtP31GcrWjodzvg",

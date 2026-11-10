@@ -140,8 +140,17 @@ public sealed partial class DAppRequestSheet : Sheet
         else
         {
             RequestContent();
-            PrimaryButtonText = ApproveTitle;
-            CloseButtonText = "Reject";
+            if (Layer2Off is not null)
+            {
+                // Nothing to connect to or approve while that Layer 2 is off: OK refuses the request.
+                PrimaryButtonText = "OK";
+                CloseButtonText = "";
+            }
+            else
+            {
+                PrimaryButtonText = ApproveTitle;
+                CloseButtonText = "Reject";
+            }
         }
         Validate();
     }
@@ -166,8 +175,12 @@ public sealed partial class DAppRequestSheet : Sheet
                     TextWrapping = TextWrapping.Wrap,
                 }));
                 body.Children.Add(LabeledContent("Permissions", new TextBlock { Text = string.Join(", ", permission.Scopes.Select(ScopeName)), TextWrapping = TextWrapping.Wrap }));
-                if (DAppRequest.NetworkFor(permission.NetworkType, permission.RpcURL) is null)
-                    body.Children.Add(Label("Signet has no node for this network; operations from this dApp will fail.", Warning, "SystemFillColorCautionBrush"));
+                if (dapps.NetworkFor(permission.NetworkType, permission.RpcURL) is null)
+                    body.Children.Add(Label(
+                        dapps.Layer2Off(permission.NetworkType) is { } off
+                            ? $"This is the Layer 2 of {off.Name}, which is turned off, so Signet cannot connect to this dApp. Turn on Enable Layer 2 for {off.Name} in Networks, then connect again from the dApp."
+                            : "Signet has no node for this network; operations from this dApp will fail.",
+                        Warning, "SystemFillColorCautionBrush"));
                 body.Children.Add(Note("The dApp will see this account's address and public key, and can ask you to approve operations and signatures. Nothing happens without your approval here."));
                 break;
 
@@ -281,16 +294,18 @@ public sealed partial class DAppRequestSheet : Sheet
     /// </summary>
     private Grid NetworkRow(string networkType, Uri? rpcURL)
     {
-        if (DAppRequest.NetworkFor(networkType, rpcURL) is { } network)
+        if (dapps.NetworkFor(networkType, rpcURL) is { } network)
         {
             var lines = new StackPanel { Spacing = 2 };
             lines.Children.Add(new TextBlock { Text = network.Name, HorizontalAlignment = HorizontalAlignment.Right });
-            if (network.Chain == "custom" || !network.IsUsingDefaultNode)
+            if (network.Chain == "custom" || !network.IsUsingDefaultNode || network.LayerNumber == 2)
                 lines.Children.Add(new TextBlock { Text = DAppRequest.EndpointDescription(network.RpcURL), Style = (Style)Application.Current.Resources["MonoText"], FontSize = 11, HorizontalAlignment = HorizontalAlignment.Right });
             if (network.ExpectedChainID is null)
                 lines.Children.Add(new TextBlock { Text = $"chain not pinned; the node is trusted to serve {network.Name}", Style = (Style)Application.Current.Resources["CaptionSecondaryText"], HorizontalAlignment = HorizontalAlignment.Right, TextWrapping = TextWrapping.Wrap });
             return LabeledContent("Network", lines);
         }
+        if (dapps.Layer2Off(networkType) is { } off)
+            return LabeledContent("Network", Label($"{networkType} is the Layer 2 of {off.Name}, which is turned off in Networks", Warning, "SystemFillColorCautionBrush"));
         var where = rpcURL is { } url ? $" at {DAppRequest.EndpointDescription(url)}" : "";
         return LabeledContent("Network", Label($"{networkType}{where} is not a network Signet will use", Warning, "SystemFillColorCautionBrush"));
     }
@@ -329,9 +344,18 @@ public sealed partial class DAppRequestSheet : Sheet
 
     private bool NeedsPassphrase => SourceWallet?.KeyKind == KeyKind.Encrypted;
 
+    /// <summary>The network whose Layer 2 this request is for while that Layer 2 is turned off.</summary>
+    private Network? Layer2Off => request switch
+    {
+        DAppRequest.Permission p => dapps.Layer2Off(p.NetworkType),
+        DAppRequest.Operation op => dapps.Layer2Off(op.NetworkType),
+        _ => null,
+    };
+
     protected override void Validate()
     {
         if (dapps.Undelivered.ContainsKey(request.Id)) { IsPrimaryButtonEnabled = !isWorking; return; }
+        if (Layer2Off is not null) { IsPrimaryButtonEnabled = !isWorking; return; }
         IsPrimaryButtonEnabled = !isWorking
             && !(request.IsPermission && chosenWallet.SelectedIndex < 0)
             && !(NeedsPassphrase && passphrase.Password.Length == 0)
@@ -368,6 +392,9 @@ public sealed partial class DAppRequestSheet : Sheet
                 var secret = NeedsPassphrase ? passphrase.Password : null;
                 switch (request)
                 {
+                    case DAppRequest.Permission or DAppRequest.Operation when Layer2Off is not null:
+                        await dapps.Reject(request);
+                        break;
                     case DAppRequest.Permission when chosenWallet.SelectedIndex >= 0:
                         await dapps.ApprovePermission(request, shareable[chosenWallet.SelectedIndex]);
                         break;

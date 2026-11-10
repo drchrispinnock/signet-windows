@@ -664,7 +664,9 @@ public sealed partial class WalletViewModel : ObservableObject
             {
                 var service = network == Network ? chain : chainFactory(network);
                 return service.WaitForConfirmation(hash);
-            });
+            },
+            // Only a Layer 2 the user turned on in Networks is served, on the node in use there.
+            layer2: () => Network.All.Select(n => Resolved(n).Layer2).OfType<Network>().ToList());
     }
 
     /// <summary>

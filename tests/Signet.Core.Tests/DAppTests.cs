@@ -59,6 +59,29 @@ public class DAppRequestParsingTests
         Assert.Equal(Network.Shadownet, DAppRequest.NetworkFor("custom", new Uri("https://rpc.shadownet.teztnets.com")));
         Assert.Equal("custom", DAppRequest.NetworkFor("custom", new Uri("https://rpc.example.org"))?.Chain);
         Assert.Null(DAppRequest.NetworkFor("ghostnet", null));
+        // Octez Connect's tezosx networks are the Layer 2 side, on the Layer 2 node and chain id,
+        // and only for a network whose Layer 2 is turned on.
+        var l2URL = new Uri("https://michelson.etherlink.shadownet.octez.io");
+        var on = new[] { Network.Mainnet, Network.Shadownet }.Select(n => n.UsingL2(true, n.L2DefaultRPCURL).Layer2).OfType<Network>().ToList();
+        Assert.Null(DAppRequest.NetworkFor("tezosx-shadownet", l2URL));
+        Assert.Equal(Network.Shadownet, DAppRequest.Layer2Off("tezosx-shadownet", []));
+        Assert.Null(DAppRequest.Layer2Off("tezosx-shadownet", on));
+        Assert.Null(DAppRequest.Layer2Off("shadownet", []));
+        Assert.Null(DAppRequest.NetworkFor("tezosx-mainnet", null, [on[1]]));
+        // The Layer 2 node in use is the one asked, not the dApp's and not the shipped one.
+        var own = Network.Shadownet.UsingL2(true, new Uri("https://l2.example.org")).Layer2 is { } l2own ? new[] { l2own } : [];
+        Assert.Equal(new Uri("https://l2.example.org"), DAppRequest.NetworkFor("tezosx-shadownet", l2URL, own)?.RpcURL);
+        var l2 = DAppRequest.NetworkFor("tezosx-shadownet", l2URL, on);
+        Assert.Equal(Network.Shadownet.L2DefaultRPCURL, l2?.RpcURL);
+        Assert.True(l2?.LayerNumber == 2 && l2.ExpectedChainID == "NetXtLrzvQDobza");
+        var l2main = DAppRequest.NetworkFor("tezosx-mainnet", null, on);
+        Assert.NotNull(l2main);
+        Assert.True(l2main.RpcURL == Network.Mainnet.L2DefaultRPCURL && l2main.ExpectedChainID == "NetXohUVN5QWR4f");
+        Assert.True(l2.DappType == "tezosx-shadownet" && Network.Shadownet.DappType == "shadownet" && Network.Custom.DappType is null);
+        // Every identifier names exactly one network, on either layer.
+        var types = Network.All.SelectMany(n => new[] { n.DappType, n.L2DAppType }).OfType<string>().ToList();
+        Assert.Equal(types.Count, types.Distinct().Count());
+        Assert.Equal("NetXtLrzvQDobza", DAppRequest.NetworkFor("custom", Network.Shadownet.L2DefaultRPCURL, on)?.ExpectedChainID);
     }
 
     /// <summary>
