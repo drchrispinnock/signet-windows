@@ -244,9 +244,16 @@ tree), and the hashes cited here are the new ones. Ported:
   With Layer 2 off the request sheet offers only OK (the primary button; Close is hidden), which
   rejects, and `ApprovePermission` refuses with `ConnectError.Layer2Off`. `Program.cs`
   replaces the generated `Main` (`DISABLE_XAML_GENERATED_MAIN`): it registers `signet://` with
-  `ActivationRegistrationManager.RegisterForProtocolActivation` at every launch (so the scheme
-  points at whichever copy ran last), and a second launch redirects its activation to the running
-  instance through `AppInstance` and exits, as `LSMultipleInstancesProhibited` does on the Mac.
+  `ActivationRegistrationManager.RegisterForProtocolActivation` at every launch, and a second
+  launch redirects its activation to the running instance through `AppInstance` and exits, as
+  `LSMultipleInstancesProhibited` does on the Mac. Each copy (installed release, Debug, Release,
+  `scratch\Signet-x64`) registers its own handler, `HKCU\Software\Classes\App.<hash>.Protocol`,
+  keyed by its exe path. Which one a `signet://` link opens is Windows' choice, not the last
+  launch's: once the user picks a copy with "Always" in Windows' app picker, or in Default apps,
+  it is saved under `HKCU\…\Shell\Associations\UrlAssociations\signet\UserChoiceLatest`, and
+  that choice wins until the user changes it. Apps cannot set it. To send links to a dev build,
+  choose it in Settings › Apps › Default apps › "Choose defaults by link type" (`SIGNET`), or
+  delete `UserChoiceLatest` so Windows asks again.
   Not yet: the live `ShadownetDAppPrepareTests` (the Shadownet faucet needs proof of work).
 - Multisig: `Multisig` models, `MultisigService` (`BridgeMultisigService`, `MockMultisigService`,
   the proposal stores), the `WalletViewModel` multisig section (S16 context checks, S27 untrusted
