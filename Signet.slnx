@@ -5,7 +5,12 @@
   </Configurations>
   <Folder Name="/src/">
     <Project Path="src/Signet.Core/Signet.Core.csproj" />
-    <Project Path="src/Signet.App/Signet.App.csproj" />
+    <!-- Built as the solution's platform, so the output lands in bin\<Platform>\<Configuration>
+         like `dotnet run -p:Platform=…`, the release workflow and scripts/sign-build.ps1. -->
+    <Project Path="src/Signet.App/Signet.App.csproj">
+      <Platform Solution="*|x64" Project="x64" />
+      <Platform Solution="*|ARM64" Project="ARM64" />
+    </Project>
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Signet.Core.Tests/Signet.Core.Tests.csproj" />
