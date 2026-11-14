@@ -16,6 +16,7 @@ namespace Signet.App.Views;
 /// is only shown once it exists on chain (<c>EtherlinkAliasStatus.Linked</c>): until the account has
 /// made its first cross-interface call, tez sent to it would sit at an address nobody controls,
 /// so the sheet offers to link the account first (a no-op gateway call paid on Etherlink).
+/// The Etherlink side is hidden while <c>EtherlinkAlias.IsOffered</c> is off (0.9.16, Etherlink 8.0).
 /// </summary>
 public sealed partial class ReceiveSheet : Sheet
 {

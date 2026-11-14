@@ -90,6 +90,13 @@ public static class Keccak
 /// </summary>
 public static class EtherlinkAlias
 {
+    /// <summary>
+    /// Whether Receive offers the Etherlink side (the alias, its check and the link). Off from
+    /// 0.9.16: Etherlink 8.0 changes how the alias is derived, so <c>AddressFor</c> would show an
+    /// address that stops being the account's. Turn it back on once the derivation follows 8.0.
+    /// </summary>
+    public const bool IsOffered = false;
+
     public static string AddressFor(Address account) =>
         "0x" + Convert.ToHexStringLower(Keccak.Hash256(Encoding.UTF8.GetBytes(account.Value))[..20]);
 }

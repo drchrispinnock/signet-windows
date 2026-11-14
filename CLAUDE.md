@@ -364,6 +364,10 @@ Windows-specific porting notes:
   - Still open: G02 master-key encryption, separating scanned commitments from the key file,
     and E01 to E03 in the Octez Connect SDK.
 
+- 0.9.16, ahead of upstream: Receive's Etherlink side (the EVM alias, its check and the link) is
+  hidden behind `EtherlinkAlias.IsOffered` (false), because Etherlink 8.0 changes how the alias
+  is derived. When the Mac change lands, follow its wording and gating.
+
 - `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock
   chain, in-memory accounts (Captain Stake held with a placeholder key, so Baking and Governance
   show a baker) and mock multisig. It claims neither the single instance nor `signet://`, shows

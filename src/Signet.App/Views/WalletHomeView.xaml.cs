@@ -155,7 +155,7 @@ public sealed partial class WalletHomeView : UserControl
         else if (model.IsPresentingImportAccount) { dialog = new ImportAccountSheet(model); reset = () => model.IsPresentingImportAccount = false; }
         else if (model.IsPresentingRenameWallet) { dialog = new RenameWalletSheet(model); reset = () => model.IsPresentingRenameWallet = false; }
         else if (model.IsPresentingAddAddress) { dialog = new AddAddressSheet(model); reset = () => model.IsPresentingAddAddress = false; }
-        else if (model.IsPresentingExportKey) { dialog = new ExportKeySheet(model); reset = () => model.IsPresentingExportKey = false; }
+        else if (model.IsPresentingExportKey) { dialog = new ExportKeySheet(model); reset = () => model.IsPresentingExportKey = false; }
         else if (model.NftOperation is { } nftOperation && model.SelectedWallet is not null)
         {
             dialog = new TransferNFTSheet(model, nftOperation);
@@ -167,7 +167,7 @@ public sealed partial class WalletHomeView : UserControl
         else if (model.IsPresentingRememberKey) { dialog = new RememberKeySheet(model); reset = () => model.IsPresentingRememberKey = false; }
         else if (model.IsPresentingReceive && model.SelectedWallet is { } wallet)
         {
-            dialog = new ReceiveSheet(wallet, model.Domains, model.Network.HasL2 && wallet.Address.IsUsableOnEtherlink, model);
+            dialog = new ReceiveSheet(wallet, model.Domains, EtherlinkAlias.IsOffered && model.Network.HasL2 && wallet.Address.IsUsableOnEtherlink, model);
             reset = () => model.IsPresentingReceive = false;
         }
         else if (model.IsPresentingFaucet) { dialog = new FaucetSheet(model); reset = () => model.IsPresentingFaucet = false; }
