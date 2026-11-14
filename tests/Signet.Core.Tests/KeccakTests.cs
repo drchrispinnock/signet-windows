@@ -19,6 +19,16 @@ public class KeccakTests
         Assert.Equal("96ea54061def936c4be90b518992fdc6f12f535068a256229aca54267b4d084d", Hex(Keccak.Hash256(longer)));
     }
 
+    /// <summary>
+    /// Etherlink 8.0 changes the alias derivation: until Signet has the new one, Receive must
+    /// not show or link the old address.
+    /// </summary>
+    [Fact]
+    public void TheEvmAliasIsNotOfferedBeforeEtherlink8()
+    {
+        Assert.False(EtherlinkAlias.IsOffered);
+    }
+
     [Fact]
     public void EtherlinkAliasMatchesTheNode()
     {

@@ -91,9 +91,10 @@ public static class Keccak
 public static class EtherlinkAlias
 {
     /// <summary>
-    /// Whether Receive offers the Etherlink side (the alias, its check and the link). Off from
-    /// 0.9.16: Etherlink 8.0 changes how the alias is derived, so <c>AddressFor</c> would show an
-    /// address that stops being the account's. Turn it back on once the derivation follows 8.0.
+    /// Whether Receive offers the EVM-side address and "Link to Etherlink". <b>Off:</b> Etherlink
+    /// 8.0 replaces this derivation with a new, recoverable alias (RFC-26051), so an address
+    /// shown or linked today would not be the account's address after the upgrade, and tez sent
+    /// to it could be stranded. Turn it back on only with the new derivation in place.
     /// </summary>
     public const bool IsOffered = false;
 

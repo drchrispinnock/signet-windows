@@ -11,13 +11,13 @@ namespace Signet.App.Views;
 
 /// <summary>
 /// Shows the selected wallet's address as a QR code and text so someone can send tez to it.
+/// <b>The Etherlink side described below is switched off</b> (<c>EtherlinkAlias.IsOffered</c>): the
+/// alias derivation changes in Etherlink 8.0, so the sheet shows the Tezos address only.
 /// With Layer 2 on, the logo at the top left has a drop-down beside it (<c>ChainSidePicker</c>) that
 /// switches to the account's address on Etherlink's EVM side (<c>EtherlinkAlias</c>). That address
 /// is only shown once it exists on chain (<c>EtherlinkAliasStatus.Linked</c>): until the account has
 /// made its first cross-interface call, tez sent to it would sit at an address nobody controls,
-/// so the sheet offers to link the account first (a no-op gateway call paid on Etherlink).
-/// The Etherlink side is hidden while <c>EtherlinkAlias.IsOffered</c> is off (0.9.16, Etherlink 8.0).
-/// </summary>
+/// so the sheet offers to link the account first (a no-op gateway call paid on Etherlink)./// </summary>
 public sealed partial class ReceiveSheet : Sheet
 {
     private readonly Wallet wallet;

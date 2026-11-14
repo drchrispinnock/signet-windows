@@ -98,6 +98,13 @@ JavaScript bundle. The Windows app embeds `upstream/Signet/Resources/taquito-bri
 upstream in `TaquitoBridge/src` and rebuild there (`npm install && npm run build`, which needs
 Node.js). Then advance the submodule.
 
+Since upstream `e2cf43f` (November 2026) the bundled library is octez.js (`@tezos-x/octez.js`,
+Trilitech's fork of Taquito with the same API) and Octez Connect 5.0.5; the names
+`TaquitoBridge`, `TaquitoChainService` and `taquito-bridge.js` are unchanged. octez.js retries
+failed HTTP requests on its own unless `process.env.OCTEZJS_HTTP_RETRY_COUNT` is `"0"`, which the
+bundle's polyfill sets when there is no `process` global. Don't define `process` in the V8 host,
+or a lost injection reply could be sent twice instead of staying an unknown outcome (S15).
+
 `TaquitoBridge` (C#) must provide the same native contract that `upstream/Signet/Services/TaquitoBridge.swift`
 installs as `globalThis.__signet`: `setTimer`/`clearTimer` (calls back `__signet_timerFired`),
 `randomBytes`, `fetch`/`cancelFetch` (calls back `__signet_fetchDone`), `ledgerDevices`/
@@ -120,10 +127,10 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 ## Status
 
-The pin is upstream `280b098` (main, 2026-11-10), and everything up to it is ported: every
+The pin is upstream `53c6e66` (main, 2026-11-14), and everything up to it is ported: every
 feature (TzEL included), the infrastructure behind them, and every upstream test suite (the
 Linux/FreeBSD build commits `00269fa`, `445e047`, `98dd8d7`, `45f6849`, `548b3b1` need nothing
-here, nor do the manuscript, release-workflow and bridge-only commits). Upstream rewrote its
+here, nor do the iOS commit `0c263c2`, the manuscript, release-workflow and bridge-only commits). Upstream rewrote its
 history in November 2026: the old pin `1fc7dc4` is `cf1409e` in the new history (the same
 tree), and the hashes cited here are the new ones. Ported:
 - Models, `Network` and `AppState` in full, the shielded members included.
@@ -364,9 +371,9 @@ Windows-specific porting notes:
   - Still open: G02 master-key encryption, separating scanned commitments from the key file,
     and E01 to E03 in the Octez Connect SDK.
 
-- 0.9.16, ahead of upstream: Receive's Etherlink side (the EVM alias, its check and the link) is
-  hidden behind `EtherlinkAlias.IsOffered` (false), because Etherlink 8.0 changes how the alias
-  is derived. When the Mac change lands, follow its wording and gating.
+- Receive's Etherlink side (the EVM alias, its check and the link) is switched off by
+  `EtherlinkAlias.IsOffered` (false, upstream `bea3e76`): Etherlink 8.0 replaces the alias
+  derivation (RFC-26051). The model, bridge calls and tests for the alias remain.
 
 - `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock
   chain, in-memory accounts (Captain Stake held with a placeholder key, so Baking and Governance
