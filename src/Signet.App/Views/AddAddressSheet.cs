@@ -41,6 +41,9 @@ public sealed partial class AddAddressSheet : Sheet
         Opened += (_, _) => alias.Focus(FocusState.Programmatic);
         Validate();
         UpdatePreview();
+        // An address that Scan QR code found is already filled in.
+        if (model.AddAddressPrefill is { } scanned) address.Text = scanned.Value;
+        model.AddAddressPrefill = null;
     }
 
     private Address Trimmed => new(address.Text.Trim());

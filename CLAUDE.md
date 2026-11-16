@@ -375,6 +375,23 @@ Windows-specific porting notes:
   `EtherlinkAlias.IsOffered` (false, upstream `bea3e76`): Etherlink 8.0 replaces the alias
   derivation (RFC-26051). The model, bridge calls and tests for the alias remain.
 
+- Scan QR code (upstream `dc185a1`): `QRPayload` (the address case is `AddressContent`) and
+  `ImportPrefill` in Core, `DAppPairingLink.CodeFromScanned`, the view model's scan section
+  (`HasCamera`, `PendingScan`/`ScanHandoff`, the prefills, `RoutePendingScan`, run by the home
+  view's reset when the scan sheet closes, `AddressForScannedPublicKey`, `CanSendFromSelected`),
+  `ScanQRSheet`, the burger-menu item and the welcome screen's "Import from QR code" while a
+  camera is attached. Windows differences: decoding is ZXing.Net (`QRCode.Decode`/`DecodeAll` on
+  a `QRCode.Bitmap`, grey or BGRA pixels, since Core has no codec; `QRCode.Image` renders one);
+  the camera is `MediaCapture` with a Bgra8 `MediaFrameReader` (`QRCaptureSession` in
+  `Signet.App/Services/QRScanner.cs`: about 1280 px wide, a search every 200 ms, exclusive
+  control or else shared read-only, the preview a `SoftwareBitmapSource`); `CameraWatcher` is a
+  `DeviceWatcher` on video capture devices, made in `App.OnLaunched`. The camera denied by
+  Windows' privacy settings links to `ms-settings:privacy-webcam`. Windows has no user-preferred
+  camera, so `QRCamera.Preferred` takes the first. The clipboard (a bitmap, else text) and image
+  files are decoded by Windows Imaging Component in the app; `QRCamera.TextsFromPasteboard`
+  (Core) takes what the clipboard holds, so `QRScanTests.ReadsTheClipboardAsImageOrText` runs
+  headless.
+
 - `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock
   chain, in-memory accounts (Captain Stake held with a placeholder key, so Baking and Governance
   show a baker) and mock multisig. It claims neither the single instance nor `signet://`, shows

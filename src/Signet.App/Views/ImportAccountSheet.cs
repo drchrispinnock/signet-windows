@@ -124,6 +124,19 @@ public sealed partial class ImportAccountSheet : Sheet
         password.PasswordChanged += (_, _) => Validate();
         confirmPassword.PasswordChanged += (_, _) => Validate();
         Validate();
+
+        // A key or phrase that Scan QR code found: the sheet opens on it, already filled in.
+        switch (model.ImportPrefill)
+        {
+            case ImportPrefill.SecretKey key:
+                secretKey.Password = key.Key;
+                break;
+            case ImportPrefill.RecoveryPhrase words:
+                source.SelectedItem = source.Items[1];
+                phrase.Text = words.Phrase;
+                break;
+        }
+        model.ImportPrefill = null;
     }
 
     private Source SelectedSource => source.SelectedItem?.Tag is Source s ? s : Source.SecretKey;

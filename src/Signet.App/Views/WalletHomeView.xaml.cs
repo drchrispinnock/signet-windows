@@ -51,7 +51,7 @@ public sealed partial class WalletHomeView : UserControl
     {
         switch (e.PropertyName)
         {
-            case nameof(WalletViewModel.SelectedWallet) or nameof(WalletViewModel.Wallets) or nameof(WalletViewModel.ImportableWalletCount):
+            case nameof(WalletViewModel.SelectedWallet) or nameof(WalletViewModel.Wallets) or nameof(WalletViewModel.ImportableWalletCount) or nameof(WalletViewModel.HasCamera):
                 Update();
                 UpdateBalances();
                 break;
@@ -150,6 +150,12 @@ public sealed partial class WalletHomeView : UserControl
         Action? reset = null;
         if (model.Dapps.Current is { } request) { dialog = new DAppRequestSheet(model, request); reset = () => { }; }
         else if (model.IsPresentingConnectDApp) { dialog = new ConnectDAppSheet(model); reset = () => model.IsPresentingConnectDApp = false; }
+        else if (model.IsPresentingScanQR)
+        {
+            dialog = new ScanQRSheet(model);
+            // The scan sheet hands what it found to the next sheet once it has gone (upstream onDismiss).
+            reset = () => { model.IsPresentingScanQR = false; model.RoutePendingScan(); };
+        }
         else if (model.IsPresentingBridge && model.SelectedWallet is not null) { dialog = new BridgeSheet(model); reset = () => model.IsPresentingBridge = false; }
         else if (model.IsPresentingCreateWallet) { dialog = new CreateWalletSheet(model); reset = () => model.IsPresentingCreateWallet = false; }
         else if (model.IsPresentingImportAccount) { dialog = new ImportAccountSheet(model); reset = () => model.IsPresentingImportAccount = false; }
@@ -188,6 +194,7 @@ public sealed partial class WalletHomeView : UserControl
             reset = () =>
             {
                 model.IsPresentingSend = false;
+                model.SendPrefill = null;
                 // Done (or closing after the operation went out) refreshes now and again shortly.
                 if (sheet.DidSend) _ = model.RefreshAfterOperation();
             };
@@ -267,6 +274,9 @@ public sealed partial class NoWalletsView : UserControl
                                          () => model.IsPresentingImportAccount = true));
         options.Children.Add(StartOption("Connect a Ledger", "Use a key that stays on your hardware wallet.", "", false,
             () => model.IsPresentingConnectLedger = true));
+        if (model.HasCamera)
+            options.Children.Add(StartOption("Import from QR code", "Scan a secret key or a recovery phrase with the camera.", "", false,
+                () => model.IsPresentingScanQR = true));
         if (model.ImportableWalletCount > 0)
         {
             var count = model.ImportableWalletCount;

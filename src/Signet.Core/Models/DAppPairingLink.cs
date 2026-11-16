@@ -13,6 +13,23 @@ public static class DAppPairingLink
     public static string? Code(Uri url)
     {
         if (!string.Equals(url.Scheme, Scheme, StringComparison.OrdinalIgnoreCase)) return null;
+        return CodeFromAnyScheme(url);
+    }
+
+    /// <summary>
+    /// The pairing code in scanned text that is a TZIP-10 link for any wallet (<c>tezos://</c>,
+    /// <c>signet://</c>, a wallet's https page): a QR code is shown to whichever wallet reads it.
+    /// </summary>
+    public static string? CodeFromScanned(string text)
+    {
+        if (!(text.Contains("://", StringComparison.Ordinal) || text.StartsWith("tezos:", StringComparison.Ordinal))
+            || !Uri.TryCreate(text, UriKind.Absolute, out var url)) return null;
+        return CodeFromAnyScheme(url);
+    }
+
+    private static string? CodeFromAnyScheme(Uri url)
+    {
+        if (string.IsNullOrEmpty(url.Scheme)) return null;
         var query = url.Query.TrimStart('?');
         if (query.Length == 0) return null;
         var items = query.Split('&').Select(pair =>

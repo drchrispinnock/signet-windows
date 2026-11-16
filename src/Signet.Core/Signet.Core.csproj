@@ -11,6 +11,7 @@
     <PackageReference Include="HidSharp" />
     <PackageReference Include="NSec.Cryptography" />
     <PackageReference Include="QRCoder" />
+    <PackageReference Include="ZXing.Net" />
   </ItemGroup>
   <ItemGroup>
     <!-- The bundle is built and committed upstream; ship it as is, never copy or edit it here. -->

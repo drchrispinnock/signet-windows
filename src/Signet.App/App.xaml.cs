@@ -9,6 +9,8 @@ public partial class App : Application
 {
     private Window? window;
     private WalletViewModel? model;
+    /// <summary>Kept for as long as the app runs, so its device watcher keeps reporting.</summary>
+    private Services.CameraWatcher? cameraWatcher;
     /// <summary>A <c>signet://</c> link this launch was started with, handed to the model once it exists.</summary>
     private readonly Uri? launchURL;
 
@@ -90,6 +92,9 @@ public partial class App : Application
         window = new MainWindow(model);
         if (launchURL is not null) model.HandleIncomingURL(launchURL);
         window.Activate();
+        // Shows the Scan QR code items while a camera is attached.
+        var scanModel = model;
+        cameraWatcher = new Services.CameraWatcher(window.DispatcherQueue, hasCamera => scanModel.HasCamera = hasCamera);
         // The daily update check (upstream starts Sparkle except under the test host). The preview
         // window leaves it alone unless it is pointed at a local test feed.
         if (!preview || Environment.GetEnvironmentVariable(Services.UpdaterService.SourceOverrideVariable) is { Length: > 0 })

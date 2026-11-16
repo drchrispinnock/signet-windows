@@ -60,6 +60,8 @@ public sealed partial class SendSheet : Sheet
         wallets = model.Wallets;
         (layer1, layer2) = SendSideContext.Capture(model);
         send = MakeSend();
+        // An address that Scan QR code found is the recipient to start with.
+        if (model.SendPrefill is { } scanned) send.RecipientText = scanned.Value;
         var picker = new ChainSidePicker(side, layer2 is not null && sender.Address.IsUsableOnEtherlink);
         picker.SideChanged += async picked =>
         {

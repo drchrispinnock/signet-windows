@@ -131,6 +131,75 @@ public sealed partial class WalletViewModel : ObservableObject
     /// <summary>dApp connections over Octez Connect (TZIP-10).</summary>
     [ObservableProperty] private DAppConnectionManager dapps;
 
+    // MARK: Scan QR code
+
+    /// <summary>
+    /// Whether this PC has a camera right now; the app's <c>CameraWatcher</c> keeps it current.
+    /// The Scan QR code items show only while it is true.
+    /// </summary>
+    [ObservableProperty] private bool hasCamera;
+    [ObservableProperty] private bool isPresentingScanQR;
+    /// <summary>
+    /// What the scan sheet found, routed to the sheet that deals with it once the scan sheet has
+    /// gone (only one sheet can be up at a time).
+    /// </summary>
+    [ObservableProperty] private ScanHandoff? pendingScan;
+    /// <summary>
+    /// What the Import account, Add address and Send sheets open on after a scan. Each sheet
+    /// takes its value when it appears and clears it.
+    /// </summary>
+    [ObservableProperty] private ImportPrefill? importPrefill;
+    [ObservableProperty] private Address? addAddressPrefill;
+    [ObservableProperty] private Address? sendPrefill;
+
+    /// <summary>Where a scanned code goes next.</summary>
+    public abstract record ScanHandoff
+    {
+        public sealed record Pair(string Code) : ScanHandoff;
+        public sealed record ImportKey(ImportPrefill Prefill) : ScanHandoff;
+        public sealed record AddAddress(Address Address) : ScanHandoff;
+        public sealed record Send(Address Address) : ScanHandoff;
+    }
+
+    /// <summary>Opens the sheet for what was scanned. Called when the scan sheet has been dismissed.</summary>
+    public void RoutePendingScan()
+    {
+        if (PendingScan is not { } handoff) return;
+        PendingScan = null;
+        switch (handoff)
+        {
+            case ScanHandoff.Pair pair:
+                PendingPairingCode = pair.Code;
+                IsPresentingConnectDApp = true;
+                break;
+            case ScanHandoff.ImportKey import:
+                ImportPrefill = import.Prefill;
+                IsPresentingImportAccount = true;
+                break;
+            case ScanHandoff.AddAddress add:
+                AddAddressPrefill = add.Address;
+                IsPresentingAddAddress = true;
+                break;
+            case ScanHandoff.Send send:
+                if (SelectedWallet is null) return;
+                SendPrefill = send.Address;
+                IsPresentingSend = true;
+                break;
+        }
+    }
+
+    /// <summary>The address a scanned public key belongs to, derived locally.</summary>
+    public async Task<Address> AddressForScannedPublicKey(string key)
+    {
+        var address = await multisigService.AddressForPublicKey(key);
+        if (!address.IsValidAccount) throw new WalletError.InvalidAddress();
+        return address;
+    }
+
+    /// <summary>Whether Send can be offered for a scanned address: the same rule as the Send button.</summary>
+    public bool CanSendFromSelected =>
+        SelectedWallet is { } wallet && wallet.KeyKind.CanSign() && !wallet.Address.IsContract && !AccountNotOnChain;
+
     /// <summary>Export shows keys Signet holds on disk; Ledger and watch-only entries have nothing to show.</summary>
     public bool CanExportSelectedKey => SelectedWallet?.KeyKind is KeyKind.Unencrypted or KeyKind.Encrypted;
     /// <summary>
