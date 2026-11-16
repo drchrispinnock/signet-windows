@@ -65,6 +65,62 @@ public class QRScanTests
     }
 
     [Fact]
+    public void CollectsThePartsOfALongKey()
+    {
+        // A tz5 secret key: the mdsk prefix and 3872 bytes.
+        var key = Base58.CheckEncode([9, 57, 116, 57], Enumerable.Range(0, 3872).Select(i => unchecked((byte)(i * 13))).ToArray());
+        Assert.StartsWith("mdsk", key);
+        var parts = KeyPart.Split(key, chunkLength: 1400);
+        Assert.Equal(4, parts.Count);
+        Assert.Single(parts.Select(p => p.Id).Distinct());
+        Assert.All(parts, p =>
+        {
+            Assert.Equal(new QRPayload.KeyPartContent(p), QRPayload.Classify(p.Text));
+            Assert.True(QRPayload.Classify(p.Text).IsSecret);
+        });
+        Assert.Empty(KeyPart.Split("short"));
+
+        var collector = new KeyPartCollector();
+        Assert.True(collector.IsEmpty);
+        Assert.Equal(new KeyPartCollector.Outcome.NeedMore(), collector.Add(parts[2]));
+        Assert.Equal(new KeyPartCollector.Outcome.NeedMore(), collector.Add(parts[2]));
+        Assert.True(collector.Missing.SequenceEqual([1, 2, 4]) && collector.Received == 1 && collector.Count == 4);
+        Assert.Equal(new KeyPartCollector.Outcome.NeedMore(), collector.Add(parts[0]));
+        Assert.Equal(new KeyPartCollector.Outcome.NeedMore(), collector.Add(parts[3]));
+        Assert.Equal(new KeyPartCollector.Outcome.Complete(key), collector.Add(parts[1]));
+        Assert.True(collector.IsEmpty);
+
+        // A part of another key starts over rather than mixing the two.
+        var other = KeyPart.Split(Base58.CheckEncode([9, 57, 116, 57], Enumerable.Repeat((byte)9, 3872).ToArray()), chunkLength: 1400);
+        Assert.Equal(new KeyPartCollector.Outcome.NeedMore(), collector.Add(parts[0]));
+        Assert.Equal(new KeyPartCollector.Outcome.NeedMore(), collector.Add(other[1]));
+        Assert.Equal([1, 3, 4], collector.Missing);
+
+        // Parts that claim one id but do not make that key are refused.
+        var forged = new KeyPartCollector();
+        KeyPart[] swapped = [parts[0], new KeyPart(2, 4, parts[0].Id, parts[2].Chunk), parts[2], parts[3]];
+        Assert.Equal(new KeyPartCollector.Outcome.Invalid(), swapped.Select(forged.Add).ToList()[^1]);
+        Assert.True(forged.IsEmpty);
+    }
+
+    [Theory]
+    [InlineData("signet-key:")]
+    [InlineData("signet-key:1/1:abcdef12:abc")]
+    [InlineData("signet-key:0/3:abcdef12:abc")]
+    [InlineData("signet-key:4/3:abcdef12:abc")]
+    [InlineData("signet-key:1/99:abcdef12:abc")]
+    [InlineData("signet-key:1/3:xyz:abc")]
+    [InlineData("signet-key:1/3:abcdef12:")]
+    [InlineData("signet-key:1/3:abcdef12:a b")]
+    [InlineData("signet-key:1/3:abcdef12:abc:def")]
+    [InlineData("signet-key:one/3:abcdef12:abc")]
+    public void RefusesMalformedKeyParts(string text)
+    {
+        Assert.Equal(new QRPayload.Unknown(), QRPayload.Classify(text));
+        Assert.Equal(new QRPayload.KeyPartContent(new KeyPart(2, 3, "abcdef12", "abc")), QRPayload.Classify("signet-key:2/3:abcdef12:abc"));
+    }
+
+    [Fact]
     public void RefusesEverythingElse()
     {
         Assert.Equal(new QRPayload.Unknown(), QRPayload.Classify(""));

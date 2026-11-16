@@ -391,6 +391,18 @@ Windows-specific porting notes:
   files are decoded by Windows Imaging Component in the app; `QRCamera.TextsFromPasteboard`
   (Core) takes what the clipboard holds, so `QRScanTests.ReadsTheClipboardAsImageOrText` runs
   headless.
+- Recovery sheet (upstream `39ed925`, `3faa1be`, `83ce84c`): Export secret key's "Recovery
+  Sheet…" (the dialog's secondary button; the help is its tooltip), `KeyPart` and
+  `KeyPartCollector` in `QRPayload.cs` (the case is `QRPayload.KeyPartContent`), the scan
+  sheet's progress through a key's parts. `RecoverySheet` (upstream's struct in the view file)
+  is a class in Core's `Models/RecoverySheet.cs`, so its tests run headless; it holds the QR
+  matrix (`QRMatrix`, `QRImage`) rather than an image. The pages are drawn by the app's
+  `RecoverySheetPrinter` (`Views/RecoverySheet.cs`) with GDI+ in points at upstream's sizes and
+  printed through Windows Forms' `PrintDialog` (WinUI 3 has no XAML printing; the app takes the
+  `Microsoft.WindowsDesktop.App.WindowsForms` framework reference, not `UseWindowsForms`, which
+  would run WPF's XAML compiler over the WinUI pages). No file is written; Microsoft Print to
+  PDF is the user's way to a PDF. The two PDF rendering tests are skipped. Upstream `4394acc`
+  (camera prompt wording in Info.plist) needs nothing here.
 
 - `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock
   chain, in-memory accounts (Captain Stake held with a placeholder key, so Baking and Governance

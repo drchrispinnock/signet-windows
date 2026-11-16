@@ -38,6 +38,13 @@
     <ProjectReference Include="..\Signet.Core\Signet.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- The recovery sheet prints through System.Drawing and Windows Forms' print dialog (WinUI 3 has no
+         XAML printing). The framework alone: UseWindowsForms would bring WPF's XAML compiler too. -->
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+  <ItemGroup>
     <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
     <!-- The Mac app's artwork, used as it is (like the bridge bundle): never copied into this repo. -->
     <Content Include="..\..\upstream\Signet\Resources\Assets.xcassets\TezosToken.imageset\tezos-token-round.svg" Link="Assets\TezosToken.svg" CopyToOutputDirectory="PreserveNewest" />

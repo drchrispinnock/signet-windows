@@ -44,11 +44,25 @@ public sealed partial class ExportKeySheet : Sheet
             if (!NeedsPassphrase) await Run(Unlock);
             else passphrase.Focus(FocusState.Programmatic);
         };
-        Closed += (_, _) => { exported = null; passphrase.Password = ""; };
+        SecondaryButtonClick += (_, args) =>
+        {
+            // Printing leaves the key on show.
+            args.Cancel = true;
+            if (RecoverySheet is not { } sheet) return;
+            var window = Microsoft.UI.Win32Interop.GetWindowFromWindowId(XamlRoot.ContentIslandEnvironment.AppWindowId);
+            ShowError(RecoverySheetPrinter.Print(sheet, window));
+        };
+        Closed += (_, _) => { exported = null; recoverySheet = null; passphrase.Password = ""; };
         Render();
     }
 
     private bool NeedsPassphrase => wallet?.KeyKind == KeyKind.Encrypted;
+
+    /// <summary>The printable sheet for the key now on show.</summary>
+    private RecoverySheet? RecoverySheet => wallet is not null && exported is { } key
+        ? recoverySheet ??= new RecoverySheet(wallet, key, version: UpdaterService.Shared.CurrentVersion)
+        : null;
+    private RecoverySheet? recoverySheet;
 
     protected override void Validate() =>
         IsPrimaryButtonEnabled = exported is not null || !NeedsPassphrase || passphrase.Password.Length > 0;
@@ -79,6 +93,12 @@ public sealed partial class ExportKeySheet : Sheet
         if (exported is { } key)
         {
             keys.Children.Add(KeyRow("Secret key", key.Clear, maskable: true));
+            if (RecoverySheet is { HasQRCode: false } longSheet)
+                keys.Children.Add(Note($"A recovery sheet for this key is {longSheet.PageCount} pages: it is too long for one QR code, so it is printed as {longSheet.KeyParts.Count} codes that Scan QR code reads back in any order, then in full as text."));
+            else if (RecoverySheet is not null)
+                keys.Children.Add(Note(key.Encrypted is null
+                    ? "A recovery sheet is a printed page with this key as a QR code, which Scan QR code reads back in. This key has no password, so the sheet alone controls the account."
+                    : "A recovery sheet is a printed page with the encrypted key as a QR code, which Scan QR code reads back in, and a box to write the password in by hand."));
             if (key.Encrypted is { } encrypted)
             {
                 keys.Children.Add(KeyRow("Encrypted form", encrypted, maskable: false));
@@ -86,6 +106,14 @@ public sealed partial class ExportKeySheet : Sheet
             }
             PrimaryButtonText = "Done";
             CloseButtonText = "";
+            if (RecoverySheet is { } sheet)
+            {
+                SecondaryButtonText = "Recovery Sheet…";
+                if (GetTemplateChild("SecondaryButton") is Button button)
+                    ToolTipService.SetToolTip(button, sheet.HasQRCode
+                        ? "Print a sheet with this key as a QR code, to recover the account later with Scan QR code"
+                        : $"Print this key over {sheet.PageCount} pages; it is too long for one QR code");
+            }
         }
         else if (NeedsPassphrase && wallet is not null)
         {

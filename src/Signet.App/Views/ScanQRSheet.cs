@@ -40,6 +40,8 @@ public sealed partial class ScanQRSheet : Sheet
     private string? deviceID;
     private Found? found;
     private string? note;
+    /// <summary>The parts read so far of a key that a recovery sheet printed across several codes.</summary>
+    private KeyPartCollector keyParts = new();
     private bool closed;
     private bool framePending;
 
@@ -103,6 +105,22 @@ public sealed partial class ScanQRSheet : Sheet
         body.Children.Clear();
         if (found is { } f) body.Children.Add(FoundPanel(f));
         else Scanner();
+
+        if (found is null && !keyParts.IsEmpty)
+        {
+            var progress = new Grid { ColumnSpacing = 8 };
+            progress.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            progress.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            progress.Children.Add(new ProgressRing { IsIndeterminate = false, Maximum = keyParts.Count, Value = keyParts.Received, Width = 16, Height = 16, VerticalAlignment = VerticalAlignment.Top });
+            var text = new TextBlock
+            {
+                Text = $"A secret key in {keyParts.Count} codes: {keyParts.Received} read. Still needed: {string.Join(", ", keyParts.Missing)}. Scan them in any order.",
+                TextWrapping = TextWrapping.Wrap,
+            };
+            Grid.SetColumn(text, 1);
+            progress.Children.Add(text);
+            body.Children.Add(progress);
+        }
 
         noteRow.Children.Clear();
         if (note is not null) noteRow.Children.Add(Label(note, "", "SystemFillColorCautionBrush"));
@@ -234,6 +252,7 @@ public sealed partial class ScanQRSheet : Sheet
     {
         found = null;
         note = null;
+        keyParts = new KeyPartCollector();
         Render();
         _ = StartCamera();
     }
@@ -287,6 +306,17 @@ public sealed partial class ScanQRSheet : Sheet
             case QRPayload.RecoveryPhrase phrase:
                 Finish(new WalletViewModel.ScanHandoff.ImportKey(new ImportPrefill.RecoveryPhrase(phrase.Phrase)));
                 return;
+            case QRPayload.KeyPartContent part:
+                switch (keyParts.Add(part.Part))
+                {
+                    case KeyPartCollector.Outcome.Complete complete:
+                        Finish(new WalletViewModel.ScanHandoff.ImportKey(new ImportPrefill.SecretKey(complete.Key)));
+                        return;
+                    case KeyPartCollector.Outcome.Invalid:
+                        note = "Those codes do not fit together into a key. Scan every part of the same recovery sheet again.";
+                        break;
+                }
+                break;
             case QRPayload.AddressContent address:
                 Show(new Found(address.Address, false));
                 return;
