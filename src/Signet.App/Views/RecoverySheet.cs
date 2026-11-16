@@ -75,7 +75,35 @@ public static class RecoverySheetPrinter
 
     // ---- The first page ---------------------------------------------------------------------------
 
+    /// <summary>The QR code's side on the first page, and the smallest it may shrink to on short paper.</summary>
+    private const float QRSide = 250, MinimumQRSide = 160;
+
+    /// <summary>
+    /// The first page. Upstream's stack puts the instructions at the foot of the page with at least
+    /// 20 points above them (<c>Spacer(minLength: 20)</c>). Windows lays the page out once without
+    /// drawing; when it would not fit (US Letter is 50 points shorter than A4, and Segoe UI sets
+    /// a little taller), the QR code gives up the difference, down to <c>MinimumQRSide</c>.
+    /// </summary>
     private static void RecoverySheetPage(Painter p, RecoverySheet sheet)
+    {
+        var instructions = Instructions(sheet);
+        var bottom = p.Measure(instructions, 10, FontStyle.Regular, p.Paper.Width - 2 * Margin).Height;
+        var room = p.Paper.Height - Margin - bottom - 20;
+        var side = QRSide;
+        p.Draws = false;
+        var end = RecoverySheetBody(p, sheet, side);
+        p.Draws = true;
+        if (end > room) side = Math.Max(MinimumQRSide, side - (end - room));
+        end = RecoverySheetBody(p, sheet, side);
+        p.Text(instructions, Margin, Math.Max(end + 20, p.Paper.Height - Margin - bottom), p.Paper.Width - 2 * Margin, 10);
+    }
+
+    private static string Instructions(RecoverySheet sheet) => sheet.HasQRCode
+        ? $"To recover the account, open Signet, choose Scan QR code… and hold this sheet up to the camera, or choose Import account… and type the secret key{(sheet.IsEncrypted ? ", then enter the password" : "")}. octez-client accepts the same key. Keep this sheet offline and out of sight, and do not photograph or photocopy it."
+        : $"To recover the account, open Signet, choose Scan QR code… and hold up each of the {sheet.KeyParts.Count} codes on the following pages, in any order; Signet says which it still needs. Or choose Import account… and type the secret key from the last pages as one unbroken line, without the line numbers or spaces{(sheet.IsEncrypted ? ". Then enter the password" : "")}. octez-client accepts the typed key. Keep these pages offline and out of sight, and do not photograph or photocopy them.";
+
+    /// <summary>Everything on the first page above the instructions; returns where it ends.</summary>
+    private static float RecoverySheetBody(Painter p, RecoverySheet sheet, float qrSide)
     {
         var hasQRCode = sheet.HasQRCode;
         var partCount = sheet.KeyParts.Count;
@@ -95,9 +123,8 @@ public static class RecoverySheetPrinter
         if (hasQRCode && sheet.QRMatrix() is { } matrix)
         {
             y += 26;
-            const float side = 250;
-            p.QRCode(matrix, (p.Paper.Width - side) / 2, y, side);
-            y += side + 8;
+            p.QRCode(matrix, (p.Paper.Width - qrSide) / 2, y, qrSide);
+            y += qrSide + 8;
             var caption = sheet.IsEncrypted ? "Secret key, protected by its password" : "Secret key";
             y += p.Text(caption, Margin, y, width, 10, align: StringAlignment.Center);
         }
@@ -133,8 +160,8 @@ public static class RecoverySheetPrinter
             p.Text("Password", Margin, y + (44 - label.Height) / 2, width, 13, FontStyle.Bold);
             p.Box(Margin + label.Width + 14, y, width - label.Width - 14, 44, 1.5f);
             y += 44 + 6;
-            p.Text("Write the password in by hand; it is not printed and cannot be recovered from this sheet. For more safety keep it somewhere else.",
-                   Margin, y, width, 10);
+            y += p.Text("Write the password in by hand; it is not printed and cannot be recovered from this sheet. For more safety keep it somewhere else.",
+                        Margin, y, width, 10);
         }
         else
         {
@@ -142,13 +169,9 @@ public static class RecoverySheetPrinter
             var height = p.Measure(warning, 12, FontStyle.Bold, width - 20).Height;
             p.Box(Margin, y, width, height + 20, 1.5f);
             p.Text(warning, Margin + 10, y + 10, width - 20, 12, FontStyle.Bold);
+            y += height + 20;
         }
-
-        var instructions = hasQRCode
-            ? $"To recover the account, open Signet, choose Scan QR code… and hold this sheet up to the camera, or choose Import account… and type the secret key{(sheet.IsEncrypted ? ", then enter the password" : "")}. octez-client accepts the same key. Keep this sheet offline and out of sight, and do not photograph or photocopy it."
-            : $"To recover the account, open Signet, choose Scan QR code… and hold up each of the {partCount} codes on the following pages, in any order; Signet says which it still needs. Or choose Import account… and type the secret key from the last pages as one unbroken line, without the line numbers or spaces{(sheet.IsEncrypted ? ". Then enter the password" : "")}. octez-client accepts the typed key. Keep these pages offline and out of sight, and do not photograph or photocopy them.";
-        var bottom = p.Measure(instructions, 10, FontStyle.Regular, width).Height;
-        p.Text(instructions, Margin, p.Paper.Height - Margin - bottom, width, 10);
+        return y;
     }
 
     private static float Row(Painter p, string title, string value, float y, float width, bool monospaced = true)
@@ -224,6 +247,9 @@ public static class RecoverySheetPrinter
     {
         public SizeF Paper { get; } = paper;
 
+        /// <summary>Off while a page is only being laid out: every mark is measured, nothing is drawn.</summary>
+        public bool Draws { get; set; } = true;
+
         private static Font Font(float size, FontStyle style, bool monospaced) =>
             new(monospaced ? "Consolas" : "Segoe UI", size, style, GraphicsUnit.Point);
 
@@ -241,15 +267,18 @@ public static class RecoverySheetPrinter
             using var format = new StringFormat { Alignment = align };
             if (!wrap) format.FormatFlags |= StringFormatFlags.NoWrap;
             var measured = graphics.MeasureString(text, font, new SizeF(width, 10000), format);
-            graphics.DrawString(text, font, Brushes.Black, new RectangleF(x, y, width, measured.Height + 1), format);
+            if (Draws) graphics.DrawString(text, font, Brushes.Black, new RectangleF(x, y, width, measured.Height + 1), format);
             return measured.Height;
         }
 
-        public void Rule(float x1, float y, float x2, float thickness) =>
-            graphics.FillRectangle(Brushes.Black, x1, y, x2 - x1, thickness);
+        public void Rule(float x1, float y, float x2, float thickness)
+        {
+            if (Draws) graphics.FillRectangle(Brushes.Black, x1, y, x2 - x1, thickness);
+        }
 
         public void Box(float x, float y, float width, float height, float thickness)
         {
+            if (!Draws) return;
             using var pen = new Pen(Color.Black, thickness) { Alignment = PenAlignment.Inset };
             graphics.DrawRectangle(pen, x, y, width, height);
         }
@@ -258,7 +287,7 @@ public static class RecoverySheetPrinter
         public void Icon(float x, float y, float side)
         {
             var path = Path.Combine(AppContext.BaseDirectory, "Assets", "Signet.png");
-            if (!File.Exists(path)) return;
+            if (!Draws || !File.Exists(path)) return;
             using var image = System.Drawing.Image.FromFile(path);
             graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
             graphics.DrawImage(image, x, y, side, side);
@@ -267,6 +296,7 @@ public static class RecoverySheetPrinter
         /// <summary>A code as filled squares, a dark run of modules at a time so nothing shows between them.</summary>
         public void QRCode(IReadOnlyList<bool[]> matrix, float x, float y, float side)
         {
+            if (!Draws) return;
             var count = matrix.Count;
             var module = side / count;
             var smoothing = graphics.SmoothingMode;
