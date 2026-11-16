@@ -86,4 +86,36 @@ public class NFTDownloadTests
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
+
+    [Fact]
+    public void FilesDownloadsByAccountAddress()
+    {
+        var wallet = Path.Combine(Path.GetTempPath(), "signet-wallet");
+        var address = new Address("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb");
+        Assert.Equal(Path.Combine(wallet, "nfts"), NFTDownloader.DirectoryUnder(wallet));
+        Assert.Equal(Path.Combine(wallet, "nfts", "tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb"), NFTDownloader.DirectoryUnder(wallet, address));
+        // Anything that is not a checksummed address never becomes a folder name.
+        Assert.Equal(Path.Combine(wallet, "nfts"), NFTDownloader.DirectoryUnder(wallet, new Address(@"..\..\etc")));
+    }
+
+    [Fact]
+    public void ArrangesByAddressUnlessTurnedOff()
+    {
+        var defaults = UserDefaults.Temporary();
+        Assert.True(NFTDownloadSettings.ArrangesByAddress(defaults));
+        defaults.Set(NFTDownloadSettings.ArrangeByAddressKey, false);
+        Assert.False(NFTDownloadSettings.ArrangesByAddress(defaults));
+        defaults.Set(NFTDownloadSettings.ArrangeByAddressKey, true);
+        Assert.True(NFTDownloadSettings.ArrangesByAddress(defaults));
+    }
+
+    [Fact]
+    public void TheModelDownloadsIntoTheSelectedAccountsFolder()
+    {
+        var model = new Signet.ViewModels.WalletViewModel(Signet.ViewModels.WalletViewModel.SampleWallets, new MockChainService());
+        var address = model.SelectedWallet!.Address;
+        Assert.Equal(address.Value, Path.GetFileName(model.NftDownloaderArranged(true).Directory));
+        Assert.Equal("nfts", Path.GetFileName(Path.GetDirectoryName(model.NftDownloaderArranged(true).Directory)));
+        Assert.Equal("nfts", Path.GetFileName(model.NftDownloaderArranged(false).Directory));
+    }
 }

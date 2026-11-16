@@ -127,7 +127,7 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 ## Status
 
-The pin is upstream `53c6e66` (main, 2026-11-14), and everything up to it is ported: every
+The pin is upstream `b292cfd` (main, 2026-11-16, release 0.9.17), and everything up to it is ported: every
 feature (TzEL included), the infrastructure behind them, and every upstream test suite (the
 Linux/FreeBSD build commits `00269fa`, `445e047`, `98dd8d7`, `45f6849`, `548b3b1` need nothing
 here, nor do the iOS commit `0c263c2`, the manuscript, release-workflow and bridge-only commits). Upstream rewrote its
@@ -178,6 +178,9 @@ tree), and the hashes cited here are the new ones. Ported:
   Artwork, copies, Select All). `TransferNFTSheet` (`TokenTransferRequest`, `BatchLimits`,
   `WalletViewModel+Tokens.cs`), `DownloadNFTsSheet` and `NFTDownloader` (Show in File Explorer;
   Windows also turns `< > " | ? *` and a trailing dot in a token name into file-name-safe text).
+  Downloads go into `nfts\<account address>` unless Settings' "Arrange NFTs by address" is off
+  (`NFTDownloadSettings`, upstream `83a657f`); upstream's `nftDownloader(arrangedByAddress:)` is
+  `NftDownloaderArranged`, since the property keeps the name `NftDownloader`.
 - tz4 sends make the reveal's proof of possession (`Wallet.ProofOfPossession`,
   `ChainError.ProofOfPossessionRequired`, the compose-step password); "Create proof of
   possession…" (`ProofOfPossessionSheet`); the Baking key field takes a tz address

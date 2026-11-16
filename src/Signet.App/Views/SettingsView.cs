@@ -96,6 +96,7 @@ public sealed partial class SettingsView : Sheet
             Form.Children.Add(Note("The wallet files are copied here on every launch and after any key is created or renamed. Automatic copies are skipped when nothing has changed; Back Up Now always writes one. Only the newest generations are kept."));
         }
 
+        NftSection();
         UpdatesSection();
         DeveloperSection();
 
@@ -109,6 +110,26 @@ public sealed partial class SettingsView : Sheet
             updater.PropertyChanged -= UpdaterChanged;
         };
         Update();
+    }
+
+    // ---- NFTs (upstream's nftSection) ----------------------------------------------------------------
+
+    private void NftSection()
+    {
+        Form.Children.Add(new SectionHeader("NFTs"));
+        var arrange = new ToggleSwitch { Header = "Arrange NFTs by address", IsOn = NFTDownloadSettings.ArrangesByAddress() };
+        var note = Note("");
+        void Describe() => note.Text = arrange.IsOn
+            ? "Downloaded artwork goes into a folder named after the account's address, inside the wallet directory's nfts folder."
+            : "Downloaded artwork from every account goes into the wallet directory's nfts folder together.";
+        arrange.Toggled += (_, _) =>
+        {
+            UserDefaults.Standard.Set(NFTDownloadSettings.ArrangeByAddressKey, arrange.IsOn);
+            Describe();
+        };
+        Describe();
+        Form.Children.Add(arrange);
+        Form.Children.Add(note);
     }
 
     // ---- Developer (upstream's developerSection) ----------------------------------------------------

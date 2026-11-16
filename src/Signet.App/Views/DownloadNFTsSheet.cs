@@ -7,7 +7,8 @@ using Signet.Services;
 namespace Signet.App.Views;
 
 /// <summary>
-/// Saves the artwork of one or many NFTs into the wallet directory's <c>nfts</c> folder, a row per
+/// Saves the artwork of one or many NFTs into the wallet directory's <c>nfts</c> folder (the
+/// account's own folder there when NFTs are arranged by address), a row per
 /// token with its progress, and shows the folder in File Explorer when asked. Closing the sheet
 /// stops whatever is still downloading; what was saved stays.
 /// </summary>

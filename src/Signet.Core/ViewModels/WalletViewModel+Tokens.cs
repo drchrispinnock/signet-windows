@@ -37,8 +37,15 @@ public sealed partial class WalletViewModel
 
     private IChainService? TokenChain(int layer) => layer == 2 ? Layer2Chain : ChainService;
 
-    /// <summary>Saves artwork into the <c>nfts</c> folder of the wallet directory in use.</summary>
-    public NFTDownloader NftDownloader => new(NFTDownloader.DirectoryUnder(WalletDirectory ?? TezosClientStore.DefaultDirectory));
+    /// <summary>
+    /// Saves artwork into the <c>nfts</c> folder of the wallet directory in use, in the selected
+    /// account's own folder there while "Arrange NFTs by address" is on.
+    /// </summary>
+    public NFTDownloader NftDownloader => NftDownloaderArranged(NFTDownloadSettings.ArrangesByAddress());
+
+    /// <summary>Upstream <c>nftDownloader(arrangedByAddress:)</c> (C# cannot overload a property with a method).</summary>
+    public NFTDownloader NftDownloaderArranged(bool arrangedByAddress) =>
+        new(NFTDownloader.DirectoryUnder(WalletDirectory ?? TezosClientStore.DefaultDirectory, arrangedByAddress ? SelectedWallet?.Address : null));
 
     public async Task<TokenTransferApproval> EstimateTokenTransfer(TokenTransferRequest request, int layer)
     {

@@ -3,11 +3,27 @@ using Signet.Models;
 namespace Signet.Services;
 
 /// <summary>
+/// Whether downloaded artwork is filed by account: <c>nfts\&lt;address&gt;\…</c> rather than
+/// everything in <c>nfts</c>. On unless the user turns it off in Settings.
+/// </summary>
+public static class NFTDownloadSettings
+{
+    public const string ArrangeByAddressKey = "arrangeNFTsByAddress";
+
+    public static bool ArrangesByAddress(UserDefaults? defaults = null)
+    {
+        defaults ??= UserDefaults.Standard;
+        return defaults.Object(ArrangeByAddressKey) is null || defaults.Bool(ArrangeByAddressKey);
+    }
+}
+
+/// <summary>
 /// Saves an NFT's artwork to disk: the full artifact (the video, sound or full-size image the
 /// token points at), or the display image when the metadata names no artifact. Content comes
 /// through the pinned public client like the tiles do, one gateway after another, and lands
-/// in the <c>nfts</c> folder of the wallet directory under a name made of the token's name, its
-/// contract and its id, so every token has one file and a second download replaces the first.
+/// in the <c>nfts</c> folder of the wallet directory (in a folder named after the account's
+/// address inside it when NFTs are arranged by address) under a name made of the token's name,
+/// its contract and its id, so every token has one file and a second download replaces the first.
 /// </summary>
 public sealed class NFTDownloader
 {
@@ -38,8 +54,16 @@ public sealed class NFTDownloader
     public string Directory { get; }
     private readonly Fetch fetch;
 
-    /// <summary>The downloads folder beside a wallet directory's key files. (Upstream <c>directory(under:)</c>.)</summary>
-    public static string DirectoryUnder(string walletDirectory) => Path.Combine(walletDirectory, FolderName);
+    /// <summary>
+    /// The downloads folder beside a wallet directory's key files, or the account's own folder
+    /// inside it when one is given. Only a well-formed address becomes a folder name.
+    /// (Upstream <c>directory(under:account:)</c>.)
+    /// </summary>
+    public static string DirectoryUnder(string walletDirectory, Address? account = null)
+    {
+        var folder = Path.Combine(walletDirectory, FolderName);
+        return account is { IsValidAccount: true } address ? Path.Combine(folder, address.Value) : folder;
+    }
 
     public NFTDownloader(string directory, Fetch? fetch = null)
     {
