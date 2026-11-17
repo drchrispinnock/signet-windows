@@ -301,9 +301,10 @@ public sealed partial class LayerToggles : UserControl
     public void Sync()
     {
         syncing = true;
-        foreach (var (button, layer, name) in new[] { (tezos, 1, "Tezos"), (etherlink, 2, "Etherlink") })
+        foreach (var (button, layer, name) in new[] { (tezos, 1, "Tezos"), (etherlink, 2, model.Network.L2Name) })
         {
             var on = model.ShownLayers.Contains(layer);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, name);
             button.IsChecked = on;
             ((FrameworkElement)button.Content).Opacity = on ? 1 : 0.45;
             ToolTipService.SetToolTip(button, on ? $"Showing {name}. Click to hide its transactions, tokens and NFTs." : $"Show {name}");

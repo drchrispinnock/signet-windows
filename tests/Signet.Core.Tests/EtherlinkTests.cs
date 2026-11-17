@@ -646,6 +646,79 @@ public class EtherlinkHistoryTests
         Assert.True(model.Tokens.Select(t => t.Id).SequenceEqual(["KT1l1:0"]) && model.Nfts.Select(n => n.Id).SequenceEqual(["KT1l1:1"]));
         Assert.IsType<Portfolio.PortfolioState.Complete>(model.PortfolioState);
     }
+
+    // MARK: Shadownet (Previewnet)
+
+    [Fact]
+    public void PreviewnetIsShadownetWithAnotherRollup()
+    {
+        var previewnet = Network.ShadownetPreviewnet;
+        // Layer 1 is Shadownet itself.
+        Assert.Equal(Network.Shadownet.Chain, previewnet.Chain);
+        Assert.Equal(Network.Shadownet.ExpectedChainID, previewnet.ExpectedChainID);
+        Assert.Equal(Network.Shadownet.DefaultRPCURL, previewnet.DefaultRPCURL);
+        Assert.Equal(Network.Shadownet.FaucetURL, previewnet.FaucetURL);
+        // Layer 2 is Previewnet, on from the start, pinned to its own chain and bridge.
+        Assert.True(previewnet.L2Enabled && previewnet.HasL2 && previewnet.CanDepositToL2);
+        Assert.Equal("sr1BvTT7tVNneG2TeP18sixq57TxsZELebLu", previewnet.L2Rollup);
+        Assert.NotEqual(Network.Shadownet.L2Rollup, previewnet.L2Rollup);
+        var layer2 = Assert.IsType<Network>(previewnet.Layer2);
+        Assert.Equal("Shadownet (Previewnet) · Previewnet", layer2.Name);
+        Assert.Equal("previewnet", layer2.Chain);
+        Assert.NotEqual(Network.Shadownet.UsingL2(true, Network.Shadownet.L2DefaultRPCURL).Layer2?.Chain, layer2.Chain);
+        Assert.Equal("NetXY2oPPzkxUW1", layer2.ExpectedChainID);
+        Assert.True(layer2.DappType is null && previewnet.DappType is null);
+        Assert.Equal("Previewnet", layer2.L2Name);
+        // Etherlink keeps its own name.
+        Assert.True(Network.Shadownet.L2Name == "Etherlink" && !Network.Shadownet.L2Enabled);
+    }
+
+    [Fact]
+    public void PreviewnetsLayer2IsSavedOnlyWhenTurnedOff()
+    {
+        var state = new AppState();
+        Assert.True(state.Resolved(Network.ShadownetPreviewnet).L2Enabled);
+        state = state.Remember(Network.ShadownetPreviewnet);
+        Assert.Null(state.L2Enabled);
+        state = state.Remember(Network.ShadownetPreviewnet.UsingL2(false, Network.ShadownetPreviewnet.L2DefaultRPCURL));
+        Assert.Equal(new Dictionary<string, bool> { ["Shadownet (Previewnet)"] = false }, state.L2Enabled);
+        Assert.False(state.Resolved(Network.ShadownetPreviewnet).L2Enabled);
+        // Shadownet's own switch is unchanged: off, saved only when on.
+        Assert.False(state.Resolved(Network.Shadownet).L2Enabled);
+    }
+
+    [Fact]
+    public void PreviewnetIsOfferedOnlyWithShadownetsLayer2On()
+    {
+        var model = new WalletViewModel(WalletViewModel.SampleWallets, new MockChainService());
+        var name = Network.ShadownetPreviewnet.Name;
+        Assert.DoesNotContain(model.OfferedNetworks, n => n.Name == name);
+        model.SetL2Enabled(true, Network.Shadownet);
+        Assert.Contains(model.OfferedNetworks, n => n.Name == name);
+        model.SetL2Enabled(false, Network.Shadownet);
+        Assert.DoesNotContain(model.OfferedNetworks, n => n.Name == name);
+        // While it is the network in use it stays listed, so the badge can show and leave it.
+        model.SwitchNetwork(Network.ShadownetPreviewnet);
+        Assert.True(model.Network.Name == name && model.Network.HasL2);
+        Assert.Contains(model.OfferedNetworks, n => n.Name == name);
+    }
+
+    [Fact]
+    public void DAppsNamingShadownetStillReachShadownet()
+    {
+        Network[] layer2 = [Network.ShadownetPreviewnet.Layer2!];
+        Assert.Equal("Shadownet", DAppRequest.NetworkFor("shadownet", null, layer2)?.Name);
+        Assert.Equal("Shadownet", DAppRequest.NetworkFor("custom", Network.Shadownet.DefaultRPCURL, layer2)?.Name);
+        // Previewnet's rollup is reached by naming its node, and only while it is offered.
+        var node = new Uri("https://michelson.previewnet.tezosx.nomadic-labs.com");
+        Assert.Equal("NetXY2oPPzkxUW1", DAppRequest.NetworkFor("custom", node, layer2)?.ExpectedChainID);
+    }
+
+    [Fact]
+    public void BackupListsTheShadownetShieldedFileOnce()
+    {
+        Assert.Equal(WalletBackup.ShieldedFiles.Count, WalletBackup.ShieldedFiles.Distinct().Count());
+    }
 }
 
 public class ShieldedSwitchTests
@@ -681,7 +754,8 @@ public class ShieldedSwitchTests
     [Fact]
     public void OnlyShadownetAndQuantumnetHaveShieldedTransactionsToday()
     {
-        Assert.Equal(["Shadownet", "Quantumnet"], Network.All.Where(n => n.ShieldedAvailable).Select(n => n.Name));
+        // Shadownet (Previewnet) is Shadownet's layer 1, so it has Shadownet's shielded pool.
+        Assert.Equal(["Shadownet", "Shadownet (Previewnet)", "Quantumnet"], Network.All.Where(n => n.ShieldedAvailable).Select(n => n.Name));
         Assert.True(!Network.Mainnet.ShieldedAvailable && !Network.Custom.ShieldedAvailable && !Network.Weeklynet.ShieldedAvailable);
     }
 

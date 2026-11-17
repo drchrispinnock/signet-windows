@@ -60,14 +60,15 @@ public sealed record AppState
 
     /// <summary>
     /// <c>base</c> with everything saved for it applied: its node, its Layer 2 switch and node, and
-    /// its links. Saved text that is not a URL is ignored; Layer 2 is off unless saved on.
+    /// its links. Saved text that is not a URL is ignored; Layer 2 is as the network ships it
+    /// (off, but for Previewnet) unless saved otherwise.
     /// </summary>
     public Network Resolved(Network @base)
     {
         var network = @base;
         if (NodeURLs?.GetValueOrDefault(@base.Name) is { } saved && Network.NodeURL(saved) is { } url) network = network.UsingNode(url);
         var l2Node = (L2NodeURLs?.GetValueOrDefault(@base.Name) is { } l2Saved ? Network.NodeURL(l2Saved) : null) ?? @base.L2DefaultRPCURL;
-        network = network.UsingL2(L2Enabled?.GetValueOrDefault(@base.Name) ?? false, l2Node);
+        network = network.UsingL2(L2Enabled is { } l2Flags && l2Flags.TryGetValue(@base.Name, out var l2On) ? l2On : @base.L2EnabledByDefault, l2Node);
         network = network.UsingShielded(ShieldedEnabled?.GetValueOrDefault(@base.Name) ?? false);
         var fields = ShieldedFields(@base);
         var shielded = ShieldedConfig.From(fields);
@@ -141,15 +142,18 @@ public sealed record AppState
         return this with { NodeURLs = nodes.Count == 0 ? null : nodes };
     }
 
-    /// <summary>Etherlink is off by default everywhere, with our endpoint where we ship one.</summary>
+    /// <summary>
+    /// Layer 2 is off by default everywhere but Previewnet, with our endpoint where we ship one;
+    /// only a switch that differs from the network's default is saved.
+    /// </summary>
     public AppState RememberL2(Network net)
     {
         var nodes = new SortedDictionary<string, string>(L2NodeURLs?.ToDictionary() ?? [], StringComparer.Ordinal);
         if (net.IsUsingDefaultL2Node || net.L2RPCURL is null) nodes.Remove(net.Name);
         else nodes[net.Name] = net.L2RPCURL.AbsoluteString();
         var flags = new SortedDictionary<string, bool>(L2Enabled?.ToDictionary() ?? [], StringComparer.Ordinal);
-        if (net.L2Enabled) flags[net.Name] = true;
-        else flags.Remove(net.Name);
+        if (net.L2Enabled == net.L2EnabledByDefault) flags.Remove(net.Name);
+        else flags[net.Name] = net.L2Enabled;
         return this with { L2NodeURLs = nodes.Count == 0 ? null : nodes, L2Enabled = flags.Count == 0 ? null : flags };
     }
 

@@ -430,6 +430,19 @@ public sealed partial class WalletViewModel : ObservableObject
     /// <summary>Goes back to the link we ship for <c>service</c> on <c>base</c>.</summary>
     public void UseDefaultServiceURL(Network.Service service, Network @base) => Change(@base, n => n.Using(n.DefaultURLFor(service), service));
 
+    /// <summary>
+    /// The networks the badge, Networks and Shielded settings offer: every one, except that
+    /// Shadownet (Previewnet) appears only while Shadownet has Layer 2 on (or it is in use).
+    /// </summary>
+    public IReadOnlyList<Network> OfferedNetworks
+    {
+        get
+        {
+            var previewnet = Network.ShadownetPreviewnet.Name;
+            return Network.All.Where(n => n.Name != previewnet || Network.Name == previewnet || IsL2Enabled(Network.Shadownet)).ToList();
+        }
+    }
+
     /// <summary>Whether the Etherlink balance is shown for <c>base</c> (saved or default), without switching.</summary>
     public bool IsL2Enabled(Network @base) => Resolved(Network.Named(@base.Name) ?? @base).L2Enabled;
 
@@ -735,7 +748,7 @@ public sealed partial class WalletViewModel : ObservableObject
                 return service.WaitForConfirmation(hash);
             },
             // Only a Layer 2 the user turned on in Networks is served, on the node in use there.
-            layer2: () => Network.All.Select(n => Resolved(n).Layer2).OfType<Network>().ToList());
+            layer2: () => OfferedNetworks.Select(n => Resolved(n).Layer2).OfType<Network>().ToList());
     }
 
     /// <summary>
@@ -953,11 +966,11 @@ public sealed partial class WalletViewModel : ObservableObject
         if (!network.HasL2 || !address.IsUsableOnEtherlink) return null;
         try
         {
-            return new AssetBalance("etherlink", new AssetBalance.AssetKind.Etherlink(), "Etherlink", "tz", await chain.EtherlinkBalanceFor(address));
+            return new AssetBalance("etherlink", new AssetBalance.AssetKind.Etherlink(), network.L2Name, "tz", await chain.EtherlinkBalanceFor(address));
         }
         catch (Exception e)
         {
-            return new AssetBalance("etherlink", new AssetBalance.AssetKind.Etherlink(), "Etherlink", "tz", 0) { Unavailable = $"Etherlink balance unavailable: {e.Message}" };
+            return new AssetBalance("etherlink", new AssetBalance.AssetKind.Etherlink(), network.L2Name, "tz", 0) { Unavailable = $"{network.L2Name} balance unavailable: {e.Message}" };
         }
     }
 

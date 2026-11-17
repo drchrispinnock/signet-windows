@@ -57,7 +57,7 @@ public sealed partial class NetworkBadgeMenu : UserControl
     private void Fill()
     {
         menu.Items.Clear();
-        foreach (var @base in Network.All)
+        foreach (var @base in model.OfferedNetworks)
         {
             var network = model.Resolved(@base);
             var item = new ToggleMenuFlyoutItem { Text = $"{network.Name}  {network.RpcURL.Host}", IsChecked = network.Name == model.Network.Name };

@@ -24,10 +24,11 @@ public sealed partial class ShieldSettingsSheet : Sheet
     public ShieldSettingsSheet(WalletViewModel model) : base("Shielded settings", 520)
     {
         this.model = model;
-        foreach (var network in Network.All)
+        var offered = model.OfferedNetworks;
+        foreach (var network in offered)
             picker.Items.Add(new ComboBoxItem { Content = network.Name + (network.Name == model.Network.Name ? "  (in use)" : ""), Tag = network.Name });
         // Starts on the network in use.
-        picker.SelectedIndex = Math.Max(0, Network.All.ToList().FindIndex(n => n.Name == model.Network.Name));
+        picker.SelectedIndex = Math.Max(0, offered.ToList().FindIndex(n => n.Name == model.Network.Name));
 
         Form.Children.Add(new SectionHeader("Shielded Transactions")
         {

@@ -53,10 +53,8 @@ public sealed partial class NetworksSheet : Sheet
     public NetworksSheet(WalletViewModel model) : base("Networks", 520)
     {
         this.model = model;
-        foreach (var network in Network.All)
-            picker.Items.Add(new ComboBoxItem { Content = network.Name + (network.Name == model.Network.Name ? "  (in use)" : ""), Tag = network.Name });
         // Starts on the network in use.
-        picker.SelectedIndex = Math.Max(0, Network.All.ToList().FindIndex(n => n.Name == model.Network.Name));
+        FillPicker(model.Network.Name);
 
         checking.Children.Add(new ProgressRing { Width = 16, Height = 16, IsActive = true });
         checking.Children.Add(new TextBlock { Text = "Checking which chain the node serves…", Style = (Style)Application.Current.Resources["SecondaryText"] });
@@ -118,6 +116,8 @@ public sealed partial class NetworksSheet : Sheet
         {
             if (syncing || EditingNetwork is not { } @base || l2Enabled.IsOn == model.IsL2Enabled(@base)) return;
             model.SetL2Enabled(l2Enabled.IsOn, @base);
+            // Shadownet's switch shows or hides Shadownet (Previewnet) in the picker.
+            if (model.OfferedNetworks.Count != picker.Items.Count) FillPicker(@base.Name);
             SyncNodeText();
         };
         l2NodeText.TextChanged += (_, _) =>
@@ -155,7 +155,20 @@ public sealed partial class NetworksSheet : Sheet
     }
 
     /// <summary>The network whose node is being edited.</summary>
-    private Network? EditingNetwork => Network.Named((picker.SelectedItem as ComboBoxItem)?.Tag as string);
+    /// <summary>Lists <c>WalletViewModel.OfferedNetworks</c> and selects <c>selected</c> (else the first).</summary>
+    private void FillPicker(string selected)
+    {
+        var wasSyncing = syncing;
+        syncing = true;
+        picker.Items.Clear();
+        var offered = model.OfferedNetworks;
+        foreach (var network in offered)
+            picker.Items.Add(new ComboBoxItem { Content = network.Name + (network.Name == model.Network.Name ? "  (in use)" : ""), Tag = network.Name });
+        syncing = wasSyncing;
+        picker.SelectedIndex = Math.Max(0, offered.ToList().FindIndex(n => n.Name == selected));
+    }
+
+    private Network? EditingNetwork =>Network.Named((picker.SelectedItem as ComboBoxItem)?.Tag as string);
 
     private bool NodeIsDirty => EditingNetwork is { } @base && Network.NodeURL(nodeText.Text) != model.NodeURL(@base);
 

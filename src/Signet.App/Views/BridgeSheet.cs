@@ -141,7 +141,7 @@ public sealed partial class BridgeSheet : Sheet
         arrow.Content = arrowIcon;
         Grid.SetColumn(arrow, 1);
         sides.Children.Add(arrow);
-        var right = Side(ChainSide.Etherlink, etherlinkBalance, "on the rollup");
+        var right = Side(ChainSide.Etherlink, etherlinkBalance, "on the rollup", Network.L2Name);
         Grid.SetColumn(right, 2);
         sides.Children.Add(right);
         compose.Children.Add(sides);
@@ -158,13 +158,13 @@ public sealed partial class BridgeSheet : Sheet
         compose.Children.Add(cannotBridge);
     }
 
-    private static Border Side(ChainSide side, TextBlock balance, string note)
+    private static Border Side(ChainSide side, TextBlock balance, string note, string? title = null)
     {
         var stack = new StackPanel { Spacing = 6, HorizontalAlignment = HorizontalAlignment.Center };
         var logo = ChainSideExtensions.SmallLogo(side.Logo(), 56);
         logo.HorizontalAlignment = HorizontalAlignment.Center;
         stack.Children.Add(logo);
-        stack.Children.Add(new TextBlock { Text = side.RawValue(), FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center });
+        stack.Children.Add(new TextBlock { Text = title ?? side.RawValue(), FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center });
         stack.Children.Add(balance);
         stack.Children.Add(new TextBlock { Text = note, FontSize = 12, Foreground = Secondary, HorizontalAlignment = HorizontalAlignment.Center });
         return new Border

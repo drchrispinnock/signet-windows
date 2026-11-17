@@ -34,15 +34,18 @@ public sealed partial class ChainSidePicker : UserControl
     /// <summary>Raised when the user picks the other side.</summary>
     public event Action<ChainSide>? SideChanged;
 
-    public ChainSidePicker(ChainSide side, bool canSwitch)
+    /// <param name="layer2Name">What the Layer 2 side is called on this network ("Etherlink", or "Previewnet").</param>
+    public ChainSidePicker(ChainSide side, bool canSwitch, string? layer2Name = null)
     {
         this.side = side;
+        var l2Name = layer2Name ?? ChainSide.Etherlink.RawValue();
+        string Title(ChainSide candidate) => candidate == ChainSide.Etherlink ? l2Name : candidate.RawValue();
         row.Children.Add(ChainSideExtensions.SmallLogo(side.Logo(), 22));
         if (canSwitch)
         {
-            foreach (var candidate in Enum.GetValues<ChainSide>()) picker.Items.Add(candidate.RawValue());
+            foreach (var candidate in Enum.GetValues<ChainSide>()) picker.Items.Add(Title(candidate));
             picker.SelectedIndex = (int)side;
-            ToolTipService.SetToolTip(picker, "Switch between Tezos and Etherlink.");
+            ToolTipService.SetToolTip(picker, $"Switch between Tezos and {l2Name}.");
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(picker, "Chain");
             picker.SelectionChanged += (_, _) =>
             {

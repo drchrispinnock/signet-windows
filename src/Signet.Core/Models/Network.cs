@@ -26,9 +26,13 @@ public sealed record Network
                    Uri? l2RPCURL = null, string? l2DAppType = null, string? expectedL2ChainID = null, string? l2BridgeHelper = null, string? l2Rollup = null,
                    Uri? l2TzKTURL = null, Uri? l2ExplorerURL = null,
                    IReadOnlyDictionary<EtherlinkGovernance.Process, string>? etherlinkGovernance = null,
+                   string l2Name = "Etherlink", string? l2Chain = null, bool l2EnabledByDefault = false,
                    bool shieldedAvailable = false, ShieldedConfig? shielded = null)
     {
         Name = name;
+        L2Name = l2Name;
+        L2Chain = l2Chain;
+        L2EnabledByDefault = l2EnabledByDefault;
         ShieldedAvailable = shieldedAvailable;
         Shielded = shielded;
         ShieldedDefault = shielded;
@@ -51,7 +55,7 @@ public sealed record Network
         ExpectedChainID = expectedChainID;
         L2DefaultRPCURL = l2RPCURL;
         L2RPCURL = l2RPCURL;
-        L2Enabled = false;   // off until the user turns Layer 2 on in the Networks sheet
+        L2Enabled = l2EnabledByDefault;   // off until the user turns Layer 2 on in the Networks sheet, except where the network is its Layer 2
         ExpectedL2ChainID = expectedL2ChainID;
         L2BridgeHelper = l2BridgeHelper is null ? null : new Address(l2BridgeHelper);
         L2Rollup = l2Rollup;
@@ -100,6 +104,18 @@ public sealed record Network
     public Uri? L2DefaultRPCURL { get; init; }
     public Uri? L2RPCURL { get; init; }
     public bool L2Enabled { get; init; }
+    /// <summary>
+    /// Whether Layer 2 starts on: off everywhere except a network that exists only for its
+    /// Layer 2 (Shadownet (Previewnet)). Saved state records only a choice that differs.
+    /// </summary>
+    public bool L2EnabledByDefault { get; }
+    /// <summary>What the Layer 2 is called on screen: "Etherlink", or "Previewnet" for Tezos X Previewnet.</summary>
+    public string L2Name { get; init; }
+    /// <summary>
+    /// The <c>Chain</c> of <c>Layer2</c>; <c>etherlink-&lt;chain&gt;</c> unless the rollup has a name of its own,
+    /// so two rollups on one layer 1 are never taken for the same chain.
+    /// </summary>
+    public string? L2Chain { get; init; }
     /// <summary>
     /// The names dApps use for this network in a TZIP-10 request's <c>network.type</c>
     /// (Octez Connect's <c>NetworkType</c>): <c>DappType</c> for the network itself, <c>null</c> when it
@@ -170,8 +186,8 @@ public sealed record Network
     /// TzKT and explorer are Etherlink's. <c>null</c> unless Layer 2 is on with a node.
     /// </summary>
     public Network? Layer2 => HasL2 && L2RPCURL is { } node
-        ? new Network($"{Name} · Etherlink", $"etherlink-{Chain}", node, tezosDomainsURL: null, tzktURL: L2TzKTURL,
-                      explorerURL: L2ExplorerURL, expectedChainID: ExpectedL2ChainID) { LayerNumber = 2, DappType = L2DAppType }
+        ? new Network($"{Name} · {L2Name}", L2Chain ?? $"etherlink-{Chain}", node, tezosDomainsURL: null, tzktURL: L2TzKTURL,
+                      explorerURL: L2ExplorerURL, expectedChainID: ExpectedL2ChainID) { LayerNumber = 2, DappType = L2DAppType, L2Name = L2Name }
         : null;
 
     /// <summary>1 for a Tezos network, 2 for its <c>Layer2</c> counterpart.</summary>
@@ -354,6 +370,37 @@ public sealed record Network
         shieldedAvailable: true,
         shielded: ShieldedConfig.Shadownet);
 
+    /// <summary>
+    /// Tezos X Previewnet: a second Etherlink-style rollup on Shadownet, where Tezos X features
+    /// arrive before they reach Etherlink (github.com/trilitech/tezos-x-previewnet). Layer 1 is
+    /// Shadownet itself, so its accounts, faucet, shielded wallet and pending operations are
+    /// Shadownet's; the Layer 2 is the Previewnet rollup instead of Etherlink's, and is on from
+    /// the start. Offered only while Shadownet has Layer 2 on (<c>WalletViewModel.OfferedNetworks</c>).
+    /// Octez Connect has no network type for Previewnet, so dApps reach it only by naming its
+    /// node as a custom network, and a dApp asking for "shadownet" gets the Shadownet entry
+    /// (this one carries no <c>DappType</c>). The rollup is reset now and then, and this entry with it.
+    /// </summary>
+    public static readonly Network ShadownetPreviewnet = new Network(
+        name: "Shadownet (Previewnet)",
+        chain: "shadownet",
+        rpcURL: new Uri("https://rpc.shadownet.teztnets.com"),
+        tezosDomainsURL: null,
+        tzktURL: new Uri("https://api.shadownet.tzkt.io"),
+        faucetURL: new Uri("https://faucet.shadownet.teztnets.com"),
+        explorerURL: new Uri("https://shadownet.tzkt.io"),
+        expectedChainID: "NetXsqzbfFenSTS",
+        l2RPCURL: new Uri("https://michelson.previewnet.tezosx.nomadic-labs.com"),
+        expectedL2ChainID: "NetXY2oPPzkxUW1",
+        l2BridgeHelper: "KT1DUaf49SNALJRSB8R45TvEtgVi2xZnCh8B",
+        l2Rollup: "sr1BvTT7tVNneG2TeP18sixq57TxsZELebLu",
+        l2TzKTURL: new Uri("https://api.previewnet.tezosx.tzkt.io"),
+        l2ExplorerURL: new Uri("https://previewnet.tezosx.tzkt.io"),
+        l2Name: "Previewnet",
+        l2Chain: "previewnet",
+        l2EnabledByDefault: true,
+        shieldedAvailable: true,
+        shielded: ShieldedConfig.Shadownet) { DappType = null };
+
     public static readonly Network Bakingnet = new(
         name: "Bakingnet",
         chain: "bakingnet",
@@ -424,7 +471,7 @@ public sealed record Network
         tzktURL: null);
 
     /// <summary>Networks offered in the Networks sheet and the badge, in display order, each with its default node.</summary>
-    public static IReadOnlyList<Network> All => [Mainnet, Shadownet, Bakingnet, Ushuaianet, Weeklynet, Quantumnet, Custom];
+    public static IReadOnlyList<Network> All => [Mainnet, Shadownet, ShadownetPreviewnet, Bakingnet, Ushuaianet, Weeklynet, Quantumnet, Custom];
 
     public static Network? Named(string? name) => All.FirstOrDefault(n => n.Name == name);
 }

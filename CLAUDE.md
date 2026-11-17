@@ -127,9 +127,9 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 ## Status
 
-The pin is upstream `b292cfd` (main, 2026-11-16, release 0.9.17), and everything up to it is ported: every
+The pin is upstream `c1d4b56` (main, 2026-11-17, release 0.9.18), and everything up to it is ported: every
 feature (TzEL included), the infrastructure behind them, and every upstream test suite (the
-Linux/FreeBSD build commits `00269fa`, `445e047`, `98dd8d7`, `45f6849`, `548b3b1` need nothing
+Linux/FreeBSD build commits `00269fa`, `445e047`, `98dd8d7`, `45f6849`, `548b3b1`, `a85aa92` need nothing
 here, nor do the iOS commit `0c263c2`, the manuscript, release-workflow and bridge-only commits). Upstream rewrote its
 history in November 2026: the old pin `1fc7dc4` is `cf1409e` in the new history (the same
 tree), and the hashes cited here are the new ones. Ported:
@@ -374,6 +374,14 @@ Windows-specific porting notes:
   - Still open: G02 master-key encryption, separating scanned commitments from the key file,
     and E01 to E03 in the Octez Connect SDK.
 
+- Shadownet (Previewnet) (upstream `e1346df`): `Network.ShadownetPreviewnet`, Shadownet's layer 1
+  with the Tezos X Previewnet rollup as Layer 2, on by default (`L2EnabledByDefault`; saved state
+  records only a differing switch, so `AppState.Resolved` tells a missing key from a saved
+  `false`), named on screen by `L2Name` ("Previewnet") and with `L2Chain` "previewnet" for its
+  `Layer2`. The badge, Networks and Shielded settings list `WalletViewModel.OfferedNetworks`, which
+  has it only while Shadownet's Layer 2 is on or it is in use; dApps get its Layer 2 only then.
+  Windows difference: the Networks sheet refills its picker when a Layer 2 switch changes what is
+  offered (SwiftUI does this by itself).
 - Receive's Etherlink side (the EVM alias, its check and the link) is switched off by
   `EtherlinkAlias.IsOffered` (false, upstream `bea3e76`): Etherlink 8.0 replaces the alias
   derivation (RFC-26051). The model, bridge calls and tests for the alias remain.

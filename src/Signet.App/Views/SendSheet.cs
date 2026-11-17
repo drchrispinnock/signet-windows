@@ -62,7 +62,7 @@ public sealed partial class SendSheet : Sheet
         send = MakeSend();
         // An address that Scan QR code found is the recipient to start with.
         if (model.SendPrefill is { } scanned) send.RecipientText = scanned.Value;
-        var picker = new ChainSidePicker(side, layer2 is not null && sender.Address.IsUsableOnEtherlink);
+        var picker = new ChainSidePicker(side, layer2 is not null && sender.Address.IsUsableOnEtherlink, layer1.Network.L2Name);
         picker.SideChanged += async picked =>
         {
             side = picked;
@@ -185,7 +185,7 @@ public sealed partial class SendSheet : Sheet
             ? "tz1, tz2 or tz3 address, name.tez, or an account from your list"
             : "Address, name.tez, or an account from your list";
         max.IsEnabled = send.Spendable is not null;
-        headingText.Text = side == ChainSide.Etherlink ? "Send tez on Etherlink" : "Send tez";
+        headingText.Text = side == ChainSide.Etherlink ? $"Send tez on {network.L2Name}" : "Send tez";
     }
 
     private void RenderCompose()

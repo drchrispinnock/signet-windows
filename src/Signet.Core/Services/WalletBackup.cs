@@ -109,7 +109,7 @@ public sealed record WalletBackup(string WalletDirectory, string BackupDirectory
     /// token, the address book). The 2 MB signing trees beside it are left out; they are
     /// rebuilt from the master key.
     /// </summary>
-    public static IReadOnlyList<string> ShieldedFiles => Network.All.Select(n => FileShieldedWalletStore.WalletFile(n.Chain)).ToList();
+    public static IReadOnlyList<string> ShieldedFiles => Network.All.Select(n => FileShieldedWalletStore.WalletFile(n.Chain)).Distinct().ToList();
 
     /// <param name="force">Write a generation even if the latest one already matches (explicit user action).</param>
     public Outcome Run(DateTimeOffset? now = null, bool force = false)
