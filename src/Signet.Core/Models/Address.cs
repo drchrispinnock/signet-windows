@@ -36,3 +36,18 @@ public readonly record struct Address(string Value)
 
     public override string ToString() => Value;
 }
+
+/// <summary>A Tezos Domains name tied to an account: one it owns, one that points at it, or both.</summary>
+/// <param name="Address">Where the name points; <c>null</c> when it points nowhere.</param>
+/// <param name="Expires"><c>null</c> for a subdomain, which lives as long as its parent.</param>
+/// <param name="IsReverseRecord">The name this account publishes as its own (reverse record).</param>
+public sealed record TezosDomain(string Name, Address? Address, Address? Owner, DateTimeOffset? Expires, bool IsReverseRecord)
+{
+    public string Id => Name;
+
+    public bool IsOwnedBy(Address account) => Owner == account;
+    public bool PointsAt(Address account) => Address == account;
+
+    /// <summary>The name's page on the Tezos Domains app (mainnet).</summary>
+    public Uri? AppURL => Uri.TryCreate($"https://app.tezos.domains/domain/{Name}", UriKind.Absolute, out var url) ? url : null;
+}

@@ -13,6 +13,11 @@ public interface IChainService
     Task<decimal> EtherlinkBalanceFor(Address address);
     Task<IReadOnlyList<AssetBalance>> TokenBalancesFor(Address address);
     Task<IReadOnlyList<string>> DomainsFor(Address address);
+    /// <summary>
+    /// Every Tezos Domains name the account owns or that points at it (the Domains tab);
+    /// <c>null</c> when the network has no Tezos Domains.
+    /// </summary>
+    Task<IReadOnlyList<TezosDomain>?> TezosDomainsFor(Address address) => Task.FromResult<IReadOnlyList<TezosDomain>?>(null);
     Task<IReadOnlyList<NFT>> NftsFor(Address address);
     /// <summary>Tokens and NFTs from one indexer snapshot, with whether it is complete (S26).</summary>
     Task<Portfolio> PortfolioFor(Address address);

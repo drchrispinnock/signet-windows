@@ -571,6 +571,9 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
         }
     }
 
+    public async Task<IReadOnlyList<TezosDomain>?> TezosDomainsFor(Address address) =>
+        Network.TezosDomainsURL is { } endpoint ? await new TezosDomainsService(endpoint, http).Domains(address) : null;
+
     /// <summary>NFTs from the TzKT indexer.</summary>
     public async Task<IReadOnlyList<NFT>> NftsFor(Address address) =>
         Network.TzktURL is { } tzkt ? await new TzKTService(tzkt, http).NftsFor(address) : [];

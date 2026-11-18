@@ -12,31 +12,29 @@ using Signet.ViewModels;
 
 namespace Signet.App.Views;
 
-/// <summary>Bottom section of the dashboard: recent transactions, tokens or NFTs, chosen with a segmented control.</summary>
+/// <summary>
+/// Bottom section of the dashboard: activity, assets, NFTs or Tezos Domains names, chosen with a
+/// segmented control.
+/// </summary>
 public sealed partial class ActivityTabsView : UserControl
 {
     private readonly WalletViewModel model;
-    private readonly SelectorBar tabs = new() { MaxWidth = 400, HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly SelectorBar tabs = new() { MaxWidth = 460, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly ContentControl body = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
     private readonly LayerToggles toggles;
     private readonly NFTGridView nftGrid;
-
-    private static readonly (WalletViewModel.ActivityTab Tab, string Title)[] Tabs =
-    [
-        (WalletViewModel.ActivityTab.Transactions, "Recent transactions"),
-        (WalletViewModel.ActivityTab.Assets, "Assets"),
-        (WalletViewModel.ActivityTab.Nfts, "NFTs"),
-    ];
+    private bool syncingTabs;
+    /// <summary>The account and network whose Domains list was last asked for (upstream's <c>.task(id: domainListKey)</c>).</summary>
+    private string? requestedDomainKey;
 
     public ActivityTabsView(WalletViewModel model)
     {
         this.model = model;
         nftGrid = new NFTGridView(new NFTActions(model.TokenNetwork, model.CanTransferTokens, operation => model.NftOperation = operation, download => model.NftDownload = download));
-        foreach (var (tab, title) in Tabs)
-            tabs.Items.Add(new SelectorBarItem { Text = title, Tag = tab, IsSelected = tab == model.ActivityTabSelection });
+        SyncTabs();
         tabs.SelectionChanged += (_, _) =>
         {
-            if (tabs.SelectedItem?.Tag is WalletViewModel.ActivityTab tab) model.ActivityTabSelection = tab;
+            if (!syncingTabs && tabs.SelectedItem?.Tag is WalletViewModel.ActivityTab tab) model.ActivityTabSelection = tab;
         };
         toggles = new LayerToggles(model) { HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
         var header = new Grid { ColumnSpacing = 12 };
@@ -67,16 +65,39 @@ public sealed partial class ActivityTabsView : UserControl
             else foreach (var row in transactionRows) row.RefreshTime();
             return;
         }
+        if (e.PropertyName is nameof(WalletViewModel.Network))
+        {
+            // The Domains tab comes and goes with the network.
+            SyncTabs();
+            Update();
+            return;
+        }
         if (e.PropertyName is nameof(WalletViewModel.ActivityTabSelection) or nameof(WalletViewModel.Transactions) or nameof(WalletViewModel.Tokens)
             or nameof(WalletViewModel.Nfts) or nameof(WalletViewModel.PortfolioState) or nameof(WalletViewModel.Wallets)
-            or nameof(WalletViewModel.ShownLayers) or nameof(WalletViewModel.FiltersLayers))
+            or nameof(WalletViewModel.ShownLayers) or nameof(WalletViewModel.FiltersLayers)
+            or nameof(WalletViewModel.SelectedWallet) or nameof(WalletViewModel.DomainList))
             Update();
     }
 
-    private bool CurrentListIsEmpty => model.ActivityTabSelection switch
+    /// <summary>The picker's tabs: the ones the network offers, the shown one selected.</summary>
+    private void SyncTabs()
+    {
+        syncingTabs = true;
+        var offered = model.ActivityTabs;
+        if (!tabs.Items.Select(i => (WalletViewModel.ActivityTab)i.Tag).SequenceEqual(offered))
+        {
+            tabs.Items.Clear();
+            foreach (var tab in offered) tabs.Items.Add(new SelectorBarItem { Text = tab.RawValue(), Tag = tab });
+        }
+        foreach (var item in tabs.Items) item.IsSelected = (WalletViewModel.ActivityTab)item.Tag == model.ShownActivityTab;
+        syncingTabs = false;
+    }
+
+    private bool CurrentListIsEmpty => model.ShownActivityTab switch
     {
         WalletViewModel.ActivityTab.Transactions => model.VisibleTransactions.Count == 0,
         WalletViewModel.ActivityTab.Assets => model.VisibleTokens.Count == 0,
+        WalletViewModel.ActivityTab.Domains => true,
         _ => model.VisibleNFTs.Count == 0,
     };
 
@@ -86,12 +107,24 @@ public sealed partial class ActivityTabsView : UserControl
     {
         toggles.Visibility = model.FiltersLayers ? Visibility.Visible : Visibility.Collapsed;
         toggles.Sync();
-        body.Content = model.ActivityTabSelection switch
+        body.Content = model.ShownActivityTab switch
         {
             WalletViewModel.ActivityTab.Transactions => TransactionList(),
             WalletViewModel.ActivityTab.Assets => TokenList(),
+            WalletViewModel.ActivityTab.Domains => DomainList(),
             _ => NFTGrid(),
         };
+    }
+
+    /// <summary>The Domains tab, asking for the list once per account and network.</summary>
+    private UIElement DomainList()
+    {
+        if (model.DomainListKey is { } key && key != requestedDomainKey)
+        {
+            requestedDomainKey = key;
+            _ = model.LoadDomainList();
+        }
+        return DomainListView.Build(model);
     }
 
     internal static TextBlock EmptyNote(string text) => new()

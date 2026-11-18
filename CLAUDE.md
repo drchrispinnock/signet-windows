@@ -431,6 +431,16 @@ Windows-specific porting notes:
   Pelerin's message only with a key that `SignsMessages()` (upstream would send an AirGap key to
   `signPayload`, which the bridge refuses).
 
+- Domains tab (upstream `26cdbf9`, `27666a3`, `d3e212b`): `TezosDomain` (in `Address.cs`, as
+  upstream), `TezosDomainsService.Domains` (pages of 50 with the API's cursors, `ParsePage`,
+  `Merge`), `IChainService.TezosDomainsFor` (a default interface member answering `null`, upstream's
+  protocol extension), `WalletViewModel+Domains.cs` (`ActivityTabs`, `ShownActivityTab`,
+  `DomainListKey`, `CurrentDomainList`, `LoadDomainList`; the list is a `DomainListEntry`, since C#
+  has no tuple property to observe) and `DomainListView.cs`. The tab titles are
+  `ActivityTab.RawValue()` ("Activity", not "Recent transactions"). `ActivityTabsView` asks for the
+  list once per `DomainListKey` (upstream's `.task(id:)`) and rebuilds its picker when the network
+  changes.
+
 - `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock
   chain, in-memory accounts (Captain Stake held with a placeholder key, so Baking and Governance
   show a baker) and mock multisig. It claims neither the single instance nor `signet://`, shows

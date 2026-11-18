@@ -28,6 +28,17 @@ public sealed class MockChainService : IChainService
     public Task<IReadOnlyList<string>> DomainsFor(Address address) =>
         Task.FromResult<IReadOnlyList<string>>(address == CaptainStake ? ["captstake.tez"] : ["mytez.tez"]);
 
+    public Task<IReadOnlyList<TezosDomain>?> TezosDomainsFor(Address address)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return Task.FromResult<IReadOnlyList<TezosDomain>?>(
+        [
+            new TezosDomain("mytez.tez", address, address, now.AddDays(2 * 365), true),
+            new TezosDomain("shop.mytez.tez", CaptainStake, address, null, false),
+            new TezosDomain("gift.tez", address, CaptainStake, now.AddDays(20), false),
+        ]);
+    }
+
     public Task<IReadOnlyList<NFT>> NftsFor(Address address) =>
         Task.FromResult<IReadOnlyList<NFT>>(Enumerable.Range(1, 6)
             .Select(i => new NFT($"mock:{i}", "KT1mock", $"{i}", $"NFT {i}", 1, thumbnailURL: null)).ToList());

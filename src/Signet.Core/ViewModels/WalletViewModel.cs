@@ -246,8 +246,20 @@ public sealed partial class WalletViewModel : ObservableObject
     [ObservableProperty, NotifyPropertyChangedFor(nameof(CanGovern), nameof(CanGovernEtherlink))] private IReadOnlyList<Address> etherlinkVotesFor = [];
     public const int RecentTransactionLimit = 25;
 
-    public enum ActivityTab { Transactions, Assets, Nfts }
-    [ObservableProperty] private ActivityTab activityTabSelection = ActivityTab.Transactions;
+    public enum ActivityTab { Transactions, Assets, Nfts, Domains }
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(ShownActivityTab))] private ActivityTab activityTabSelection = ActivityTab.Transactions;
+
+    /// <summary>The Domains tab's list, read when the tab is shown, for the account and network in <c>Key</c>.</summary>
+    public abstract record DomainListState
+    {
+        public sealed record Loading : DomainListState;
+        public sealed record Loaded(IReadOnlyList<TezosDomain> Domains) : DomainListState;
+        /// <summary>The network has no Tezos Domains (only mainnet does).</summary>
+        public sealed record Unavailable : DomainListState;
+        public sealed record Failed(string Reason) : DomainListState;
+    }
+    public sealed record DomainListEntry(string Key, DomainListState State);
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(CurrentDomainList))] private DomainListEntry? domainList;
 
     /// <summary>
     /// Which layers the activity tabs show while Layer 2 is on: the Tezos and Etherlink
@@ -260,7 +272,7 @@ public sealed partial class WalletViewModel : ObservableObject
     /// <summary>Whether the layer toggles apply: Layer 2 is on for the network in use.</summary>
     public bool FiltersLayers => Network.HasL2;
 
-    /// <summary>The rows the Recent transactions list shows: everything loaded, cut to the chosen layers while Layer 2 is on.</summary>
+    /// <summary>The rows the Activity list shows: everything loaded, cut to the chosen layers while Layer 2 is on.</summary>
     public IReadOnlyList<TezosTransaction> VisibleTransactions => Visible(Transactions, t => t.Layer);
     /// <summary>The Assets tab's tokens, cut the same way.</summary>
     public IReadOnlyList<AssetBalance> VisibleTokens => Visible(Tokens, t => t.Layer);
@@ -285,7 +297,7 @@ public sealed partial class WalletViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Etherlink's side of the account's history, for the Recent transactions list: the same
+    /// Etherlink's side of the account's history, for the Activity list: the same
     /// TzKT shape read from Etherlink's indexer through the Layer 2 service, each row tagged as
     /// layer 2. Nothing without Layer 2 on, for a key the rollup refuses, or when Etherlink's
     /// indexer cannot be read, in which case the layer 1 list stands alone.
