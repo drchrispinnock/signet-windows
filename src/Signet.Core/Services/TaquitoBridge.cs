@@ -428,6 +428,7 @@ public sealed class TaquitoBridge
           ledgerSessionBegin: function (id, deviceId) { __signet_host.ledgerSessionBegin(Number(id), String(deviceId)); },
           ledgerSessionEnd: function (id) { __signet_host.ledgerSessionEnd(Number(id)); },
           airgapSign: function (id, json) { __signet_host.airgapSign(Number(id), String(json)); },
+          remoteSign: function (id, json) { __signet_host.remoteSign(Number(id), String(json)); },
         };
 
         globalThis.__signet_call = function (id, name, argsJSON) {
@@ -533,6 +534,35 @@ public sealed class TaquitoBridge
 
         [ScriptMember("airgapSign")]
         public void AirgapSign(double id, string json) => bridge.AirgapSign((int)id, json);
+
+        [ScriptMember("remoteSign")]
+        public void RemoteSign(double id, string json) => bridge.RemoteSign((int)id, json);
+    }
+
+    // ---- Remote signers --------------------------------------------------------------------------
+
+    /// <summary>
+    /// The bridge's remote signer names the signer, the key and the bytes; the exchange is done
+    /// here (<c>RemoteSigners</c>) and the signature goes back as given to <c>__signet_remoteDone</c>,
+    /// which checks it against the account's key.
+    /// </summary>
+    private void RemoteSign(int id, string json)
+    {
+        var owner = generation;
+        Trace($"remote signer #{id} request");
+        _ = Task.Run(async () =>
+        {
+            string reply = "";
+            string? error = null;
+            try { reply = await RemoteSigners.Answer(json); }
+            catch (Exception e) { error = e.Message; }
+            Post(() =>
+            {
+                if (owner != generation) return;
+                Trace($"remote signer #{id} {(error is null ? "answered" : "failed")}");
+                Invoke("__signet_remoteDone", id, reply, error);
+            });
+        });
     }
 
     // ---- AirGap Vault ----------------------------------------------------------------------------

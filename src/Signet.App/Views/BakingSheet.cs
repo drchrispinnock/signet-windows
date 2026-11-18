@@ -221,9 +221,7 @@ public sealed partial class BakingSheet : Sheet
         Form.Children.Add(Note("The limit caps how much stake you accept from others, as a multiple of your own (0 = none, up to 9×). The edge is the share of stakers' rewards you keep (0 to 100 %). Changes apply after a few cycles."));
     }
 
-    private string WatchOnlyNote => wallet?.KeyKind == KeyKind.Remote
-        ? "Watch only: this baker signs through a remote signer. Its keys and parameters are shown but cannot be changed here."
-        : "Watch only: Signet holds just this baker's public key. Its keys and parameters are shown but cannot be changed here.";
+    private static string WatchOnlyNote => "Watch only: Signet holds just this baker's public key. Its keys and parameters are shown but cannot be changed here.";
 
     private void KeyRows(Address? current, IReadOnlyList<Address> pending, string fallback)
     {

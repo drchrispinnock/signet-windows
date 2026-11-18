@@ -14,7 +14,11 @@ public enum KeyKind
     /// Signet holds the public key, and operations go to the Vault and back by QR code.
     /// </summary>
     Airgap,
-    /// <summary><c>http(s)://</c>, <c>tcp://</c>, <c>unix:</c>, <c>remote:</c> — a remote signer such as octez-signer.</summary>
+    /// <summary>
+    /// <c>http(s)://</c>, <c>tcp://</c>, <c>unix:</c> — a remote signer such as octez-signer, holding the
+    /// key elsewhere; Signet sends what is to be signed and checks the signature it gets back.
+    /// (<c>remote:tz1…</c> names a signer configured in octez-client and is <c>Unknown</c> here.)
+    /// </summary>
     Remote,
     /// <summary>Some other scheme we do not understand.</summary>
     Unknown,
@@ -35,17 +39,17 @@ public static class KeyKindExtensions
             "encrypted" => KeyKind.Encrypted,
             "ledger" => KeyKind.Ledger,
             "airgap" => KeyKind.Airgap,
-            "http" or "https" or "tcp" or "unix" or "remote" => KeyKind.Remote,
+            "http" or "https" or "tcp" or "unix" => KeyKind.Remote,
             _ => KeyKind.Unknown,
         };
     }
 
     /// <summary>
     /// Kinds Signet can sign operations with: clear-text keys, encrypted keys once the user
-    /// supplies the password, Ledger keys when the device is plugged in, and AirGap Vault keys by
-    /// a QR round trip with the phone.
+    /// supplies the password, Ledger keys when the device is plugged in, AirGap Vault keys by a QR
+    /// round trip with the phone, and keys on a remote signer.
     /// </summary>
-    public static bool CanSign(this KeyKind kind) => kind is KeyKind.Unencrypted or KeyKind.Encrypted or KeyKind.Ledger or KeyKind.Airgap;
+    public static bool CanSign(this KeyKind kind) => kind is KeyKind.Unencrypted or KeyKind.Encrypted or KeyKind.Ledger or KeyKind.Airgap or KeyKind.Remote;
 
     /// <summary>
     /// Kinds that can also sign raw bytes without the operation watermark: a dApp's sign_payload,
@@ -70,7 +74,7 @@ public static class KeyKindExtensions
 public sealed record Wallet
 {
     public Wallet(string alias, Address address, AddressScheme? scheme = null, string? publicKey = null,
-                  KeyKind keyKind = KeyKind.None, LedgerKey? ledgerKey = null)
+                  KeyKind keyKind = KeyKind.None, LedgerKey? ledgerKey = null, RemoteSignerLocator? remoteSigner = null)
     {
         Alias = alias;
         Address = address;
@@ -78,6 +82,7 @@ public sealed record Wallet
         PublicKey = publicKey;
         KeyKind = keyKind;
         LedgerKey = ledgerKey;
+        RemoteSigner = remoteSigner;
     }
 
     /// <summary>Aliases are unique within a client directory, so the alias is the identity.</summary>
@@ -91,6 +96,8 @@ public sealed record Wallet
     public KeyKind KeyKind { get; init; }
     /// <summary>Where the key lives on a Ledger, when <c>KeyKind</c> is <c>Ledger</c> and the locator parsed.</summary>
     public LedgerKey? LedgerKey { get; init; }
+    /// <summary>Where the key is held when <c>KeyKind</c> is <c>Remote</c> and the locator parsed.</summary>
+    public RemoteSignerLocator? RemoteSigner { get; init; }
     /// <summary>
     /// A paper key imported for this run only: its secret is in memory (<c>SessionKeyStore</c>), not
     /// in the wallet directory, and is gone when Signet quits.

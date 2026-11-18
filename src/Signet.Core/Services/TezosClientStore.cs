@@ -98,7 +98,8 @@ public sealed class TezosClientStore(string? directory = null) : IWalletStore
                 address: new Address(address),
                 publicKey: PublicKey(publicKeys.GetValueOrDefault(name)),
                 keyKind: KeyKindExtensions.FromLocator(locator),
-                ledgerKey: locator is null ? null : LedgerKey.FromLocator(locator)));
+                ledgerKey: locator is null ? null : LedgerKey.FromLocator(locator),
+                remoteSigner: RemoteSignerOf(locator)));
         }
         // Named contracts (`contracts`) are part of the address book: watch-only entries whose
         // address is a KT1. octez-client keeps them apart because `public_key_hashs` may only
@@ -109,12 +110,17 @@ public sealed class TezosClientStore(string? directory = null) : IWalletStore
         return accounts.Concat(contracts).ToList();
     }
 
+    /// <summary>The remote signer a <c>secret_keys</c> locator names, when it is a remote one that parses.</summary>
+    private static RemoteSignerLocator? RemoteSignerOf(string? locator) =>
+        locator is not null && KeyKindExtensions.FromLocator(locator) == KeyKind.Remote ? RemoteSignerLocator.FromLocator(locator) : null;
+
     public void Add(Wallet wallet, string locator)
     {
         if (wallet.PublicKey is not { } publicKey) throw new StoreError.MissingPublicKey(wallet.Alias);
         // octez-client points the public key at the same place as the secret: the file for
-        // in-memory keys, the device for Ledger keys.
-        var publicKeyLocator = locator.StartsWith("ledger://", StringComparison.OrdinalIgnoreCase) ? locator : $"unencrypted:{publicKey}";
+        // in-memory keys, the device for Ledger keys, the signer for remote keys.
+        var pointsAtKey = locator.StartsWith("ledger://", StringComparison.OrdinalIgnoreCase) || KeyKindExtensions.FromLocator(locator) == KeyKind.Remote;
+        var publicKeyLocator = pointsAtKey ? locator : $"unencrypted:{publicKey}";
         System.IO.Directory.CreateDirectory(Directory);
         WithWalletLock(() =>
         {
@@ -209,7 +215,8 @@ public sealed class TezosClientStore(string? directory = null) : IWalletStore
         var locator = StringValue(Value(SecretKeysFile));
         if (PublicKey(Value(PublicKeysFile)) != wallet.PublicKey ||
             KeyKindExtensions.FromLocator(locator) != wallet.KeyKind ||
-            (locator is null ? null : LedgerKey.FromLocator(locator)) != wallet.LedgerKey)
+            (locator is null ? null : LedgerKey.FromLocator(locator)) != wallet.LedgerKey ||
+            RemoteSignerOf(locator) != wallet.RemoteSigner)
             throw new StoreError.WalletChanged(wallet.Alias);
         var entries = new JsonObject();
         foreach (var (file, rows) in files.OrderBy(f => f.File, StringComparer.Ordinal))

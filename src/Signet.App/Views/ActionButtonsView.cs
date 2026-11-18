@@ -46,7 +46,7 @@ public sealed partial class ActionButtonsView : UserControl
     private bool IsWatchOnly => model.SelectedWallet?.KeyKind == KeyKind.None;
     /// <summary>Faucets only fund implicit accounts; a contract (KT1) is funded by sending to it.</summary>
     private bool IsContract => model.SelectedWallet?.Address.IsContract == true;
-    /// <summary>Keys on disk (clear or encrypted) and on a Ledger can sign; remote signers cannot yet.</summary>
+    /// <summary>Keys on disk (clear or encrypted), on a Ledger, in AirGap Vault or on a remote signer can sign.</summary>
     private bool CanSign => model.SelectedWallet?.KeyKind.CanSign() == true;
 
     private IReadOnlyList<Action> Actions =>
@@ -81,9 +81,7 @@ public sealed partial class ActionButtonsView : UserControl
             if (model.SelectedWallet is not { } wallet || CanSign && !model.AccountNotOnChain) return null;
             if (IsWatchOnly) return "This is an address-book entry; Signet holds no key for it, so it cannot send.";
             if (model.AccountNotOnChain) return $"This address has no tez on {model.Network.Name}, so there is nothing to send.";
-            return wallet.KeyKind == KeyKind.Remote
-                ? "This account signs through a remote signer, which Signet does not support yet."
-                : "Signet cannot sign for this account yet.";
+            return "Signet cannot sign for this account yet.";
         }
     }
 

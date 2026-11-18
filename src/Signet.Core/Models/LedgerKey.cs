@@ -135,6 +135,11 @@ public abstract record SigningKey
     /// back the same way (<c>AirGapSigning</c>). The public key is the account's <c>edpk</c>.
     /// </summary>
     public sealed record Airgap(string PublicKey, Address Address) : SigningKey;
+    /// <summary>
+    /// A key on a remote signer (octez-signer); the locator names the signer and the key, the public
+    /// key is the account's, which every signature the signer returns is checked against.
+    /// </summary>
+    public sealed record Remote(RemoteSignerLocator Signer, string PublicKey) : SigningKey;
 
     public bool IsLedger => this is Ledger;
 
@@ -152,6 +157,10 @@ public abstract record SigningKey
         Airgap a => JsonSerializer.Serialize(new Dictionary<string, object>
         {
             ["kind"] = "airgap", ["publicKey"] = a.PublicKey, ["address"] = a.Address.Value,
+        }),
+        Remote r => JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["kind"] = "remote", ["locator"] = r.Signer.Locator, ["publicKey"] = r.PublicKey, ["address"] = r.Signer.Address.Value,
         }),
         _ => throw new InvalidOperationException(),
     };

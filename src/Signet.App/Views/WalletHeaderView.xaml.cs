@@ -59,6 +59,8 @@ public sealed partial class WalletIdentityView : UserControl
             Tags.Children.Add(TagView("Ledger", "", $"This key lives on a Ledger{(wallet.LedgerKey is { } key ? $" ({key.FullPath})" : "")}. Operations are approved on the device."));
         if (wallet.KeyKind == KeyKind.Airgap)
             Tags.Children.Add(TagView("AirGap", "", "This key lives in AirGap Vault on a phone. Signet holds only the address and public key."));
+        if (wallet.KeyKind == KeyKind.Remote)
+            Tags.Children.Add(TagView("Remote signer", "", $"This key is held by a remote signer{(wallet.RemoteSigner is { } signer ? $" at {signer.Endpoint}" : "")}. Signet sends it what is to be signed and checks every signature against the account's key."));
         if (wallet.IsSessionOnly) Tags.Children.Add(SessionTag());
 
         DomainList.Children.Clear();
@@ -146,6 +148,7 @@ public static class OperationsMenuItems
         menu.Items.Add(Item("Create account…", () => model.IsPresentingCreateWallet = true, VirtualKey.N, VirtualKeyModifiers.Control));
         menu.Items.Add(Item("Import account…", () => model.IsPresentingImportAccount = true, VirtualKey.I, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift));
         menu.Items.Add(Item("Connect Ledger…", () => model.IsPresentingConnectLedger = true, VirtualKey.L, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift));
+        menu.Items.Add(Item("Connect Remote Signer…", () => model.IsPresentingConnectRemoteSigner = true));
         if (model.HasCamera) menu.Items.Add(Item("Scan QR code…", () => model.IsPresentingScanQR = true));
         menu.Items.Add(Item("Rename account…", () => model.IsPresentingRenameWallet = true, enabled: hasWallet));
         menu.Items.Add(Item("Export secret key…", () => model.IsPresentingExportKey = true, enabled: model.CanExportSelectedKey));

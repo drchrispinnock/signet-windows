@@ -212,6 +212,7 @@ public sealed partial class WalletHomeView : UserControl
         }
         else if (model.IsPresentingGovernance && model.SelectedWallet is not null) { dialog = new GovernanceSheet(model); reset = () => model.IsPresentingGovernance = false; }
         else if (model.IsPresentingConnectLedger) { dialog = new ConnectLedgerSheet(model); reset = () => model.IsPresentingConnectLedger = false; }
+        else if (model.IsPresentingConnectRemoteSigner) { dialog = new ConnectRemoteSignerSheet(model); reset = () => model.IsPresentingConnectRemoteSigner = false; }
         else if (model.IsPresentingBuy && model.SelectedWallet is not null) { dialog = new BuySheet(model); reset = () => model.IsPresentingBuy = false; }
         else if (model.IsPresentingCreateMultisig) { dialog = new CreateMultisigSheet(model); reset = () => model.IsPresentingCreateMultisig = false; }
         else if (model.IsPresentingAddMultisig) { dialog = new AddMultisigSheet(model); reset = () => model.IsPresentingAddMultisig = false; }
@@ -275,6 +276,8 @@ public sealed partial class NoWalletsView : UserControl
                                          () => model.IsPresentingImportAccount = true));
         options.Children.Add(StartOption("Connect a Ledger", "Use a key that stays on your hardware wallet.", "", false,
             () => model.IsPresentingConnectLedger = true));
+        options.Children.Add(StartOption("Connect a remote signer", "Use a key held by a remote signer such as octez-signer or Signatory.", "", false,
+            () => model.IsPresentingConnectRemoteSigner = true));
         if (model.HasCamera)
             options.Children.Add(StartOption("Import from QR code", "Scan a secret key or a recovery phrase with the camera.", "", false,
                 () => model.IsPresentingScanQR = true));

@@ -83,9 +83,7 @@ public sealed partial class StakingSheet : Sheet
     private DelegateInfo? Info => model.DelegateInfo;
     private TezBalance? Balance => model.TezBalance;
 
-    private string WatchOnlyNote => wallet?.KeyKind == KeyKind.Remote
-        ? "Signet cannot sign for this account: it uses a remote signer."
-        : "Signet holds only this address's public key, so it can show but not change its delegation.";
+    private static string WatchOnlyNote => "Signet holds only this address's public key, so it can show but not change its delegation.";
 
     private async Task LoadDelegateName()
     {

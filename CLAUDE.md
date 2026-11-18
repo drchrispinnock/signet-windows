@@ -448,6 +448,23 @@ Windows-specific porting notes:
   once per context, into `EtherlinkVotingKeys`, and `EtherlinkVotesFor` is the selected account's.
   The Governance sheet shows both tabs only to a baker; a voting key alone gets Etherlink.
 
+- Remote signers (upstream `518aecc`, `270ee30`): `RemoteSignerLocator` (its `Transport` is
+  `TransportKind`, with `RawValue`/`DefaultPort`/`Title` extensions; `FromLocator` reads whether a
+  port was given from the text, since `Uri` fills in a scheme's default) and `SignerWire` in
+  `Models/RemoteSigner.cs`; `Address.IsImplicitAccount`; `IRemoteSignerService`,
+  `NetworkRemoteSignerService`, `MockRemoteSignerService`, `RemoteSignature` (cases
+  `Base58Signature`, `Raw`), `RemoteSignerError` and `RemoteSigners.Answer` in
+  `Services/RemoteSignerClient.cs`. `KeyKind.Remote` signs (`remote:` is now `Unknown`);
+  `Wallet.RemoteSigner`, `SigningKey.Remote`, the store's locator handling, the bridge's
+  `remoteSign` native (calls back `__signet_remoteDone`), `WalletViewModel+RemoteSigner.cs`
+  (`RemoteSigners` is the injectable service), `ConnectRemoteSignerSheet`, "Connect Remote
+  Signer…" in the burger menu and on the welcome screen, the header's "Remote signer" tag.
+  Windows differences: HTTP goes through one `HttpClient` without cookies, proxy or redirects
+  (upstream: an ephemeral URLSession; Windows has no App Transport Security, so only the sheet's
+  local-or-private check guards plain HTTP); TCP and Unix sockets are .NET `Socket`s (Windows
+  has AF_UNIX) under one deadline. `RemoteSignerLiveTests` is opt-in through
+  `SIGNET_REMOTE_SIGNERS`.
+
 - `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock
   chain, in-memory accounts (Captain Stake held with a placeholder key, so Baking and Governance
   show a baker) and mock multisig. It claims neither the single instance nor `signet://`, shows

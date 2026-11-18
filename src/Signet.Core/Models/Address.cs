@@ -34,6 +34,10 @@ public readonly record struct Address(string Value)
     public string Shortened(int prefix = 11, int suffix = 8) =>
         Value.Length > prefix + suffix + 3 ? $"{Value[..prefix]}...{Value[^suffix..]}" : Value;
 
+    /// <summary>tz1 to tz5: an account a signer could hold a key for.</summary>
+    public bool IsImplicitAccount =>
+        Scheme is { } scheme && scheme != AddressScheme.Tz6 && IsValidAccount && Value.StartsWith(scheme.RawValue(), StringComparison.Ordinal);
+
     public override string ToString() => Value;
 }
 

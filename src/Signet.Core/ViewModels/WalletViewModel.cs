@@ -82,6 +82,9 @@ public sealed partial class WalletViewModel : ObservableObject
     [ObservableProperty] private bool isPresentingStaking;
     [ObservableProperty] private bool isPresentingBaking;
     [ObservableProperty] private bool isPresentingConnectLedger;
+    [ObservableProperty] private bool isPresentingConnectRemoteSigner;
+    /// <summary>How Connect Remote Signer reaches a signer; tests put a mock here.</summary>
+    public IRemoteSignerService RemoteSigners { get; set; } = Services.RemoteSigners.Service;
     [ObservableProperty] private bool isPresentingImportAccount;
     [ObservableProperty] private bool isPresentingExportKey;
     [ObservableProperty] private bool isPresentingProofOfPossession;
@@ -210,11 +213,11 @@ public sealed partial class WalletViewModel : ObservableObject
     /// <summary>Export shows keys Signet holds on disk; Ledger and watch-only entries have nothing to show.</summary>
     public bool CanExportSelectedKey => SelectedWallet?.KeyKind is KeyKind.Unencrypted or KeyKind.Encrypted;
     /// <summary>
-    /// Create proof of possession is for a tz4 (BLS) account whose secret key Signet holds: the
-    /// proof is the key's signature over its own public key, and Taquito's Ledger signer cannot
-    /// make one.
+    /// Create proof of possession is for a tz4 (BLS) account whose secret key Signet holds or a
+    /// remote signer holds (octez-signer makes it on request): the proof is the key's signature
+    /// over its own public key, and Taquito's Ledger signer cannot make one.
     /// </summary>
-    public bool CanProveSelectedKey => SelectedWallet?.Scheme == AddressScheme.Tz4 && CanExportSelectedKey;
+    public bool CanProveSelectedKey => SelectedWallet?.Scheme == AddressScheme.Tz4 && (CanExportSelectedKey || SelectedWallet?.RemoteSigner is not null);
 
     /// <summary>
     /// Governance is for bakers whose key we can sign with, and, with Layer 2 on, for an
@@ -1701,6 +1704,9 @@ public sealed partial class WalletViewModel : ObservableObject
         KeyKind.Ledger => wallet.LedgerKey is { } key ? new SigningKey.Ledger(key, wallet.Address) : null,
         KeyKind.Airgap => wallet.PublicKey is { } publicKey && publicKey.StartsWith("edpk", StringComparison.Ordinal)
             ? new SigningKey.Airgap(publicKey, wallet.Address)
+            : null,
+        KeyKind.Remote => wallet.RemoteSigner is { } signer && signer.Address == wallet.Address && wallet.PublicKey is { } remoteKey
+            ? new SigningKey.Remote(signer, remoteKey)
             : null,
         _ => null,
     };
