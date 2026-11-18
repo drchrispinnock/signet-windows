@@ -26,6 +26,7 @@ public sealed record Network
                    Uri? l2RPCURL = null, string? l2DAppType = null, string? expectedL2ChainID = null, string? l2BridgeHelper = null, string? l2Rollup = null,
                    Uri? l2TzKTURL = null, Uri? l2ExplorerURL = null,
                    IReadOnlyDictionary<EtherlinkGovernance.Process, string>? etherlinkGovernance = null,
+                   string? etherlinkVotingContract = null,
                    string l2Name = "Etherlink", string? l2Chain = null, bool l2EnabledByDefault = false,
                    bool shieldedAvailable = false, ShieldedConfig? shielded = null)
     {
@@ -39,6 +40,8 @@ public sealed record Network
         DefaultEtherlinkGovernance = new EtherlinkGovernance.Contracts(
             (etherlinkGovernance ?? new Dictionary<EtherlinkGovernance.Process, string>()).ToDictionary(p => p.Key, p => new Address(p.Value)));
         EtherlinkGovernanceContracts = DefaultEtherlinkGovernance;
+        DefaultEtherlinkVotingContract = etherlinkVotingContract is null ? null : new Address(etherlinkVotingContract);
+        EtherlinkVotingContract = DefaultEtherlinkVotingContract;
         Chain = chain;
         DappType = chain == "custom" ? null : chain;
         L2DAppType = l2DAppType;
@@ -146,6 +149,13 @@ public sealed record Network
     /// </summary>
     public EtherlinkGovernance.Contracts EtherlinkGovernanceContracts { get; init; }
     public EtherlinkGovernance.Contracts DefaultEtherlinkGovernance { get; }
+    /// <summary>
+    /// The contract recording which key votes for which baker in Etherlink governance (its
+    /// <c>voting_delegations</c> big map; bakers <c>propose_voting_key</c>, keys
+    /// <c>claim_voting_rights</c>). <c>null</c> uses the one each governance contract names in its storage.
+    /// </summary>
+    public Address? EtherlinkVotingContract { get; init; }
+    public Address? DefaultEtherlinkVotingContract { get; }
 
     /// <summary>Shielded transactions (TzEL) on or off for this network; off by default, switched in Shielded settings.</summary>
     public bool ShieldedEnabled { get; init; }
@@ -175,6 +185,11 @@ public sealed record Network
         EtherlinkGovernance.AllProcesses.Where(EtherlinkGovernanceContracts.ContainsKey).ToList();
     public bool IsUsingDefaultEtherlinkGovernance(EtherlinkGovernance.Process process) =>
         EtherlinkGovernanceContracts.Get(process) == DefaultEtherlinkGovernance.Get(process);
+
+    public bool IsUsingDefaultEtherlinkVotingContract => EtherlinkVotingContract == DefaultEtherlinkVotingContract;
+
+    /// <summary>The same network reading voting keys from <c>contract</c> (<c>null</c>: the one each governance contract names).</summary>
+    public Network UsingEtherlinkVotingContract(Address? contract) => this with { EtherlinkVotingContract = contract };
 
     /// <summary>The same network with <c>process</c> governed through <c>contract</c> (null turns the process off).</summary>
     public Network UsingEtherlinkGovernance(Address? contract, EtherlinkGovernance.Process process) =>
@@ -349,7 +364,9 @@ public sealed record Network
         {
             [EtherlinkGovernance.Process.Slow] = "KT1AXRU3wLc87WNhLhVGrgqDGubLACUMUgPb",
             [EtherlinkGovernance.Process.Fast] = "KT19oUVQPnVLuUBYXrBVd46WJnNAMpqkKSwo",
-        });
+        },
+        // What both governance contracts name as their delegation_contract (November 2026).
+        etherlinkVotingContract: "KT1Ut6kfrTV9tK967tDYgQPMvy9t578iN7iH");
 
     public static readonly Network Shadownet = new(
         name: "Shadownet",

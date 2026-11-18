@@ -279,6 +279,11 @@ public sealed partial class NetworksSheet : Sheet
                                                      text => model.SetEtherlinkGovernanceContract(text, process, @base),
                                                      _ => "Enter the governance contract's address (KT1…), or leave it empty to do without this process.",
                                                      () => model.UseDefaultEtherlinkGovernanceContract(process, @base)));
+        governance.Children.Add(new SettingField("Voting rights contract", () => model.EtherlinkVotingContract(@base),
+                                                 @base.DefaultEtherlinkVotingContract?.Value ?? "", "KT1… (empty: the one the governance contracts name)", monospaced: true,
+                                                 text => model.SetEtherlinkVotingContract(text, @base),
+                                                 _ => "Enter the voting-rights contract's address (KT1…), or leave it empty to use the one the governance contracts name.",
+                                                 () => model.UseDefaultEtherlinkVotingContract(@base)));
         links.Children.Clear();
         foreach (var service in Enum.GetValues<Network.Service>().Where(@base.Offers))
             links.Children.Add(new LinkField(service.Title(), () => model.ServiceURL(service, @base), @base.DefaultURLFor(service),

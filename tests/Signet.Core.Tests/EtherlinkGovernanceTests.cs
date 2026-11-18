@@ -117,10 +117,19 @@ public class EtherlinkGovernanceTests
         // Another network, without switching: a contract can be given where we ship none.
         Assert.True(model.SetEtherlinkGovernanceContract("KT1DxndcFitAbxLdJCN3C1pPivqbC3RJxD1R", Fast, Network.Shadownet));
         Assert.True(model.Network.Name == "Mainnet" && model.EtherlinkGovernanceContract(Fast, Network.Shadownet) == "KT1DxndcFitAbxLdJCN3C1pPivqbC3RJxD1R");
+        // The voting-rights contract: Mainnet ships KT1Ut6…, empty means the governance contracts' own.
+        Assert.Equal(new Address("KT1Ut6kfrTV9tK967tDYgQPMvy9t578iN7iH"), Network.Mainnet.EtherlinkVotingContract);
+        Assert.Equal("KT1Ut6kfrTV9tK967tDYgQPMvy9t578iN7iH", model.EtherlinkVotingContract(Network.Mainnet));
+        Assert.False(model.SetEtherlinkVotingContract("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb", Network.Mainnet));
+        Assert.True(model.SetEtherlinkVotingContract("", Network.Mainnet));
+        Assert.Equal("", model.EtherlinkVotingContract(Network.Mainnet));
         // A relaunch reads the same choices back.
         var again = new WalletViewModel(WalletViewModel.SampleWallets, new MockChainService(), stateStore: store);
         Assert.Equal(new EtherlinkGovernance.Contracts([new(Fast, new Address("KT1DxndcFitAbxLdJCN3C1pPivqbC3RJxD1R"))]),
                      again.Resolved(Network.Shadownet).EtherlinkGovernanceContracts);
+        Assert.Null(again.Resolved(Network.Mainnet).EtherlinkVotingContract);
+        again.UseDefaultEtherlinkVotingContract(Network.Mainnet);
+        Assert.Equal(new Address("KT1Ut6kfrTV9tK967tDYgQPMvy9t578iN7iH"), again.Resolved(Network.Mainnet).EtherlinkVotingContract);
     }
 
     [Fact]
@@ -134,6 +143,10 @@ public class EtherlinkGovernanceTests
         await model.Refresh();
         Assert.Equal([MockChainService.CaptainStake], model.EtherlinkVotesFor);
         Assert.True(model.CanGovernEtherlink && model.CanGovern);
+        // Every signing account was checked, not only the selected one.
+        var keys = Assert.Single(model.EtherlinkVotingKeys);
+        Assert.Equal(MockChainService.EtherlinkVotingKey, keys.Key);
+        Assert.Equal([MockChainService.CaptainStake], keys.Value);
         // Off again, or no contract: the item goes.
         model.SetEtherlinkGovernanceContract("", Slow, Network.Mainnet);
         model.SetEtherlinkGovernanceContract("", Fast, Network.Mainnet);
@@ -182,7 +195,7 @@ public class EtherlinkGovernanceTests
         var service = new TaquitoChainService(Network.Mainnet);
         var fast = new Address("KT19oUVQPnVLuUBYXrBVd46WJnNAMpqkKSwo");
         var votingKey = new Address("tz1XjYbYEdJgoUK2ERHD5iVaquJQwPbvYjDJ");
-        var bakers = await service.EtherlinkVotingRightsFor(votingKey, fast);
+        var bakers = await service.EtherlinkVotingRightsFor(votingKey, fast, null);
         Assert.True(bakers.Count > 0 && bakers.All(b => b.Value.StartsWith("tz3", StringComparison.Ordinal)));
         var state = await service.EtherlinkGovernanceState(fast, votingKey);
         Assert.True(state.Config.PeriodLength == 4800 && state.Config.PromotionSupermajority == 80 && state.Config.UpvotingLimit == 20);

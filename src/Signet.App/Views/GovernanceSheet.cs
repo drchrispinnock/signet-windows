@@ -28,7 +28,9 @@ public sealed partial class GovernanceSheet : Sheet
     }
 
     private Tab tab = Tab.Tezos;
-    private bool ShowsTabs => model.CanGovernEtherlink;
+    private bool IsBaker => model.DelegateInfo?.IsBaker == true;
+    /// <summary>Both tabs only for a baker with Etherlink governance on; a voting key that is not a baker has Etherlink alone.</summary>
+    private bool ShowsTabs => model.CanGovernEtherlink && IsBaker;
 
     private readonly WalletViewModel model;
     private readonly Wallet? wallet;
@@ -65,8 +67,8 @@ public sealed partial class GovernanceSheet : Sheet
         };
         // A vote being signed and sent must not be abandoned with Esc.
         Closing += (_, args) => { if (mode is Mode.Working or Mode.EtherlinkWorking) args.Cancel = true; };
-        // An account that cannot vote on Tezos (a voting key that is not a baker) opens on Etherlink.
-        if (ShowsTabs && model.DelegateInfo?.IsBaker != true) tab = Tab.Etherlink;
+        // An account that cannot vote on Tezos (a voting key that is not a baker) has the Etherlink tab alone (upstream's shownTab).
+        if (!IsBaker && model.CanGovernEtherlink) tab = Tab.Etherlink;
         Opened += async (_, _) => await (tab == Tab.Tezos ? Load() : LoadEtherlink());
         SetMode(new Mode.Overview());
     }

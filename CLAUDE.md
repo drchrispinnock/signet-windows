@@ -441,6 +441,13 @@ Windows-specific porting notes:
   list once per `DomainListKey` (upstream's `.task(id:)`) and rebuilds its picker when the network
   changes.
 
+- Etherlink voting keys (upstream `aeb62f0`): `Network.EtherlinkVotingContract` (Mainnet ships
+  `KT1Ut6kfrTV9tK967tDYgQPMvy9t578iN7iH`), saved under `AppState.VotingRightsKey` ("voting") in
+  the Etherlink governance map; the Networks sheet's "Voting rights contract" field;
+  `WalletViewModel.CheckEtherlinkVotingKeys` checks every signing account beside each refresh,
+  once per context, into `EtherlinkVotingKeys`, and `EtherlinkVotesFor` is the selected account's.
+  The Governance sheet shows both tabs only to a baker; a voting key alone gets Etherlink.
+
 - `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock
   chain, in-memory accounts (Captain Stake held with a placeholder key, so Baking and Governance
   show a baker) and mock multisig. It claims neither the single instance nor `signet://`, shows

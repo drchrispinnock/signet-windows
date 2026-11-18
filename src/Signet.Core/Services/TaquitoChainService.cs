@@ -413,10 +413,10 @@ public sealed class TaquitoChainService(Network? network = null, TaquitoBridge? 
 
     // ---- Etherlink governance (layer 1 contracts) ------------------------------------------------
 
-    public async Task<IReadOnlyList<Address>> EtherlinkVotingRightsFor(Address address, Address contract)
+    public async Task<IReadOnlyList<Address>> EtherlinkVotingRightsFor(Address address, Address contract, Address? votingContract)
     {
         await VerifyChain();
-        var r = await bridge.Call("etherlinkVotingRights", Rpc, contract.Value, address.Value);
+        var r = await bridge.Call("etherlinkVotingRights", Rpc, contract.Value, address.Value, votingContract?.Value);
         if (r.ArrayValue is not { } list) throw new TaquitoBridge.BridgeError.JavaScript($"unexpected voting rights payload: {r}");
         return list.Select(item => item.StringValue is { } value && new Address(value).IsValidAccount
             ? new Address(value)

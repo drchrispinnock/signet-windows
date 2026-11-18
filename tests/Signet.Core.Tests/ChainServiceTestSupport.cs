@@ -43,7 +43,7 @@ public abstract class TestChainService : IChainService
     public virtual Task<SignedPayload> SignPayload(SigningKey signer, string payloadHex) => Task.FromResult(new SignedPayload("edpkTest", "edsigTest"));
     public virtual Task<GovernanceInfo> GovernanceInfoFor(Address address) => Task.FromResult(new GovernanceInfo());
     public virtual Task<string> PerformGovernance(GovernanceOperation operation, Wallet wallet, SigningKey signer) => Task.FromResult("ooTest");
-    public virtual Task<IReadOnlyList<Address>> EtherlinkVotingRightsFor(Address address, Address contract) => Task.FromResult<IReadOnlyList<Address>>([]);
+    public virtual Task<IReadOnlyList<Address>> EtherlinkVotingRightsFor(Address address, Address contract, Address? votingContract) => Task.FromResult<IReadOnlyList<Address>>([]);
     public virtual Task<TransferEstimate> EstimateShieldDeposit(Wallet wallet, ShieldDeposit deposit) =>
         Task.FromResult(new TransferEstimate(0.001m, 0, deposit.Amount + 0.001m, 0, 0, new OperationLimits("1000", 0, 0)));
     public virtual Task<SentOperation> SendShieldDeposit(Wallet wallet, SigningKey signer, ShieldDeposit deposit, OperationLimits limits) =>

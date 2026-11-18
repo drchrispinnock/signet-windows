@@ -17,6 +17,8 @@ public sealed record AppState
     /// <summary>
     /// Etherlink governance contracts by network name, then by <c>EtherlinkGovernance.Process</c>
     /// raw value, only where the user replaced what we ship; an empty string turns the process off.
+    /// The voting-rights contract is kept here too, under <c>VotingRightsKey</c>; empty means "the
+    /// one the governance contracts name".
     /// </summary>
     [JsonPropertyName("etherlinkGovernance"), JsonPropertyOrder(0)]
     public IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>? EtherlinkGovernance { get; init; }
@@ -91,8 +93,18 @@ public sealed record AppState
             if (savedContract.Length == 0) network = network.UsingEtherlinkGovernance(null, process);
             else if (Models.EtherlinkGovernance.ContractAddress(savedContract) is { } contract) network = network.UsingEtherlinkGovernance(contract, process);
         }
+        if (EtherlinkGovernance?.GetValueOrDefault(@base.Name)?.GetValueOrDefault(VotingRightsKey) is { } savedVoting)
+            network = network.UsingEtherlinkVotingContract(savedVoting.Length == 0
+                ? null
+                : Models.EtherlinkGovernance.ContractAddress(savedVoting) ?? @base.DefaultEtherlinkVotingContract);
         return network;
     }
+
+    /// <summary>
+    /// The voting-rights contract is kept in <c>EtherlinkGovernance</c> too, under this key; empty
+    /// means "the one the governance contracts name".
+    /// </summary>
+    public const string VotingRightsKey = "voting";
 
     /// <summary>
     /// Records <c>net</c>'s node, Layer 2 choices and links, each only where it differs from the
@@ -182,6 +194,8 @@ public sealed record AppState
             if (net.IsUsingDefaultEtherlinkGovernance(process)) contracts.Remove(process.RawValue());
             else contracts[process.RawValue()] = net.EtherlinkGovernanceContracts.Get(process)?.Value ?? "";
         }
+        if (net.IsUsingDefaultEtherlinkVotingContract) contracts.Remove(VotingRightsKey);
+        else contracts[VotingRightsKey] = net.EtherlinkVotingContract?.Value ?? "";
         if (contracts.Count == 0) all.Remove(net.Name);
         else all[net.Name] = contracts;
         return this with { EtherlinkGovernance = all.Count == 0 ? null : all };

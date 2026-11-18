@@ -81,8 +81,11 @@ public interface IChainService
     Task<string> PerformGovernance(GovernanceOperation operation, Wallet wallet, SigningKey signer);
 
     // Etherlink governance: layer 1 contracts, called with an ordinary fee.
-    /// <summary>The bakers <c>address</c> is the Etherlink voting key of on <c>contract</c> (the delegation contract's <c>list_voters</c>).</summary>
-    Task<IReadOnlyList<Address>> EtherlinkVotingRightsFor(Address address, Address contract);
+    /// <summary>
+    /// The bakers <c>address</c> votes for on governance <c>contract</c>, from <c>votingContract</c>
+    /// (the voting-rights contract set in Networks) or, when <c>null</c>, the one <c>contract</c> names.
+    /// </summary>
+    Task<IReadOnlyList<Address>> EtherlinkVotingRightsFor(Address address, Address contract, Address? votingContract);
     Task<EtherlinkGovernance.State> EtherlinkGovernanceState(Address contract, Address address);
     Task<TransferEstimate> EstimateEtherlinkGovernance(EtherlinkGovernance.Operation operation, Address contract, Wallet wallet);
     /// <summary>Signs and injects the call with exactly the approved <c>limits</c> (S14).</summary>

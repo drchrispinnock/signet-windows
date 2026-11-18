@@ -185,7 +185,7 @@ public sealed class MockChainService : IChainService
     public static readonly Address EtherlinkVotingKey = new("tz1VSUr8wwNhLAzempoch5d6hLRiTh8Cjcjb");
     public const string MockKernelHash = "0x009e07373751a43acbf0cd747b404f45130e0ad561c4b7da937e02eb812bd0f7e8";
 
-    public Task<IReadOnlyList<Address>> EtherlinkVotingRightsFor(Address address, Address contract) =>
+    public Task<IReadOnlyList<Address>> EtherlinkVotingRightsFor(Address address, Address contract, Address? votingContract) =>
         Task.FromResult<IReadOnlyList<Address>>(address == EtherlinkVotingKey ? [CaptainStake] : []);
 
     public async Task<EtherlinkGovernance.State> EtherlinkGovernanceState(Address contract, Address address)
@@ -197,7 +197,7 @@ public sealed class MockChainService : IChainService
             Config = new EtherlinkGovernance.Config(4800, 20, 100, 5, 15, 80),
             TotalVotingPower = 654_433_650_040_589,
             Proposals = [new EtherlinkGovernance.Proposal(MockKernelHash, [CaptainStake], 215_727_025_713_721)],
-            VotesFor = await EtherlinkVotingRightsFor(address, contract),
+            VotesFor = await EtherlinkVotingRightsFor(address, contract, null),
         };
         state.VotingPower = address == CaptainStake || state.VotesFor.Count > 0 ? 1_234_567_000 : 0;
         return state;

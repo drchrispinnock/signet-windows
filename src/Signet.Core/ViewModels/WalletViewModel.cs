@@ -70,7 +70,7 @@ public sealed partial class WalletViewModel : ObservableObject
     private readonly SessionKeyStore sessionKeys = new();
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SelectedWallet), nameof(CanExportSelectedKey), nameof(CanProveSelectedKey), nameof(CanRememberSelectedKey), nameof(CanGovern), nameof(CanGovernEtherlink), nameof(CanShield))]
+    [NotifyPropertyChangedFor(nameof(SelectedWallet), nameof(CanExportSelectedKey), nameof(CanProveSelectedKey), nameof(CanRememberSelectedKey), nameof(CanGovern), nameof(CanGovernEtherlink), nameof(CanShield), nameof(EtherlinkVotesFor))]
     private string? selectedWalletID;
 
     [ObservableProperty] private bool isPresentingCreateWallet;
@@ -240,10 +240,22 @@ public sealed partial class WalletViewModel : ObservableObject
     [ObservableProperty, NotifyPropertyChangedFor(nameof(VisibleTransactions))] private IReadOnlyList<TezosTransaction> transactions = [];
     [ObservableProperty, NotifyPropertyChangedFor(nameof(CanGovern), nameof(CanGovernEtherlink))] private DelegateInfo? delegateInfo;
     /// <summary>
-    /// Bakers the selected account votes for in Etherlink governance (their voting key), as of
-    /// the last refresh; empty when Layer 2 is off or the account votes for nobody.
+    /// Bakers each of our signing accounts votes for in Etherlink governance (its voting key),
+    /// checked for every account at launch and whenever the network, its Layer 2 and governance
+    /// settings or the account list change (<c>CheckEtherlinkVotingKeys</c>); only accounts with
+    /// rights are listed.
     /// </summary>
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(CanGovern), nameof(CanGovernEtherlink))] private IReadOnlyList<Address> etherlinkVotesFor = [];
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(EtherlinkVotesFor), nameof(CanGovern), nameof(CanGovernEtherlink))]
+    private IReadOnlyDictionary<Address, IReadOnlyList<Address>> etherlinkVotingKeys = new Dictionary<Address, IReadOnlyList<Address>>();
+    /// <summary>What <c>EtherlinkVotingKeys</c> was checked for; a different value means check again.</summary>
+    private string? etherlinkVotingKeysContext;
+
+    /// <summary>
+    /// Bakers the selected account votes for in Etherlink governance; empty when Layer 2 is off or
+    /// the account votes for nobody.
+    /// </summary>
+    public IReadOnlyList<Address> EtherlinkVotesFor =>
+        SelectedWallet is { } wallet && EtherlinkVotingKeys.TryGetValue(wallet.Address, out var bakers) ? bakers : [];
     public const int RecentTransactionLimit = 25;
 
     public enum ActivityTab { Transactions, Assets, Nfts, Domains }
@@ -401,7 +413,6 @@ public sealed partial class WalletViewModel : ObservableObject
         Nfts = [];
         Transactions = [];
         DelegateInfo = null;
-        EtherlinkVotesFor = [];
         ShieldedWallet = null;
         ShieldedPools = [];
         ShieldedWithdrawals = [];
@@ -488,6 +499,30 @@ public sealed partial class WalletViewModel : ObservableObject
 
     public void UseDefaultEtherlinkGovernanceContract(EtherlinkGovernance.Process process, Network @base) =>
         Change(@base, n => n.UsingEtherlinkGovernance(n.DefaultEtherlinkGovernance.Get(process), process));
+
+    /// <summary>The voting-rights contract in use on <c>base</c> ("" when the governance contracts' own is used).</summary>
+    public string EtherlinkVotingContract(Network @base) =>
+        Resolved(Network.Named(@base.Name) ?? @base).EtherlinkVotingContract?.Value ?? "";
+
+    /// <summary>
+    /// Reads voting keys from the contract typed in Networks, or from the governance contracts'
+    /// own for empty text. False (and no change) when the text is not a contract address.
+    /// </summary>
+    public bool SetEtherlinkVotingContract(string text, Network @base)
+    {
+        var trimmed = text.Trim();
+        Address? contract = null;
+        if (trimmed.Length > 0)
+        {
+            if (EtherlinkGovernance.ContractAddress(trimmed) is not { } parsed) return false;
+            contract = parsed;
+        }
+        Change(@base, n => n.UsingEtherlinkVotingContract(contract));
+        return true;
+    }
+
+    public void UseDefaultEtherlinkVotingContract(Network @base) =>
+        Change(@base, n => n.UsingEtherlinkVotingContract(n.DefaultEtherlinkVotingContract));
 
     /// <summary>The Etherlink node in use for <c>base</c>, if it has one.</summary>
     public Uri? L2NodeURL(Network @base) => Resolved(Network.Named(@base.Name) ?? @base).L2RPCURL;
@@ -841,7 +876,6 @@ public sealed partial class WalletViewModel : ObservableObject
         public IReadOnlyList<string> Domains = [];
         public IReadOnlyList<TezosTransaction> Transactions = [];
         public DelegateInfo? DelegateInfo;
-        public IReadOnlyList<Address> EtherlinkVotesFor = [];
         public ShieldedSnapshot? Shielded;
         public bool NotOnChain;
         public string? Error;
@@ -869,6 +903,9 @@ public sealed partial class WalletViewModel : ObservableObject
         var shieldedRollup = mine.Network.Shielded is { } shieldedConfig ? shieldedRollupFactory(shieldedConfig) : null;
         IsLoading = true;
         ErrorMessage = null;
+        // Which accounts are Etherlink voting keys is checked beside this account's load and
+        // apart from it, so a failing balance or history read cannot hide Governance.
+        var votingKeys = CheckEtherlinkVotingKeys();
 
         var snapshot = new Snapshot();
         // Every load starts at once, as upstream's `async let`s do; one that throws before it
@@ -884,7 +921,6 @@ public sealed partial class WalletViewModel : ObservableObject
         var history = Start(() => chain.RecentTransactionsFor(address, RecentTransactionLimit));
         var delegation = Start(() => chain.DelegateInfoFor(address));
         var etherlink = EtherlinkRow(address, mine.Network, chain);
-        var votesFor = EtherlinkVotesForAddress(address, mine.Network, chain);
         var layer2 = Layer2Chain;
         var etherlinkHistory = EtherlinkHistory(address, mine.Network, layer2, RecentTransactionLimit);
         var etherlinkHoldings = EtherlinkPortfolio(address, mine.Network, layer2);
@@ -906,7 +942,6 @@ public sealed partial class WalletViewModel : ObservableObject
             snapshot.Domains = await names;
             snapshot.Transactions = MergedHistory(RecentTransactionLimit, await history, await etherlinkHistory);
             try { snapshot.DelegateInfo = await delegation; } catch (Exception) { }
-            snapshot.EtherlinkVotesFor = await votesFor;
         }
         catch (ChainError.AccountNotOnChain)
         {
@@ -919,7 +954,8 @@ public sealed partial class WalletViewModel : ObservableObject
         {
             snapshot.Error = e.Message;
         }
-        Observe(holdings, names, history, delegation, etherlink, votesFor, etherlinkHistory, etherlinkHoldings, shielded);
+        Observe(holdings, names, history, delegation, etherlink, etherlinkHistory, etherlinkHoldings, shielded);
+        await votingKeys;
 
         // Publish only into the context the load was started for.
         if (CurrentContext != mine) return;
@@ -952,28 +988,48 @@ public sealed partial class WalletViewModel : ObservableObject
         if (!Domains.SequenceEqual(snapshot.Domains)) Domains = snapshot.Domains;
         if (!Transactions.SequenceEqual(snapshot.Transactions)) Transactions = snapshot.Transactions;
         DelegateInfo = snapshot.DelegateInfo;
-        if (!EtherlinkVotesFor.SequenceEqual(snapshot.EtherlinkVotesFor)) EtherlinkVotesFor = snapshot.EtherlinkVotesFor;
         AccountNotOnChain = snapshot.NotOnChain;
     }
 
     /// <summary>
-    /// The bakers <c>address</c> is the Etherlink voting key of, across the network's governance
-    /// contracts; empty when Layer 2 is off, no contract is set, or the lookup fails (the
-    /// Governance item then shows for bakers alone). (Upstream <c>etherlinkVotesFor(_:on:chain:)</c>.)
+    /// Finds which of our signing accounts are some baker's Etherlink voting key, unless that was
+    /// already found for this network, these settings and these accounts. Off with Layer 2 off.
+    /// A lookup that fails leaves the context unchecked, so the next refresh tries again.
     /// </summary>
-    private static async Task<IReadOnlyList<Address>> EtherlinkVotesForAddress(Address address, Network network, IChainService chain)
+    public async Task CheckEtherlinkVotingKeys()
     {
-        if (!network.CanGovernEtherlink) return [];
-        var bakers = new List<Address>();
-        foreach (var process in network.EtherlinkGovernanceProcesses)
+        var network = Network;
+        var candidates = Wallets.Where(w => w.KeyKind.CanSign() && w.Address.IsValidAccount && !w.Address.IsContract).Select(w => w.Address).Distinct().ToList();
+        var contracts = network.EtherlinkGovernanceProcesses.Select(p => network.EtherlinkGovernanceContracts.Get(p)).OfType<Address>().ToList();
+        var context = string.Join("|", new[] { network.Name, network.RpcURL.AbsoluteString(), network.CanGovernEtherlink.ToString(), network.EtherlinkVotingContract?.Value ?? "-" }
+            .Concat(contracts.Select(c => c.Value)).Concat(candidates.Select(a => a.Value).Order(StringComparer.Ordinal)));
+        if (context == etherlinkVotingKeysContext) return;
+        if (!network.CanGovernEtherlink || candidates.Count == 0)
         {
-            if (network.EtherlinkGovernanceContracts.Get(process) is not { } contract) continue;
-            IReadOnlyList<Address> rights;
-            try { rights = await chain.EtherlinkVotingRightsFor(address, contract); }
-            catch (Exception) { continue; }
-            foreach (var baker in rights) if (!bakers.Contains(baker)) bakers.Add(baker);
+            EtherlinkVotingKeys = new Dictionary<Address, IReadOnlyList<Address>>();
+            etherlinkVotingKeysContext = context;
+            return;
         }
-        return bakers;
+        etherlinkVotingKeysContext = context;  // one check at a time for this context
+        var chain = this.chain;
+        var voting = network.EtherlinkVotingContract;
+        async Task<(Address Address, IReadOnlyList<Address>? Bakers)> Lookup(Address address)
+        {
+            var bakers = new List<Address>();
+            foreach (var contract in contracts)
+            {
+                IReadOnlyList<Address> list;
+                try { list = await chain.EtherlinkVotingRightsFor(address, contract, voting); }
+                catch (Exception) { return (address, null); }
+                foreach (var baker in list) if (!bakers.Contains(baker)) bakers.Add(baker);
+            }
+            return (address, bakers);
+        }
+        var found = await Task.WhenAll(candidates.Select(Lookup));
+        if (etherlinkVotingKeysContext != context) return;
+        EtherlinkVotingKeys = found.Where(f => f.Bakers is { Count: > 0 }).ToDictionary(f => f.Address, f => f.Bakers!);
+        // Try again on the next refresh if any account could not be looked up.
+        if (found.Any(f => f.Bakers is null)) etherlinkVotingKeysContext = null;
     }
 
     /// <summary>
@@ -1124,7 +1180,7 @@ public sealed partial class WalletViewModel : ObservableObject
         {
             SelectedWalletID = null;
             RememberSelection();
-            Domains = []; Assets = []; Tokens = []; Nfts = []; Transactions = []; DelegateInfo = null; EtherlinkVotesFor = []; TezBalance = null;
+            Domains = []; Assets = []; Tokens = []; Nfts = []; Transactions = []; DelegateInfo = null; TezBalance = null;
         }
     }
 
