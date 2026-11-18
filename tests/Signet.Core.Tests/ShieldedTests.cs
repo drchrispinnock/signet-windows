@@ -148,7 +148,9 @@ public class XMSSAuthTreeTests
         Assert.Equal(XMSSAuthTree.LeavesBytes, leaves.Length);
         Assert.Equal(XMSSAuthTree.Size, reported);
         Assert.Equal(XMSSAuthTree.Leaf(askJ, pubSeed, 4097), leaves[(4097 * 32)..(4098 * 32)]);
-        Assert.True(elapsed < TimeSpan.FromSeconds(60), $"took {elapsed.TotalSeconds:0.0} s");
+        // A Debug build takes about 10 s here; GitHub's shared runners have taken over 60 s, so CI gets more room.
+        var limit = TimeSpan.FromSeconds(Environment.GetEnvironmentVariable("CI") == "true" ? 180 : 60);
+        Assert.True(elapsed < limit, $"took {elapsed.TotalSeconds:0.0} s");
     }
 
     /// <summary>A real proof is a few hundred KB of hex; the encoder must come back through the bridge as one string.</summary>
