@@ -127,9 +127,9 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 ## Status
 
-The pin is upstream `766ad2e` (main, 2026-11-18, release 0.9.19), and everything up to it is ported: every
+The pin is upstream `7586d85` (main, 2026-11-18, release 0.9.19), and everything up to it is ported: every
 feature (TzEL included), the infrastructure behind them, and every upstream test suite (the
-Linux/FreeBSD build commits `00269fa`, `445e047`, `98dd8d7`, `45f6849`, `548b3b1`, `a85aa92` need nothing
+Linux/FreeBSD build commits `00269fa`, `445e047`, `98dd8d7`, `45f6849`, `548b3b1`, `a85aa92`, `52dca2f` need nothing
 here, nor do the iOS commit `0c263c2`, the manuscript, release-workflow and bridge-only commits). Upstream rewrote its
 history in November 2026: the old pin `1fc7dc4` is `cf1409e` in the new history (the same
 tree), and the hashes cited here are the new ones. Ported:
