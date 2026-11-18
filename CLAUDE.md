@@ -127,7 +127,7 @@ contract. Then pin it with `git -C upstream checkout <sha>; git add upstream` an
 
 ## Status
 
-The pin is upstream `c1d4b56` (main, 2026-11-17, release 0.9.18), and everything up to it is ported: every
+The pin is upstream `766ad2e` (main, 2026-11-18, release 0.9.19), and everything up to it is ported: every
 feature (TzEL included), the infrastructure behind them, and every upstream test suite (the
 Linux/FreeBSD build commits `00269fa`, `445e047`, `98dd8d7`, `45f6849`, `548b3b1`, `a85aa92` need nothing
 here, nor do the iOS commit `0c263c2`, the manuscript, release-workflow and bridge-only commits). Upstream rewrote its
@@ -464,6 +464,16 @@ Windows-specific porting notes:
   local-or-private check guards plain HTTP); TCP and Unix sockets are .NET `Socket`s (Windows
   has AF_UNIX) under one deadline. `RemoteSignerLiveTests` is opt-in through
   `SIGNET_REMOTE_SIGNERS`.
+
+- Getting Started (upstream `39a7ad9`, `0ec0a21`, `d60540a`, `652dad1`): `Markua` in Core (`Html`
+  takes the pictures' Content-Security-Policy source, `file:` upstream) and `GettingStartedWindow`
+  in the app, opened from "Getting Started" at the end of the burger menu beside "Signet Website"
+  (Windows has no Help menu). The chapter and `manuscript/resources/110` are linked into the
+  app's `Book` folder by `Signet.App.csproj`, never copied; re-pinning the submodule updates them.
+  The page is WebView2 with JavaScript off; the chapter and its pictures are served under
+  `https://signet-book.example/` through `WebResourceRequested`, every other link goes to the
+  browser. `GettingStartedTests.TheAppBundlesTheChapterAndItsPictures` checks the submodule's
+  chapter against its pictures and the project's link.
 
 - `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock
   chain, in-memory accounts (Captain Stake held with a placeholder key, so Baking and Governance

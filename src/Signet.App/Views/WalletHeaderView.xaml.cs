@@ -185,6 +185,10 @@ public static class OperationsMenuItems
         // Upstream has "Check for Updates…" in the app menu; Windows has none, so it sits here.
         menu.Items.Add(Item("Check for Updates…", checkForUpdates));
         menu.Items.Add(Item("Refresh", () => _ = model.Refresh(), VirtualKey.R, VirtualKeyModifiers.Control, hasWallet));
+        // Upstream's Help menu (Windows has no menu bar).
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(Item("Getting Started", () => GettingStartedWindow.Show(menu.XamlRoot?.RasterizationScale ?? 1)));
+        menu.Items.Add(Item("Signet Website", () => _ = Windows.System.Launcher.LaunchUriAsync(GettingStartedWindow.WebsiteURL)));
     }
 
     private static MenuFlyoutItem Item(string text, Action? action, VirtualKey key = VirtualKey.None, VirtualKeyModifiers modifiers = VirtualKeyModifiers.None,

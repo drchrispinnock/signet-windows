@@ -14,6 +14,17 @@ internal static class TestSupport
         if (!Directory.Exists(link)) throw new IOException($"mklink /J {link} failed");
     }
 
+    /// <summary>The repository's root: the nearest folder above the test binaries holding <c>Signet.slnx</c>.</summary>
+    public static string RepositoryRoot
+    {
+        get
+        {
+            for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+                if (File.Exists(Path.Combine(dir.FullName, "Signet.slnx"))) return dir.FullName;
+            throw new DirectoryNotFoundException("Signet.slnx not found above the test binaries");
+        }
+    }
+
     /// <summary>A fresh, existing directory.</summary>
     public static string MakeDir(string label) => Directory.CreateDirectory(TempDir(label)).FullName;
 

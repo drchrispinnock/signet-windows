@@ -50,5 +50,8 @@
     <Content Include="..\..\upstream\Signet\Resources\Assets.xcassets\TezosToken.imageset\tezos-token-round.svg" Link="Assets\TezosToken.svg" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\upstream\Signet\Resources\Assets.xcassets\EtherlinkLogo.imageset\etherlink-avatar.svg" Link="Assets\EtherlinkLogo.svg" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\upstream\Signet\Resources\Assets.xcassets\ShieldLogo.imageset\shield.png" Link="Assets\ShieldLogo.png" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Help: the book's Getting Started chapter and its screenshots (GettingStartedWindow), as upstream bundles them. -->
+    <Content Include="..\..\upstream\manuscript\110-starting.md" Link="Book\110-starting.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\upstream\manuscript\resources\110\**" Link="Book\110\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
