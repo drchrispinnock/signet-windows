@@ -480,7 +480,7 @@ public sealed partial class TransactionRowView : UserControl
                 {
                     TezosTransaction.DelegationRoleKind.WeDelegated => $"Delegated to {name}",
                     TezosTransaction.DelegationRoleKind.WeUndelegated => "Undelegated",
-                    TezosTransaction.DelegationRoleKind.DelegatorJoined => $"{name} delegated to you",
+                    TezosTransaction.DelegationRoleKind.DelegatorJoined => $"{name} delegated",
                     TezosTransaction.DelegationRoleKind.DelegatorLeft => $"{name} undelegated",
                     _ => $"{name} moved their delegation",
                 };

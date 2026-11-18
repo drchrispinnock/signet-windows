@@ -13,28 +13,25 @@
         </Grid.ColumnDefinitions>
         <views:AccountAvatarView x:Name="Avatar" Size="48" VerticalAlignment="Center" />
         <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
-            <!-- The tags go under the name when the window is too narrow for both (WrapTags). -->
-            <StackPanel x:Name="NameRow" Orientation="Horizontal" Spacing="8">
-                <!-- The alias doubles as the wallet switcher. -->
-                <Button x:Name="Picker" Padding="0,0,4,0" Background="Transparent" BorderThickness="0"
-                        ToolTipService.ToolTip="Switch account">
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <TextBlock x:Name="AliasText" Style="{StaticResource SubtitleTextBlockStyle}" />
-                        <FontIcon Glyph="&#xE70D;" FontSize="10" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="0,3,0,0" />
-                    </StackPanel>
-                    <Button.Flyout>
-                        <MenuFlyout x:Name="PickerMenu" Placement="BottomEdgeAlignedLeft" />
-                    </Button.Flyout>
-                </Button>
-                <StackPanel x:Name="Tags" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" />
-            </StackPanel>
-            <StackPanel x:Name="WrappedTags" Orientation="Horizontal" Spacing="6" Margin="0,2,0,2" Visibility="Collapsed" />
+            <!-- The alias doubles as the wallet switcher. -->
+            <Button x:Name="Picker" Padding="0,0,4,0" Background="Transparent" BorderThickness="0"
+                    ToolTipService.ToolTip="Switch account">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock x:Name="AliasText" Style="{StaticResource SubtitleTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                    <FontIcon Glyph="&#xE70D;" FontSize="10" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="0,3,0,0" />
+                </StackPanel>
+                <Button.Flyout>
+                    <MenuFlyout x:Name="PickerMenu" Placement="BottomEdgeAlignedLeft" />
+                </Button.Flyout>
+            </Button>
+            <!-- The tags sit on the address line, not beside the alias: a long alias left them no room. -->
             <StackPanel Orientation="Horizontal" Spacing="4">
                 <TextBlock x:Name="AddressText" Style="{StaticResource MonoText}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" IsTextSelectionEnabled="True" />
                 <Button x:Name="CopyButton" Padding="6,4" Background="Transparent" BorderThickness="0" Click="CopyAddress"
                         ToolTipService.ToolTip="Copy address" AutomationProperties.Name="Copy address">
                     <FontIcon x:Name="CopyIcon" Glyph="&#xE8C8;" FontSize="14" />
                 </Button>
+                <StackPanel x:Name="Tags" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="2,0,0,0" />
             </StackPanel>
             <StackPanel x:Name="DomainList" Spacing="2" />
         </StackPanel>

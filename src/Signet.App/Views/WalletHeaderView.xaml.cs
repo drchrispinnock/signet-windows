@@ -22,22 +22,6 @@ public sealed partial class WalletIdentityView : UserControl
     public WalletIdentityView()
     {
         InitializeComponent();
-        SizeChanged += (_, _) => WrapTags();
-    }
-
-    /// <summary>Moves the tags under the name when name and tags do not fit side by side.</summary>
-    private void WrapTags()
-    {
-        var host = WrappedTags.Children.Count > 0 ? WrappedTags : Tags;
-        var tags = host.Children.ToList();
-        host.Children.Clear();
-        Picker.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-        var tagsWidth = tags.Sum(t => { t.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity)); return t.DesiredSize.Width + 6; });
-        var available = ActualWidth - Avatar.ActualWidth - 12;
-        var wrap = tags.Count > 0 && Picker.DesiredSize.Width + 8 + tagsWidth > available;
-        var target = wrap ? WrappedTags : Tags;
-        foreach (var tag in tags) target.Children.Add(tag);
-        WrappedTags.Visibility = wrap ? Visibility.Visible : Visibility.Collapsed;
     }
 
     public WalletViewModel Model
@@ -67,9 +51,8 @@ public sealed partial class WalletIdentityView : UserControl
         AddressText.Text = wallet.Address.Shortened();
         ToolTipService.SetToolTip(AddressText, wallet.Address.Value);
 
-        // The tags sit beside the menu, not in its label.
+        // The tags sit on the address line, not beside the alias: a long alias left them no room.
         Tags.Children.Clear();
-        WrappedTags.Children.Clear();
         if (wallet.Address.IsContract) Tags.Children.Add(TagView("Contract", ""));
         else if (wallet.KeyKind == KeyKind.None) Tags.Children.Add(TagView("Watch only", "", "Signet has no key for this address; you can watch it and send to it."));
         if (wallet.KeyKind == KeyKind.Ledger)
@@ -77,7 +60,6 @@ public sealed partial class WalletIdentityView : UserControl
         if (wallet.KeyKind == KeyKind.Airgap)
             Tags.Children.Add(TagView("AirGap", "", "This key lives in AirGap Vault on a phone. Signet holds only the address and public key."));
         if (wallet.IsSessionOnly) Tags.Children.Add(SessionTag());
-        if (ActualWidth > 0) WrapTags();
 
         DomainList.Children.Clear();
         foreach (var domain in model.Domains)
