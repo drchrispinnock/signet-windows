@@ -159,7 +159,11 @@ public sealed partial class WalletViewModel : ObservableObject
         public sealed record ImportKey(ImportPrefill Prefill) : ScanHandoff;
         public sealed record AddAddress(Address Address) : ScanHandoff;
         public sealed record Send(Address Address) : ScanHandoff;
+        public sealed record AirGap(IReadOnlyList<Models.AirGap.Account> Accounts) : ScanHandoff;
     }
+
+    /// <summary>The accounts an AirGap Vault shared, while the Add AirGap account sheet is up.</summary>
+    [ObservableProperty] private IReadOnlyList<AirGap.Account>? airGapImport;
 
     /// <summary>Opens the sheet for what was scanned. Called when the scan sheet has been dismissed.</summary>
     public void RoutePendingScan()
@@ -184,6 +188,9 @@ public sealed partial class WalletViewModel : ObservableObject
                 if (SelectedWallet is null) return;
                 SendPrefill = send.Address;
                 IsPresentingSend = true;
+                break;
+            case ScanHandoff.AirGap airGap:
+                AirGapImport = airGap.Accounts;
                 break;
         }
     }
@@ -1471,7 +1478,8 @@ public sealed partial class WalletViewModel : ObservableObject
         var wallet = SelectedWallet ?? throw new WalletError.EmptyAlias();
         var code = MtPelerin.RandomCode();
         SignedPayload? proof = null;
-        if (provider.OwnershipPayload(code) is { } payload && SigningKeyFor(wallet, passphrase) is { } signer)
+        // Windows ahead of upstream: a key that cannot sign messages (AirGap Vault) leaves the check to the widget, as the sheet says.
+        if (provider.OwnershipPayload(code) is { } payload && wallet.KeyKind.SignsMessages() && SigningKeyFor(wallet, passphrase) is { } signer)
             proof = await chain.SignPayload(signer, payload);
         return provider.BuyURL(wallet.Address, fiat, code, proof, embedded, dark);
     }
@@ -1623,8 +1631,34 @@ public sealed partial class WalletViewModel : ObservableObject
             ? new SigningKey.Secret(secretKey, wallet.KeyKind == KeyKind.Encrypted ? passphrase : null, wallet.Address)
             : null,
         KeyKind.Ledger => wallet.LedgerKey is { } key ? new SigningKey.Ledger(key, wallet.Address) : null,
+        KeyKind.Airgap => wallet.PublicKey is { } publicKey && publicKey.StartsWith("edpk", StringComparison.Ordinal)
+            ? new SigningKey.Airgap(publicKey, wallet.Address)
+            : null,
         _ => null,
     };
+
+    /// <summary>
+    /// Adds an account whose key is in AirGap Vault: its address and public key, with an
+    /// <c>airgap://</c> locator in <c>secret_keys</c> (octez-client lists it as "airgap sk known"
+    /// and cannot sign with it). The address is derived from the public key here, never taken
+    /// from the code.
+    /// </summary>
+    public async Task AddAirGapAccount(string alias, AirGap.Account account)
+    {
+        var name = alias.Trim();
+        if (name.Length == 0) throw new WalletError.EmptyAlias();
+        if (Wallets.Any(w => w.Alias == name)) throw new WalletError.AliasExists(name);
+        var address = await AddressForScannedPublicKey(account.PublicKey);
+        if (address.Scheme != AddressScheme.Tz1) throw new WalletError.InvalidAddress();
+        if (Wallets.FirstOrDefault(w => w.Address == address) is { } existing) throw new WalletError.AddressExists(existing.Alias);
+        if (Wallets.Any(w => w.Alias == name)) throw new WalletError.AliasExists(name);
+        var wallet = new Wallet(name, address, AddressScheme.Tz1, account.PublicKey, KeyKind.Airgap);
+        walletStore.Add(wallet, account.Locator);
+        try { Wallets = walletStore.Load(); }
+        catch (Exception) { Wallets = [.. Wallets, wallet]; }
+        Select(Wallets.FirstOrDefault(w => w.Alias == name) ?? wallet);
+        await BackUp();
+    }
 
     /// <summary>
     /// How to label an address in lists: our own alias (verified), else the indexer's name, else the

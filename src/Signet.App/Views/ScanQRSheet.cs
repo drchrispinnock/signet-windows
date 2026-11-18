@@ -42,6 +42,8 @@ public sealed partial class ScanQRSheet : Sheet
     private string? note;
     /// <summary>The parts read so far of a key that a recovery sheet printed across several codes.</summary>
     private KeyPartCollector keyParts = new();
+    /// <summary>The frames read so far of an animated code (AirGap Vault's, when it does not fit one).</summary>
+    private UniformResource.Decoder frames = new();
     private bool closed;
     private bool framePending;
 
@@ -122,6 +124,9 @@ public sealed partial class ScanQRSheet : Sheet
             body.Children.Add(progress);
         }
 
+        if (found is null && !frames.IsEmpty)
+            body.Children.Add(AnimatedCodeProgress(frames, "An animated code: {0} of {1} parts read. Keep the code in view."));
+
         noteRow.Children.Clear();
         if (note is not null) noteRow.Children.Add(Label(note, "", "SystemFillColorCautionBrush"));
 
@@ -173,8 +178,21 @@ public sealed partial class ScanQRSheet : Sheet
         }
 
         body.Children.Add(Note(IsFirstRun
-            ? "Hold up a QR code of a secret key or a recovery phrase to import it, or of an address to watch it. A code shown on this PC's own screen can be read from a screenshot on the clipboard."
-            : "Hold up a QR code: a dApp's pairing code, an address or public key, or a secret key or recovery phrase. A code shown on this PC's own screen can be read from a screenshot on the clipboard."));
+            ? "Hold up a QR code of a secret key or a recovery phrase to import it, AirGap Vault's Pair Account code, or an address to watch it. A code shown on this PC's own screen can be read from a screenshot on the clipboard."
+            : "Hold up a QR code: a dApp's pairing code, an address or public key, a secret key or recovery phrase, or AirGap Vault's Pair Account code. A code shown on this PC's own screen can be read from a screenshot on the clipboard."));
+    }
+
+    /// <summary>A small ring and "{0} of {1} parts read" for an animated code being gathered.</summary>
+    internal static Grid AnimatedCodeProgress(UniformResource.Decoder decoder, string format)
+    {
+        var progress = new Grid { ColumnSpacing = 8 };
+        progress.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        progress.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        progress.Children.Add(new ProgressRing { IsIndeterminate = false, Maximum = 1, Value = decoder.Progress, Width = 16, Height = 16, VerticalAlignment = VerticalAlignment.Top });
+        var text = new TextBlock { Text = string.Format(System.Globalization.CultureInfo.CurrentCulture, format, decoder.ReceivedFragments, decoder.ExpectedParts), TextWrapping = TextWrapping.Wrap };
+        Grid.SetColumn(text, 1);
+        progress.Children.Add(text);
+        return progress;
     }
 
     private static StackPanel Placeholder(string text, UIElement? action)
@@ -253,6 +271,7 @@ public sealed partial class ScanQRSheet : Sheet
         found = null;
         note = null;
         keyParts = new KeyPartCollector();
+        frames = new UniformResource.Decoder();
         Render();
         _ = StartCamera();
     }
@@ -323,11 +342,50 @@ public sealed partial class ScanQRSheet : Sheet
             case QRPayload.PublicKey key:
                 _ = ShowPublicKey(key.Key);
                 return;
+            case QRPayload.UniformResourceContent ur:
+                try
+                {
+                    if (frames.Receive(ur.Part) is UniformResource.Decoder.Outcome.Complete(var payload) && ReadAirGap(payload)) return;
+                }
+                catch (Exception e) when (e is UniformResource.DecodeError or CBOR.DecodeError)
+                {
+                    frames = new UniformResource.Decoder();
+                    note = "That animated code could not be read. Hold it steady and scan it again.";
+                }
+                break;
+            case QRPayload.AirGapLegacy:
+                note = "That is an AirGap code in its older format. In AirGap Vault, open QR Details under the code and choose QR Code V3.";
+                break;
             default:
                 note = "That code is not a pairing code, an address or a key that Signet can use.";
                 break;
         }
         Render();
+    }
+
+    /// <summary>An AirGap message: a Vault's account share is the only one that makes sense here. True when it was handed on.</summary>
+    private bool ReadAirGap(byte[] payload)
+    {
+        try
+        {
+            var accounts = AirGap.Accounts(AirGap.Messages(payload));
+            if (accounts.Count == 0)
+            {
+                note = "That AirGap code holds no Tezos account. In AirGap Vault, open the Tezos account and choose Pair Account.";
+                return false;
+            }
+            Finish(new WalletViewModel.ScanHandoff.AirGap(accounts));
+            return true;
+        }
+        catch (AirGap.Error e) when (e.Kind == AirGap.Error.Reason.UnsupportedVersion)
+        {
+            note = "That AirGap code is in a format Signet does not read. In AirGap Vault, choose QR Code V3 under QR Details.";
+        }
+        catch (Exception e) when (e is AirGap.Error or CBOR.DecodeError)
+        {
+            note = "That code is not one Signet can use.";
+        }
+        return false;
     }
 
     private async Task ShowPublicKey(string key)

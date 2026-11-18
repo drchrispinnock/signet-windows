@@ -130,6 +130,11 @@ public abstract record SigningKey
     public sealed record Secret(string Key, string? Passphrase, Address Address) : SigningKey;
     /// <summary>A key on a Ledger; the device signs after the user approves on it.</summary>
     public sealed record Ledger(LedgerKey Key, Address Address) : SigningKey;
+    /// <summary>
+    /// A key in AirGap Vault: the operation goes to the phone as a QR code and the signature comes
+    /// back the same way (<c>AirGapSigning</c>). The public key is the account's <c>edpk</c>.
+    /// </summary>
+    public sealed record Airgap(string PublicKey, Address Address) : SigningKey;
 
     public bool IsLedger => this is Ledger;
 
@@ -143,6 +148,10 @@ public abstract record SigningKey
         Ledger l => JsonSerializer.Serialize(new Dictionary<string, object>
         {
             ["kind"] = "ledger", ["path"] = l.Key.FullPath, ["derivationType"] = l.Key.Curve.DerivationType(), ["address"] = l.Address.Value,
+        }),
+        Airgap a => JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["kind"] = "airgap", ["publicKey"] = a.PublicKey, ["address"] = a.Address.Value,
         }),
         _ => throw new InvalidOperationException(),
     };

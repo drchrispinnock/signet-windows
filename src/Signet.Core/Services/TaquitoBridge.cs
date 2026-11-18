@@ -427,6 +427,7 @@ public sealed class TaquitoBridge
           },
           ledgerSessionBegin: function (id, deviceId) { __signet_host.ledgerSessionBegin(Number(id), String(deviceId)); },
           ledgerSessionEnd: function (id) { __signet_host.ledgerSessionEnd(Number(id)); },
+          airgapSign: function (id, json) { __signet_host.airgapSign(Number(id), String(json)); },
         };
 
         globalThis.__signet_call = function (id, name, argsJSON) {
@@ -529,6 +530,35 @@ public sealed class TaquitoBridge
 
         [ScriptMember("ledgerSessionEnd")]
         public void LedgerSessionEnd(double id) => bridge.LedgerSessionEnd((int)id);
+
+        [ScriptMember("airgapSign")]
+        public void AirgapSign(double id, string json) => bridge.AirgapSign((int)id, json);
+    }
+
+    // ---- AirGap Vault ----------------------------------------------------------------------------
+
+    /// <summary>
+    /// The bridge's AirGap signer hands over the forged operation; the user carries it to the
+    /// phone and back by QR codes (<c>AirGapSigning</c>), and the checked 64-byte signature, or
+    /// why there is none, goes back to <c>__signet_airgapDone</c>.
+    /// </summary>
+    private void AirgapSign(int id, string json)
+    {
+        var owner = generation;
+        Trace($"airgap #{id} sign request");
+        _ = Task.Run(async () =>
+        {
+            string hex = "";
+            string? error = null;
+            try { hex = Convert.ToHexStringLower(await AirGapSigning.Shared.Sign(json)); }
+            catch (Exception e) { error = e.Message; }
+            Post(() =>
+            {
+                if (owner != generation) return;
+                Trace($"airgap #{id} {(error is null ? "signed" : "not signed")}");
+                Invoke("__signet_airgapDone", id, hex, error);
+            });
+        });
     }
 
     // ---- Timers ----------------------------------------------------------------------------------

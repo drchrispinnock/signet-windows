@@ -22,6 +22,16 @@ public abstract record QRPayload
     /// recovery sheet); <c>KeyPartCollector</c> puts them together.
     /// </summary>
     public sealed record KeyPartContent(KeyPart Part) : QRPayload;
+    /// <summary>
+    /// One frame of a Uniform Resource (<c>ur:bytes/…</c>), the format of AirGap Vault's codes;
+    /// <c>UniformResource.Decoder</c> gathers the frames and <c>AirGap</c> reads the message.
+    /// </summary>
+    public sealed record UniformResourceContent(UniformResource.Part Part) : QRPayload;
+    /// <summary>
+    /// An AirGap code in its older format (<c>airgap-…://?d=…</c>, serializer version 2), which
+    /// Signet does not read; Vault offers QR Code V3 under QR Details.
+    /// </summary>
+    public sealed record AirGapLegacy : QRPayload;
     public sealed record Unknown : QRPayload;
 
     public static readonly string[] PublicKeyPrefixes = ["edpk", "sppk", "p2pk", "BLpk", "mdpk"];
@@ -39,6 +49,8 @@ public abstract record QRPayload
 
         if (text.StartsWith(KeyPart.Scheme, StringComparison.Ordinal))
             return KeyPart.FromText(text) is { } part ? new KeyPartContent(part) : new Unknown();
+        if (text.StartsWith(UniformResource.Scheme, StringComparison.OrdinalIgnoreCase)) return UniformResourceOf(text);
+        if (AirGapLink(text) is { } airGap) return airGap;
         if (DAppPairingLink.CodeFromScanned(text) is { } code) return new Pairing(code);
 
         // Some wallets write an address as a `tezos:` URI.
@@ -54,6 +66,34 @@ public abstract record QRPayload
         // A bare pairing code is base58check over the pairing request's JSON.
         if (body.Length > 0 && body[0] == (byte)'{' && body[^1] == (byte)'}') return new Pairing(text);
         return new Unknown();
+    }
+
+    private static QRPayload UniformResourceOf(string text)
+    {
+        try { return new UniformResourceContent(new UniformResource.Part(text)); }
+        catch (Exception e) when (e is UniformResource.DecodeError or CBOR.DecodeError) { return new Unknown(); }
+    }
+
+    /// <summary>
+    /// AirGap's deep links (<c>airgap-wallet://?ur=…</c>, <c>airgap-vault://?ur=…</c>), which wrap
+    /// a single-frame UR, or carry the old <c>d=</c> format.
+    /// </summary>
+    private static QRPayload? AirGapLink(string text)
+    {
+        var colon = text.IndexOf(':');
+        if (colon <= 0 || !text[..colon].StartsWith("airgap", StringComparison.OrdinalIgnoreCase)) return null;
+        var scheme = text[..colon];
+        if (!scheme.All(c => char.IsAsciiLetterOrDigit(c) || c is '+' or '-' or '.')) return null;
+        var question = text.IndexOf('?');
+        var query = question < 0 ? "" : text[(question + 1)..];
+        var hash = query.IndexOf('#');
+        if (hash >= 0) query = query[..hash];
+        var items = query.Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(item => item.Split('=', 2))
+            .Select(pair => (Name: Uri.UnescapeDataString(pair[0]), Value: pair.Length > 1 ? Uri.UnescapeDataString(pair[1]) : null))
+            .ToList();
+        if (items.FirstOrDefault(i => i.Name == "ur").Value is { Length: > 0 } ur) return UniformResourceOf(UniformResource.Scheme + "bytes/" + ur);
+        return items.Any(i => i.Name == "d") ? new AirGapLegacy() : new Unknown();
     }
 
     private static string StrippingTezosScheme(string text)

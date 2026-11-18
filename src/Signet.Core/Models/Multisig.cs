@@ -17,7 +17,7 @@ public sealed record MultisigInfo(Address Address, bool IsGenericMultisig, strin
 {
     /// <summary>Our wallets that can sign for this multisig.</summary>
     public IReadOnlyList<Wallet> Signers(IEnumerable<Wallet> wallets) =>
-        wallets.Where(w => w.KeyKind.CanSign() && w.PublicKey is { } key && Keys.Contains(key)).ToList();
+        wallets.Where(w => w.KeyKind.SignsMessages() && w.PublicKey is { } key && Keys.Contains(key)).ToList();
 
     /// <summary>Any of our wallets whose key is listed, signing or not (watch-only Ledger entries etc.).</summary>
     public IReadOnlyList<Wallet> Members(IEnumerable<Wallet> wallets) =>

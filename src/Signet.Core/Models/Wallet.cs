@@ -9,6 +9,11 @@ public enum KeyKind
     Encrypted,
     /// <summary><c>ledger://...</c></summary>
     Ledger,
+    /// <summary>
+    /// <c>airgap://&lt;fingerprint&gt;/&lt;path&gt;</c> — the key is in AirGap Vault on a phone;
+    /// Signet holds the public key, and operations go to the Vault and back by QR code.
+    /// </summary>
+    Airgap,
     /// <summary><c>http(s)://</c>, <c>tcp://</c>, <c>unix:</c>, <c>remote:</c> — a remote signer such as octez-signer.</summary>
     Remote,
     /// <summary>Some other scheme we do not understand.</summary>
@@ -29,16 +34,25 @@ public static class KeyKindExtensions
             "unencrypted" => KeyKind.Unencrypted,
             "encrypted" => KeyKind.Encrypted,
             "ledger" => KeyKind.Ledger,
+            "airgap" => KeyKind.Airgap,
             "http" or "https" or "tcp" or "unix" or "remote" => KeyKind.Remote,
             _ => KeyKind.Unknown,
         };
     }
 
     /// <summary>
-    /// Kinds Signet can sign with: clear-text keys, encrypted keys once the user supplies the
-    /// password, and Ledger keys when the device is plugged in.
+    /// Kinds Signet can sign operations with: clear-text keys, encrypted keys once the user
+    /// supplies the password, Ledger keys when the device is plugged in, and AirGap Vault keys by
+    /// a QR round trip with the phone.
     /// </summary>
-    public static bool CanSign(this KeyKind kind) => kind is KeyKind.Unencrypted or KeyKind.Encrypted or KeyKind.Ledger;
+    public static bool CanSign(this KeyKind kind) => kind is KeyKind.Unencrypted or KeyKind.Encrypted or KeyKind.Ledger or KeyKind.Airgap;
+
+    /// <summary>
+    /// Kinds that can also sign raw bytes without the operation watermark: a dApp's sign_payload,
+    /// a multisig proposal, Mt Pelerin's address check. AirGap Vault's transaction sign request
+    /// carries operations only.
+    /// </summary>
+    public static bool SignsMessages(this KeyKind kind) => kind.CanSign() && kind != KeyKind.Airgap;
 
     /// <summary>Base58 prefixes of octez-encrypted secret keys.</summary>
     public static readonly IReadOnlySet<string> EncryptedKeyPrefixes =

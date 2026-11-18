@@ -62,7 +62,7 @@ public sealed partial class WalletHomeView : UserControl
                 ErrorLine.Text = model.ErrorMessage ?? "";
                 ErrorLine.Visibility = model.ErrorMessage is null ? Visibility.Collapsed : Visibility.Visible;
                 break;
-            case { } name when name.StartsWith("IsPresenting", StringComparison.Ordinal) || name is nameof(WalletViewModel.NftOperation) or nameof(WalletViewModel.NftDownload):
+            case { } name when name.StartsWith("IsPresenting", StringComparison.Ordinal) || name is nameof(WalletViewModel.NftOperation) or nameof(WalletViewModel.NftDownload) or nameof(WalletViewModel.AirGapImport):
                 _ = PresentSheets();
                 break;
             case nameof(WalletViewModel.Dapps):
@@ -156,6 +156,7 @@ public sealed partial class WalletHomeView : UserControl
             // The scan sheet hands what it found to the next sheet once it has gone (upstream onDismiss).
             reset = () => { model.IsPresentingScanQR = false; model.RoutePendingScan(); };
         }
+        else if (model.AirGapImport is { Count: > 0 } airGapAccounts) { dialog = new AddAirGapAccountSheet(model, airGapAccounts); reset = () => model.AirGapImport = null; }
         else if (model.IsPresentingBridge && model.SelectedWallet is not null) { dialog = new BridgeSheet(model); reset = () => model.IsPresentingBridge = false; }
         else if (model.IsPresentingCreateWallet) { dialog = new CreateWalletSheet(model); reset = () => model.IsPresentingCreateWallet = false; }
         else if (model.IsPresentingImportAccount) { dialog = new ImportAccountSheet(model); reset = () => model.IsPresentingImportAccount = false; }

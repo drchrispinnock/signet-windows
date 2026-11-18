@@ -92,6 +92,10 @@ public partial class App : Application
         window = new MainWindow(model);
         if (launchURL is not null) model.HandleIncomingURL(launchURL);
         window.Activate();
+        // AirGap Vault signing opens its panel over this window, on the UI thread.
+        AirGapSigning.Shared.Context = SynchronizationContext.Current;
+        var owner = window;
+        AirGapSigning.Shared.Present = session => Views.AirGapSignWindow.Show(session, owner);
         // Shows the Scan QR code items while a camera is attached.
         var scanModel = model;
         cameraWatcher = new Services.CameraWatcher(window.DispatcherQueue, hasCamera => scanModel.HasCamera = hasCamera);

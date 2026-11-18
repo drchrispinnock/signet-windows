@@ -74,6 +74,8 @@ public sealed partial class WalletIdentityView : UserControl
         else if (wallet.KeyKind == KeyKind.None) Tags.Children.Add(TagView("Watch only", "", "Signet has no key for this address; you can watch it and send to it."));
         if (wallet.KeyKind == KeyKind.Ledger)
             Tags.Children.Add(TagView("Ledger", "", $"This key lives on a Ledger{(wallet.LedgerKey is { } key ? $" ({key.FullPath})" : "")}. Operations are approved on the device."));
+        if (wallet.KeyKind == KeyKind.Airgap)
+            Tags.Children.Add(TagView("AirGap", "", "This key lives in AirGap Vault on a phone. Signet holds only the address and public key."));
         if (wallet.IsSessionOnly) Tags.Children.Add(SessionTag());
         if (ActualWidth > 0) WrapTags();
 

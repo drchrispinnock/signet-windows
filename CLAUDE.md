@@ -415,6 +415,22 @@ Windows-specific porting notes:
   PDF is the user's way to a PDF. The two PDF rendering tests are skipped. Upstream `4394acc`
   (camera prompt wording in Info.plist) needs nothing here.
 
+- AirGap Vault (upstream `dab0627`, `00a5412`): `UniformResource` (Bytewords, CRC-32, the bounded
+  CBOR reader/writer, Xoshiro256**, the alias sampler, the fountain `Decoder`) and `AirGap` (IAC
+  v3 messages, account shares, sign requests and replies, `Gzip` over .NET's `DeflateStream`,
+  which happens to write the same bytes as pako, so `AirGapTests` checks the exact code) in Core;
+  `KeyKind.Airgap` with `SignsMessages()`, `SigningKey.Airgap`, `QRPayload.UniformResourceContent`
+  and `AirGapLegacy`, `ScanHandoff.AirGap`, `WalletViewModel.AirGapImport`/`AddAirGapAccount`,
+  `AddAirGapAccountSheet`, the header's AirGap tag. The bridge's new `airgapSign` native (calls back
+  `__signet_airgapDone`) goes to `AirGapSigning.Shared`, which is in Core with
+  `AirGapSignSession` (so the session tests run headless); the app installs its panel as
+  `Present` and the UI thread as `Context` in `App.OnLaunched`, and without them (tests) signing
+  is `Failure.Unavailable`. Windows difference: the panel is `AirGapSignWindow`, a small
+  always-on-top window of its own rather than a sheet on the asking sheet, since WinUI allows one
+  ContentDialog at a time; closing it cancels. Windows fix ahead of upstream: `BuyURL` signs Mt
+  Pelerin's message only with a key that `SignsMessages()` (upstream would send an AirGap key to
+  `signPayload`, which the bridge refuses).
+
 - `Signet.exe --preview` opens a second, throwaway window on `App.MakePreviewModel()`: the mock
   chain, in-memory accounts (Captain Stake held with a placeholder key, so Baking and Governance
   show a baker) and mock multisig. It claims neither the single instance nor `signet://`, shows

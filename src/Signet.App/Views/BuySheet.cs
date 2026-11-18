@@ -73,7 +73,7 @@ public sealed partial class BuySheet : Sheet
         Render();
     }
 
-    private bool CanSign => wallet?.KeyKind.CanSign() == true;
+    private bool CanSign => wallet?.KeyKind.SignsMessages() == true;
     private bool NeedsPassphrase => wallet?.KeyKind == KeyKind.Encrypted;
     private bool SignsOnLedger => wallet?.KeyKind == KeyKind.Ledger;
 
@@ -179,6 +179,10 @@ public sealed partial class BuySheet : Sheet
         else if (SignsOnLedger)
         {
             Form.Children.Add(Note("Your Ledger will ask you to sign a short message proving the address is yours."));
+        }
+        else if (wallet?.KeyKind == KeyKind.Airgap)
+        {
+            Form.Children.Add(Note($"AirGap Vault cannot sign the short message {provider.Title()} uses to check an address, so {provider.Title()} will ask you to confirm it in the widget."));
         }
         else if (!CanSign)
         {
